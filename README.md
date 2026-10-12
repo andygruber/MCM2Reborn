@@ -14,7 +14,7 @@ No public MCM2 decompilation exists.
 
 | | |
 |---|---|
-| `code/mcm2/` | the code linked into the game: start-up, settings, and the OpenGL renderer |
+| `code/mcm2/` | the code linked into the game: start-up, settings, the OpenGL renderer and ported functions |
 | `docs/` | measured facts and findings. Start with [`binary.md`](docs/binary.md). |
 | `tools/` | the build: compile, link, resources, and the checks against retail |
 | `tools/ghidra/` | the Ghidra scripts, including the exporter, and the two build scripts |
@@ -78,14 +78,16 @@ start-up and saved back on exit, as the portable copy's launcher does.
 | classes named from RTTI | 253 |
 | sections differing from retail | **0** |
 
-Next: widescreen (the game's field of view and its 640x480 menus), vertex fog, and porting
-functions to C where behaviour should change.
+**Functions are being ported to C.** A function marked `PORT(address)` replaces the game's, and
+`tools/verify.py` accepts no difference from retail other than the calls redirected to it
+([`docs/harness.md`](docs/harness.md#porting-a-function-to-c)). The menus come first, then the
+physics.
 
 ## Running it
 
 ```sh
 sh tools/ghidra/reimport.sh    # rebuild the Ghidra database from the binary
-sh tools/ghidra/cycle.sh       # export -> assemble -> compile -> link -> verify
+sh tools/ghidra/cycle.sh       # export -> port -> assemble -> compile -> link -> verify
 ```
 
 Copy `build/OpenMCM2.exe` into the game folder and run it there. `OpenMCM2.exe -ddraw` uses the

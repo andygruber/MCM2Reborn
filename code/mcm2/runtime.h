@@ -11,7 +11,17 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-/* openmcm2.log in the game folder, truncated at start-up. */
+/*
+    PORT(0x0044C1D0) on the line before a function definition makes it replace the game's function
+    at that address (tools/port.py). The original stays callable as game_orig_<its name>.
+
+    The calling convention must be the original's exactly. A C++ method (__thiscall: `this` in ECX,
+    the callee pops the arguments) is written as __fastcall with an unused second parameter, which
+    takes EDX:  int __fastcall widget_count(widget_list* self, void* edx_unused).
+*/
+#define PORT(address)
+
+/* openmcm2.log in the game folder; the previous run's is kept as openmcm2.prev.log. */
 void log_open(void);
 void log_line(const char* fmt, ...);
 

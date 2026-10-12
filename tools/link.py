@@ -30,6 +30,8 @@ Compiled code reaches the game through two conventions, both bound here with /al
                       not import cannot be called this way (it would need an import table) and
                       stops the link; resolve it at runtime instead.
   game_<name>         a C declaration of `game_entry` binds to the game's label `entry`.
+  ports               a function tools/port.py handed to C: the game's name for it binds to the C
+                      definition, whatever its calling convention made of the name.
 
 If the compiled code defines `open_start`, that is the entry point; it runs the game's own.
 
@@ -67,6 +69,7 @@ IMAGE_BASE = "0x400000"
 ENTRY_CANDIDATES = ("entry", "start", "WinMainCRTStartup")
 
 RES = os.path.join(ROOT, "build", "game.res")
+PORTS = os.path.join(ROOT, "build", "ports.tsv")
 
 # The sections the game addresses, which must stay exactly where retail has them.
 FIXED_SECTIONS = (".text", ".rdata", ".data")
@@ -121,14 +124,38 @@ def bindings(objects):
                 (options.add("/ALTERNATENAME:%s=%s" % (name, target)) if target in imports
                  else missing.add("%s (not imported by the game)" % m.group(1)))
                 continue
-            m = re.match(r"^_game_(\w+?)(@\d+)?$", name)
+            m = re.match(r"^[_@]game_(\w+?)(@\d+)?$", name)
             if m:
                 target = m.group(1)
                 (options.add("/ALTERNATENAME:%s=%s" % (name, target)) if target in publics
                  else missing.add("%s (no such game label)" % target))
     if missing:
         sys.exit("compiled code needs symbols the game does not have:\n  " + "\n  ".join(sorted(missing)))
-    return sorted(options)
+    return sorted(options) + port_bindings(objects)
+
+
+def port_bindings(objects):
+    """/alternatename options binding each ported function's game name to its C definition."""
+    if not os.path.exists(PORTS):
+        return []
+
+    defined = {}
+    for path in objects:
+        with open(path, "rb") as f:
+            for name, section, storage in coff.symbols(f.read()):
+                if section > 0 and storage == 2:
+                    m = re.match(r"^[_@](\w+?)(@\d+)?$", name)
+                    if m:
+                        defined[m.group(1)] = name
+
+    options = []
+    with open(PORTS, encoding="utf-8") as f:
+        for line in f:
+            address, game_name, c_name = line.split()
+            if c_name not in defined:
+                sys.exit("0x%s is ported to %s, which no object defines" % (address, c_name))
+            options.append("/ALTERNATENAME:%s=%s" % (game_name, defined[c_name]))
+    return options
 
 
 def defines(objects, name):

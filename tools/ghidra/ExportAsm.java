@@ -653,64 +653,6 @@ public class ExportAsm extends GhidraScript {
         return new String[] { nameFor(e.getKey()), Long.toString(addr - e.getKey()) };
     }
 
-    void emitFunction(PrintWriter w, Function fn) throws Exception {
-        Address entry = fn.getEntryPoint();
-        long start = entry.getOffset();
-
-        String name = nameFor(start);
-        // Anything with a real name is made public: mangled C++ symbols so the linker can swap
-        // them for ported code, and plain ones like  (the entry point) so /ENTRY can find
-        // it. Only address-derived labels stay private.
-        boolean isPublic = name != null
-                && !name.startsWith("sub_") && !name.startsWith("caseD_")
-                && !name.startsWith("switchD") && !name.startsWith("default_")
-                && !name.startsWith("LAB_") && !name.startsWith("L_")
-                && !name.startsWith("nullsub_") && !name.startsWith("j_");
-
-        if (name == null) {
-            name = String.format("sub_%06X", start);
-        }
-
-        if (!emitted.add(name)) {
-            w.println("; duplicate symbol skipped: " + name);
-            return;
-        }
-
-        w.println("ALIGN 16");
-        if (isPublic) {
-            w.println("PUBLIC " + name);
-            w.println(name + " PROC");
-        } else {
-            w.println(name + " PROC PRIVATE");
-        }
-
-        AddressSetView body = fn.getBody();
-        InstructionIterator ii = currentProgram.getListing().getInstructions(body, true);
-
-        while (ii.hasNext()) {
-            Instruction insn = ii.next();
-            long at = insn.getAddress().getOffset();
-
-            // A jump-table or switch-case target inside this function needs a label of its own.
-            // Both spellings occur: Ghidra names some of them (caseD_2e) and leaves others bare.
-            if (at != start) {
-                String inner = nameFor(at);
-                if (inner != null) {
-                    w.println(inner + ":");
-                }
-            }
-
-            if (neededLabels.contains(at)) {
-                w.println(labelFor(at) + ":");
-            }
-
-            emitInstruction(w, insn);
-        }
-
-        w.println(name + " ENDP");
-        w.println();
-    }
-
     void emitInstruction(PrintWriter w, Instruction insn) throws Exception {
         byte[] bytes = insn.getBytes();
         long addr = insn.getAddress().getOffset();
@@ -799,7 +741,7 @@ public class ExportAsm extends GhidraScript {
             // so importAt matches, and the absolute slot address gets written into a relative
             // field. `call +0x113E` came out as `e8 64 10 5b 00`, a branch to nowhere.
             //
-            // Caught by tools/verify_text.py comparing all of .text against retail; the two-anchor
+            // Caught by comparing all of .text against retail (now tools/verify.py); the two-anchor
             // check in the build could never have seen it.
             if (rel && indirect) {
                 indirect = false;
@@ -913,7 +855,7 @@ public class ExportAsm extends GhidraScript {
             // first time the player hit a trashcan. Seventeen instructions, the whole class.
             //
             // It verified clean through every gate, because a FALSE relocation differs from retail
-            // by exactly the section delta - the same as a correct one. verify_text.py cannot tell
+            // by exactly the section delta - the same as a correct one. The check against retail cannot tell
             // those apart even in principle, which is why the constraint has to live here.
             //
             // The pos + 4 clause is unsound the same way: `cmp word ptr [edx + 60h], 0` is
@@ -1099,6 +1041,9 @@ public class ExportAsm extends GhidraScript {
                         emitted.add(name);
                     }
 
+                    // Where it starts, for tools/port.py: a ported function is found by address,
+                    // since a name like ?vf_29@MainDlg@@ does not carry one.
+                    w.println(String.format("; @%08X", a));
                     if (isPublicName(name)) {
                         w.println("PUBLIC " + name);
                     }

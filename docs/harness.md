@@ -250,10 +250,32 @@ Result: `.text`, `.rdata`, `.data` and `.rsrc` all match retail byte for byte, 0
 2.7 MB. Launched from the game folder, `OpenMCM2.exe` plays the intro, reaches the menus and runs
 a race.
 
+## Porting a function to C
+
+A C function marked `PORT(0x004890B0)` on the line before it replaces the game's function at that
+address. `tools/port.py` does the work in the assembly, between export and assembling:
+
+- the original is renamed `orig_<name>`, its bytes left where they were, so `.text` keeps its
+  layout and the original stays callable from C as `game_orig_<name>`;
+- every call and jump to it now goes to the C function. The exporter writes those as opcode bytes
+  and `dd name - ($ + 4)`, which MASM refuses for an external target, so they are rewritten as the
+  `call`, `jmp` or conditional jump they encode, which assembles to the same five or six bytes;
+- a port is refused if code elsewhere jumps to a label inside the function, since that code would
+  go on running half of the original under the port.
+
+The calling convention has to be the original's exactly. A `__thiscall` method is written as
+`__fastcall` with an unused second parameter, which takes EDX.
+
+Win32 calls in ported code go through the game's own import slots, and anything the game does not
+import is looked up at run time, so no import table is built and `.rdata` does not grow.
+
+`tools/verify.py` then compares every section with retail. The only differences it accepts are
+4-byte references whose retail target is a ported function and whose built target is in `.open`;
+anything else fails the build. That proves the game's code is untouched and the redirection is
+complete. It proves nothing about the port itself, so each one is also checked against the
+original's instructions (disassembling the linked function) and in game.
+
 ## Still to do
 
-1. **Ported code and imports.** C++ that calls a Win32 API makes the linker build an import table
-   again, which would grow `.rdata` and move `.data`. Ported code has to call through the game's
-   existing `__imp__` slots, or new imports need room of their own after `.rsrc`.
-2. **Positive-fact gates.** A byte comparison proves the image is retail; once functions are ported
-   it proves nothing about them. Checks that assert content are still owed.
+- **Checks on what ported code does.** A port is compared with the original by reading both; a
+  test that runs the two side by side on the same input, through `game_orig_<name>`, is owed.
