@@ -1880,6 +1880,41 @@ public class ExportAsm extends GhidraScript {
         }
     }
 
+    /**
+     * Does the word at `a` hold a printf conversion of a string something reads?
+     *
+     * A conversion only matters in a string that sprintf is handed, and anything handed one
+     * refers to where it starts. UIControl's vtable slot 41 holds 0x00472500, whose bytes spell
+     * "\0%G\0": vetoed as a format, it stayed raw and the port of that function was never
+     * called. So the string around each conversion is followed back to its start, and only a
+     * start that is referenced or labelled vetoes the pointer.
+     */
+    boolean looksLikeReadFormat(long a) {
+        if (!looksLikeFormat(a, 4)) {
+            return false;
+        }
+        try {
+            for (int i = 0; i < 4; i++) {
+                if ((currentProgram.getMemory().getByte(toAddr(a + i)) & 0xFF) != '%') {
+                    continue;
+                }
+                long start = a + i;
+                for (int back = 0; back < 512
+                        && (currentProgram.getMemory().getByte(toAddr(start - 1)) & 0xFF) != 0;
+                        back++) {
+                    start--;
+                }
+                if (symbolAt.containsKey(start) || neededDataLabels.contains(start)
+                        || currentProgram.getReferenceManager().hasReferencesTo(toAddr(start))) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            return true;
+        }
+        return false;
+    }
+
     /** Does this run contain a printf conversion - a '%' followed by a conversion character? */
     boolean looksLikeFormat(long a, int len) {
         try {
@@ -2120,11 +2155,11 @@ public class ExportAsm extends GhidraScript {
                 // turn a %d into a %s and hand it an integer to dereference. A real pointer whose
                 // bytes happen to spell a valid conversion is possible; losing one is a stale
                 // pointer, while losing a format string is a stack smash.
-                if (looksLikeFormat(a, 4)) {
+                if (looksLikeReadFormat(a)) {
                     inTable = false;
                 }
 
-                if (value >= 0x400000L && inTable && !looksLikeFormat(a, 4)) {
+                if (value >= 0x400000L && inTable && !looksLikeReadFormat(a)) {
                     // An ascending run of pointers. Structure beats coincidence.
                     if (exact != null) {
                         target = exact;
@@ -2137,7 +2172,7 @@ public class ExportAsm extends GhidraScript {
                         }
                     }
                 } else if (value >= 0x400000L && !insideString(a) && !looksLikeStringData(a)
-                        && !looksLikeFormat(a, 4)) {
+                        && !looksLikeReadFormat(a)) {
                     if (exact != null && (referenced || inPointerRun(a, candidates))) {
                         target = exact;
                     } else if (referenced) {

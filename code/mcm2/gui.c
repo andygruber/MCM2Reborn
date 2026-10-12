@@ -1552,15 +1552,6 @@ void __fastcall game_FUN_00469df0(void* scene, void* edx_unused, const char* cla
 #define GUICURSOR_CLASS ((const char*) 0x00572488)  /* "GUICursor" */
 #define TOOLTIP_CLASS   ((const char*) 0x00572480)  /* "ToolTip" */
 
-/* A picture (128 bytes), and its vtable slot 4 that fills it from pixels. */
-void* __fastcall game_FUN_004ca650(void* self, void* edx_unused, int a, DWORD flag);
-typedef int (__fastcall* picture_fill)(void* picture, void* edx_unused, BYTE* pixels, int width,
-                                       int height, int a, int b, int format, int mode, DWORD c,
-                                       DWORD d, DWORD e, DWORD f, DWORD g, DWORD h, DWORD i,
-                                       DWORD j, DWORD k, DWORD key);
-
-#define video_mode() FIELD(FIELD(game_main, 0x10, BYTE*), 0x28, int)
-
 /* DirectDraw surface calls, by vtable offset: GetDC, ReleaseDC, Lock and Unlock. */
 typedef HRESULT (__stdcall* surface_get_dc)(void* surface, HDC* dc);
 typedef HRESULT (__stdcall* surface_release_dc)(void* surface, HDC dc);

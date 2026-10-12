@@ -203,6 +203,15 @@ void __fastcall game_FUN_004044c0(BYTE* background, void* edx_unused, void* pict
 typedef int (__fastcall* screen_draw)(void* screen, void* edx_unused, RECT* area, void* picture,
                                       void* source, DWORD flags);
 
+/* A picture (128 bytes), and its vtable slot 4 that fills it from pixels. */
+void* __fastcall game_FUN_004ca650(void* self, void* edx_unused, int a, DWORD flag);
+typedef int (__fastcall* picture_fill)(void* picture, void* edx_unused, BYTE* pixels, int width,
+                                       int height, int a, int b, int format, int mode, DWORD c,
+                                       DWORD d, DWORD e, DWORD f, DWORD g, DWORD h, DWORD i,
+                                       DWORD j, DWORD k, DWORD key);
+
+#define video_mode() FIELD(FIELD(game_main, 0x10, BYTE*), 0x28, int)
+
 /* A dialog (ui.c): shown or hidden, and its controls. */
 int  __fastcall dialog_show(void* dialog, void* edx_unused, DWORD shown);
 int  __fastcall dialog_find(void* dialog, void* edx_unused, const char* name);

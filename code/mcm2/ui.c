@@ -3261,3 +3261,298 @@ void __fastcall control_text_area(BYTE* self, void* edx_unused, const RECT* from
     to->right -= FIELD(self, 0xE8, LONG);
     to->bottom -= FIELD(self, 0xEC, LONG);
 }
+
+/* ---- UIFrame: one picture, or one sound ---------------------------------------------------- */
+
+/* UIFrame, 36 bytes (a BaseObject). */
+typedef struct ui_frame {
+    void** vtable;
+    DWORD  unknown_04;
+    DWORD  is_sound;        /* 1: a .wav */
+    int    width;
+    int    height;
+    void*  sound;
+    BYTE*  picture;
+    DWORD  owns_sound;
+    DWORD  texture;         /* passed to the picture's constructor */
+} ui_frame;
+
+_Static_assert(sizeof(ui_frame) == 36, "UIFrame is 36 bytes");
+
+#define UIFRAME_VTABLE ((void**) 0x00557D70)
+#define WAV            ((const char*) 0x00571DC8)   /* ".wav" */
+#define FRAME_MISSING  ((const char*) 0x00571D98)
+
+/* The game's image loading: from a file, or from memory; and its free. */
+BYTE* __cdecl game_FUN_00517ca0(const char* name, DWORD a, void* resources);
+BYTE* __cdecl game_FUN_005174b0(const void* data, DWORD a, DWORD size);
+void  __cdecl game_FUN_005184b0(BYTE* image);
+int   __cdecl game_FUN_0047c3d0(void* picture, COLORREF key);     /* whether it has `key` */
+void* __fastcall game_FUN_004c0160(void* self, void* edx_unused, DWORD a, DWORD b);
+void  __fastcall game_FUN_004c0a70(void* sound, void* edx_unused, const char* name, DWORD a,
+                                   DWORD b, DWORD c, DWORD d, int e);
+void* __cdecl game_FUN_004bffe0(DWORD a, const char* name, DWORD b, DWORD c, DWORD d, int e);
+
+/* An image's size and pixels. */
+#define image_width(i)  FIELD(i, 0xE, short)
+#define image_height(i) FIELD(i, 0x10, short)
+#define image_pixels(i) FIELD(i, 0x14, BYTE*)
+
+/* Make the frame's picture from `image`, keyed on magenta as the owner's style says. */
+static void frame_picture(ui_frame* self, BYTE* image, BYTE* owner, int mode, int line)
+{
+    BYTE* picture = game_new(0x80, GAMEUI_CPP, line);
+    DWORD key_colour, style;
+
+    if (picture)
+        picture = game_FUN_004ca650(picture, NULL, self->texture, 1);
+    self->picture = picture;
+    key_colour = owner ? FIELD(owner, 0x70C, DWORD) : 0;
+    style = owner ? FIELD(owner, 0x708, DWORD) : 0;
+    VIRTUAL(picture, 0x10, picture_fill)(picture, NULL, image_pixels(image), image_width(image),
+                                         image_height(image), image_width(image),
+                                         image_width(image), 0x22B, mode, style, 4, key_colour, 0,
+                                         0, 2, 1, 0, 0x80, 0xFF00FF);
+    if (game_FUN_0047c3d0(self->picture, 0xFF00FF))
+        VIRTUAL(self->picture, 0x48, method_1)(self->picture, NULL, 0xFF00FF);
+}
+
+/*
+    A frame from the file `name`: a sound when it ends in .wav (with `a` and `b` for the sound),
+    else a picture, styled by `owner`.
+*/
+PORT(0x00473890)
+ui_frame* __fastcall frame_construct(ui_frame* self, void* edx_unused, const char* name,
+                                     DWORD texture, DWORD a, DWORD b, BYTE* owner)
+{
+    size_t length;
+
+    (void) edx_unused;
+    game_FUN_00405f40(self);
+    self->vtable = UIFRAME_VTABLE;
+    length = text_length(name);
+    if (game_FUN_0053b6e0(WAV, name + length - 4)) {
+        int mode = video_mode();
+        BYTE* image;
+
+        self->owns_sound = 0;
+        self->is_sound = 0;
+        self->sound = NULL;
+        self->texture = texture;
+        image = game_FUN_00517ca0(name, 0, game_resources);
+        if (!image) {
+            char missing[100];
+
+            self->picture = NULL;
+            game_FUN_0053a11f(missing, FRAME_MISSING, name);
+            return self;
+        }
+        self->width = image_width(image);
+        self->height = image_height(image);
+        frame_picture(self, image, owner, mode, 0x1393);
+        game_FUN_005184b0(image);
+        return self;
+    }
+
+    self->sound = game_new(0x1F8, GAMEUI_CPP, 0x13B9);
+    if (self->sound)
+        self->sound = game_FUN_004c0160(self->sound, NULL, a, 1);
+    game_FUN_004c0a70(self->sound, NULL, name, 0, 1, 3, b, -1);
+    self->owns_sound = 1;
+    self->is_sound = 1;
+    self->width = 0;
+    self->height = 0;
+    self->picture = NULL;
+    return self;
+}
+
+/* The picture from an image in memory. FALSE when there is none. */
+PORT(0x00473AF0)
+BOOL __fastcall frame_load(ui_frame* self, void* edx_unused, const void* data, DWORD size,
+                           BYTE* owner)
+{
+    BYTE* image;
+    int mode;
+
+    (void) edx_unused;
+    if (!data)
+        return FALSE;
+    image = game_FUN_005174b0(data, 0, size);
+    if (!image)
+        return FALSE;
+    mode = video_mode();
+    self->width = image_width(image);
+    self->height = image_height(image);
+    frame_picture(self, image, owner, mode, 0x13D6);
+    game_FUN_005184b0(image);
+    return TRUE;
+}
+
+/*
+    A frame from the resource `name` of `resources`, or failing that, with `sound_bank`, a sound
+    of that name. The original drops the sound it makes yet marks the frame as owning one, so its
+    destructor calls through NULL; this keeps that.
+*/
+PORT(0x00473C30)
+ui_frame* __fastcall frame_construct_resource(ui_frame* self, void* edx_unused, const char* name,
+                                              void* resources, DWORD texture, DWORD sound_bank,
+                                              DWORD skip, DWORD a, BYTE* owner)
+{
+    (void) edx_unused;
+    game_FUN_00405f40(self);
+    self->vtable = UIFRAME_VTABLE;
+    if (!skip) {
+        BYTE* entry;
+
+        self->owns_sound = 0;
+        self->is_sound = 0;
+        self->sound = NULL;
+        self->texture = texture;
+        entry = game_FUN_004ee0f0(resources, NULL, name, 1);
+        if (!frame_load(self, NULL, FIELD(entry, 0x14, void*), FIELD(entry, 0x18, DWORD), owner)
+            && sound_bank) {
+            game_FUN_004bffe0(sound_bank, name, 1, 3, a, -1);
+            self->owns_sound = 1;
+            self->is_sound = 1;
+            self->width = 0;
+            self->height = 0;
+            self->picture = NULL;
+        }
+    }
+    return self;
+}
+
+PORT(0x00473CF0)
+void __fastcall frame_destruct(ui_frame* self)
+{
+    self->vtable = UIFRAME_VTABLE;
+    if (self->picture)
+        object_destroy(self->picture);
+    if (self->owns_sound)
+        object_destroy(self->sound);
+    game_FUN_00405f70(self);
+}
+
+PORT(0x00473AD0)
+ui_frame* __fastcall frame_delete(ui_frame* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    frame_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* ---- UIAnim: a run of frames --------------------------------------------------------------- */
+
+/* UIAnim, 248 bytes (a BaseObject). */
+typedef struct ui_anim {
+    void**    vtable;
+    DWORD     unknown_04;
+    int       frame;            /* the one showing */
+    DWORD     playing;
+    int       count;
+    DWORD     period;           /* both set by anim_set_period */
+    DWORD     period_left;
+    DWORD     looping;
+    DWORD     elapsed;
+    DWORD     backwards;
+    ui_frame* frames[50];
+    DWORD     texture;
+    DWORD     unknown_f4;
+} ui_anim;
+
+_Static_assert(sizeof(ui_anim) == 248, "UIAnim is 248 bytes");
+
+#define UIANIM_VTABLE ((void**) 0x00557D84)
+
+PORT(0x00473D60)
+ui_anim* __fastcall anim_construct(ui_anim* self, void* edx_unused, DWORD texture, DWORD b)
+{
+    (void) edx_unused;
+    game_FUN_00405f40(self);
+    self->texture = texture;
+    self->vtable = UIANIM_VTABLE;
+    self->frame = 0;
+    self->count = 0;
+    self->period = 0;
+    self->period_left = 0;
+    self->elapsed = 0;
+    self->playing = 1;
+    self->looping = 0;
+    self->backwards = 0;
+    self->unknown_f4 = b;
+    __stosd((unsigned long*) self->frames, 0, 50);
+    return self;
+}
+
+PORT(0x00473DE0)
+void __fastcall anim_destruct(ui_anim* self)
+{
+    int i;
+
+    self->vtable = UIANIM_VTABLE;
+    for (i = 0; i < self->count; i++) {
+        if (self->frames[i])
+            object_destroy(self->frames[i]);
+    }
+    game_FUN_00405f70(self);
+}
+
+PORT(0x00473DC0)
+ui_anim* __fastcall anim_delete(ui_anim* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    anim_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+void __fastcall anim_restart(ui_anim* self);
+
+PORT(0x00473E50)
+void __fastcall anim_set_period(ui_anim* self, void* edx_unused, DWORD period)
+{
+    (void) edx_unused;
+    self->period = period;
+    self->period_left = period;
+    anim_restart(self);
+}
+
+PORT(0x00473E70)
+void __fastcall anim_set_looping(ui_anim* self, void* edx_unused, DWORD looping)
+{
+    (void) edx_unused;
+    self->looping = looping;
+}
+
+/* Back to the first frame, or the last when it plays backwards. */
+PORT(0x00473E80)
+void __fastcall anim_restart(ui_anim* self)
+{
+    if (self->backwards) {
+        self->elapsed = 0;
+        self->playing = 1;
+        self->frame = self->count - 1;
+    } else {
+        self->frame = 0;
+        self->elapsed = 0;
+        self->playing = 1;
+    }
+}
+
+PORT(0x00473EB0)
+ui_frame* __fastcall anim_current(ui_anim* self)
+{
+    return self->frames[self->frame];
+}
+
+/* The picture showing, or NULL on a sound frame. */
+PORT(0x00473EC0)
+BYTE* __fastcall anim_picture(ui_anim* self)
+{
+    ui_frame* frame = self->frames[self->frame];
+
+    return frame->is_sound == 1 ? NULL : frame->picture;
+}
