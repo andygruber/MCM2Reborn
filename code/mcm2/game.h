@@ -76,6 +76,9 @@ static __inline void text_append(char* to, const char* from)
     text_copy(to + text_length(to), from);
 }
 
+/* The device lists the game keeps: keyboard (0x34), mouse (0x30) and joysticks (at 0x10). */
+#define game_inputs FIELD(game_main, 0x14, BYTE*)
+
 /* The number of input devices the game found. */
 static __inline int input_count(void)
 {

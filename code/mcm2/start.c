@@ -13,6 +13,7 @@
 #include "render.h"
 
 void game_entry(void);
+void crash_install(void);
 
 static BOOL has_switch(const char* name)
 {
@@ -31,6 +32,7 @@ void open_start(void)
 {
     log_open();
     log_line("OpenMCM2 starting");
+    crash_install();
     profile_install();
 
     if (has_switch("ddraw"))

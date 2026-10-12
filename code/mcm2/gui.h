@@ -244,6 +244,8 @@ void __fastcall tooltip_set_text(tooltip* self, void* edx_unused, const char* te
 gui_input* __fastcall gui_user_claimed(gui_user* self, void* edx_unused, int index);
 int  __fastcall gui_user_queue_focus(gui_user* self, void* edx_unused, BYTE* dialog, BYTE** old,
                                      BOOL now);
+int  __fastcall gui_user_queue_capture(gui_user* self, void* edx_unused, BYTE* dialog, BYTE** old,
+                                       BOOL now);
 void __fastcall gui_manager_drop_cursors(gui_manager* self);
 void __fastcall gui_manager_set_cursors(gui_manager* self, void* edx_unused, const char* image,
                                         DWORD arg);

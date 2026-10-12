@@ -410,8 +410,10 @@ void __fastcall gui_manager_make_background(gui_manager* self)
     background = game_new(0x74, GUIMANAGER_CPP, 0x2A0);
     if (background)
         background = game_FUN_00403d80(background, NULL, 1);
-    background = VIRTUAL(background, 0x20, void* (__fastcall*)(void*, void*, void*, int))(
-        background, NULL, object_screen(self), -1);
+    /* Slot 8, GameObject's set-up: it takes the screen alone. The original pushes the -1 before
+       it, but that is object_add_child's. */
+    background = VIRTUAL(background, 0x20, void* (__fastcall*)(void*, void*, void*))(
+        background, NULL, object_screen(self));
     background = object_add_child(self, NULL, background, -1);
     self->background = background;
     object_move_before(background, NULL, self->group, -1);
@@ -1084,8 +1086,6 @@ void __fastcall gui_manager_add_cursors(gui_manager* self, void* edx_unused, con
 
 /* ---- GUIManager: set-up ------------------------------------------------------------------- */
 
-/* The device lists the game keeps: keyboard, mouse and joysticks (at 0x10, input_count() of them). */
-#define game_inputs FIELD(game_main, 0x14, BYTE*)
 
 /* Make sure the game's sound bank 0x5622 is loaded. */
 int  __fastcall game_FUN_004c2cf0(void* sound, void* edx_unused, DWORD bank, DWORD a, DWORD b,

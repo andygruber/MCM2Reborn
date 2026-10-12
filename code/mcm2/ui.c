@@ -2836,3 +2836,428 @@ int __fastcall control_animate(BYTE* self)
     FIELD(self, CTL_RECT, RECT) = FIELD(self, 0x3C, RECT);
     return 0;
 }
+
+/* ---- UIControl: input and focus ----------------------------------------------------------- */
+
+BOOL __fastcall gui_user_hears_event(gui_user* self, void* edx_unused, const BYTE* event);
+gui_input* __fastcall gui_user_input_for_event(gui_user* self, void* edx_unused, const BYTE* event);
+void __fastcall tooltip_show_for(tooltip* self, void* edx_unused, BYTE* control);
+int  __cdecl game_FUN_0043da40(DWORD a, DWORD device, key_event* event, DWORD b);
+int  __fastcall game_vf_20_46AB30(void* self, void* edx_unused, DWORD arg);
+int  __fastcall game_vf_21_46AB70(void* self, void* edx_unused, DWORD arg);
+
+#define control_user(c) FIELD(FIELD(c, CTL_DIALOG, BYTE*), DLG_USER, gui_user*)
+
+typedef int (__fastcall* control_point)(void* self, void* edx_unused, DWORD code, POINT* at);
+typedef int (__fastcall* control_two)(void* self, void* edx_unused, DWORD a, DWORD b);
+typedef int (__fastcall* key_down)(void* keyboard, void* edx_unused, DWORD key, DWORD a, DWORD b);
+
+#define KEY_LSHIFT 0x2A
+#define KEY_RSHIFT 0x36
+
+/*
+    Vtable slot 23: a key or button pressed. The control's hot key (0x1D8), without shift, gives
+    it focus and clicks it (slots 0xDC and 0xE0). Buttons go to slot 0xDC with where the user
+    points.
+*/
+PORT(0x00472F00)
+int __fastcall control_press(BYTE* self, void* edx_unused, key_event* event, DWORD arg)
+{
+    (void) edx_unused;
+    if (gui_user_hears_event(control_user(self), NULL, (const BYTE*) event)) {
+        if (event->device == 0) {
+            if (FIELD(self, 0x1D8, DWORD) && FIELD(self, 0x1D8, DWORD) == event->code) {
+                void* keyboard = FIELD(game_inputs, 0x34, void*);
+
+                if (!VIRTUAL(keyboard, 0x14, key_down)(keyboard, NULL, KEY_LSHIFT, 0x3F, 0)
+                    && !VIRTUAL(FIELD(game_inputs, 0x34, void*), 0x14, key_down)(
+                           FIELD(game_inputs, 0x34, void*), NULL, KEY_RSHIFT, 0x3F, 0)
+                    && control_enabled(self) && FIELD(self, 0x70, int)) {
+                    gui_user_queue_focus(control_user(self), NULL, self, NULL, 1);
+                    VIRTUAL(self, 0xDC, control_two)(self, NULL, 0, 0);
+                    VIRTUAL(self, 0xE0, control_two)(self, NULL, 0, 0);
+                    return 1;
+                }
+            }
+            if (game_FUN_0043da40(0x32, event->device, event, 0x80)
+                && FIELD(control_user(self), 0x1DC, BYTE*) == self)
+                FIELD(self, 0x168, DWORD) = 1;
+        }
+        if (event->device != 0) {
+            gui_input* input = control_user(self)->input;
+            POINT at;
+
+            if (input) {
+                at.x = input->x;
+                at.y = input->y;
+            }
+            if (VIRTUAL(self, 0xDC, control_point)(self, NULL, event->code,
+                                                   control_user(self)->input ? &at : NULL))
+                return 1;
+        }
+    }
+    return game_vf_23_46A500(self, NULL, (DWORD) event, arg);
+}
+
+/* Vtable slot 22: a button released, to slot 0xE0 with where the user points. */
+PORT(0x00473060)
+int __fastcall control_release(BYTE* self, void* edx_unused, key_event* event, DWORD arg)
+{
+    gui_input* input = gui_user_input_for_event(control_user(self), NULL, (const BYTE*) event);
+
+    (void) edx_unused;
+    if (input) {
+        POINT at;
+
+        at.x = input->x;
+        at.y = input->y;
+        if (event->device && VIRTUAL(self, 0xE0, control_point)(self, NULL, event->code, &at))
+            return 1;
+    }
+    return game_vf_22_46A4B0(self, NULL, (DWORD) event, arg);
+}
+
+/*
+    Vtable slot 55: pressed while it has focus, by `button`. The first button shows state 2 (and
+    its sound); the control then takes capture, and the tooltip goes.
+*/
+PORT(0x004730E0)
+int __fastcall control_pressed(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    tooltip* tip;
+
+    (void) edx_unused;
+    (void) b;
+    if (control_user(self)->focus != self)
+        return 0;
+    if (!button) {
+        VIRTUAL(self, 0x74, method_1)(self, NULL, 2);
+        VIRTUAL(self, 0xE8, control_two)(self, NULL, 2, FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x180, DWORD));
+    }
+    FIELD(self, 0x1D4, DWORD) = button;
+    if (button == 1 && FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*))
+        background_invalidate(FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*));
+    gui_user_queue_capture(control_user(self), NULL, self, NULL, 0);
+    tip = (tooltip*) control_user(self)->tooltip;
+    if (tip) {
+        tip->shown = 0;
+        tip->delay = -1.0f;
+    }
+    return 0;
+}
+
+/* Vtable slot 56: released; the first button, while pressed (state 2), shows state 3. */
+PORT(0x00473180)
+int __fastcall control_released(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    (void) b;
+    if (control_user(self)->focus == self && !button && FIELD(self, 0x60, int) == 2) {
+        VIRTUAL(self, 0x74, method_1)(self, NULL, 3);
+        VIRTUAL(self, 0xE8, control_two)(self, NULL, 3, FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x180, DWORD));
+    }
+    FIELD(self, 0x1D4, int) = -1;
+    return 0;
+}
+
+/* Vtable slot 57: dragged with button 1, when it can be (0x168): move it to `at`. */
+PORT(0x004731E0)
+void __fastcall control_drag(BYTE* self, void* edx_unused, DWORD button, const POINT* at)
+{
+    (void) edx_unused;
+    if (FIELD(self, 0x168, int) && button == 1) {
+        BYTE* dialog;
+        int width, height;
+
+        control_redraw(self);
+        width = VIRTUAL(self, 0xF4, method_0)(self);
+        height = VIRTUAL(self, 0xF8, method_0)(self);
+        dialog = FIELD(self, CTL_DIALOG, BYTE*);
+        FIELD(self, 0x3C, LONG) = at->x - FIELD(dialog, 0x160, LONG);
+        FIELD(self, 0x44, LONG) = FIELD(self, 0x3C, LONG) + width;
+        FIELD(self, 0x40, LONG) = at->y - FIELD(dialog, 0x164, LONG);
+        FIELD(self, 0x48, LONG) = FIELD(self, 0x40, LONG) + height;
+    }
+}
+
+/*
+    Vtable slots 20 and 21: tell the dialog the control was clicked (event 11) or released (12)
+    while it had capture. The dialog's answer in `param`/`e` decides whether the base class hears.
+*/
+static int control_click_event(BYTE* self, DWORD type, DWORD arg)
+{
+    if (control_user(self)->capture == self) {
+        BYTE* dialog;
+        ui_event event;
+
+        event.e = 0;
+        event.type = type;
+        event.a = FIELD(self, 0x74, DWORD);
+        event.b = (DWORD) control_get_name(self);
+        dialog = FIELD(self, CTL_DIALOG, BYTE*);
+        event.sender = dialog;
+        event.manager = FIELD(self, CTL_MANAGER, gui_manager*);
+        event.c = (DWORD) self;
+        event.d = arg;
+        event.param = 1;
+        VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, &event);
+        if (event.e || !event.param)
+            return 1;
+    }
+    return -1;
+}
+
+PORT(0x00473250)
+int __fastcall control_clicked(BYTE* self, void* edx_unused, DWORD arg)
+{
+    int handled = control_click_event(self, 0xB, arg);
+
+    (void) edx_unused;
+    return handled >= 0 ? handled : game_vf_20_46AB30(self, NULL, arg);
+}
+
+PORT(0x00473300)
+int __fastcall control_unclicked(BYTE* self, void* edx_unused, DWORD arg)
+{
+    int handled = control_click_event(self, 0xC, arg);
+
+    (void) edx_unused;
+    return handled >= 0 ? handled : game_vf_21_46AB70(self, NULL, arg);
+}
+
+#define UICONTROL_LIST ((const char*) 0x00571D74)   /* "UIControl," */
+
+/*
+    Find the control under `at`, from `object` down: its first sibling that is not a plain
+    "UIControl,", its first child likewise, then the object itself. A control found gets focus
+    when no button is down (or keeps it); returns the control's answer, or 0.
+*/
+PORT(0x004733B0)
+int __fastcall control_hit_test(BYTE* object, void* edx_unused, POINT* at)
+{
+    BYTE* other;
+    int found;
+
+    (void) edx_unused;
+    for (other = FIELD(object, 0xC, BYTE*); other; other = FIELD(other, 0xC, BYTE*)) {
+        if (game_FUN_0053b910(FIELD(other, 0x28, const char*), UICONTROL_LIST)) {
+            found = control_hit_test(other, NULL, at);
+            if (found)
+                return found;
+            break;
+        }
+    }
+    other = FIELD(object, 0x10, BYTE*);
+    if (other && game_FUN_0053b910(FIELD(other, 0x28, const char*), UICONTROL_LIST)) {
+        found = control_hit_test(FIELD(object, 0x10, BYTE*), NULL, at);
+        if (found)
+            return found;
+    }
+
+    if (VIRTUAL(object, 0xCC, control_two)(object, NULL, at->x, at->y)
+        && VIRTUAL(object, 0x78, method_0)(object)) {
+        BYTE* last = control_chain_end(object, NULL, NULL);
+
+        if (FIELD(object, 0x6C, int) && FIELD(object, 0x70, int) && chain_settled(last)) {
+            gui_user* user = control_user(object);
+
+            if (!user->keys[0] && !user->keys[1]) {
+                if (user->focus != object)
+                    return dialog_queue_focus(FIELD(object, CTL_DIALOG, BYTE*), NULL, object, NULL, 0);
+            } else if (user->focus != object) {
+                return 0;
+            }
+            if (user->next_focus && user->next_focus != object)
+                gui_user_queue_focus(user, NULL, object, NULL, 0);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Vtable slot 31: focus came, when it can take it (slot 0x78): state 1, its picture and sound,
+   and its tooltip. */
+PORT(0x004734E0)
+int __fastcall control_focused(BYTE* self)
+{
+    if (VIRTUAL(self, 0x78, method_0)(self) && control_user(self)->focus != self) {
+        void* picture;
+        tooltip* tip;
+
+        VIRTUAL(self, 0x74, method_1)(self, NULL, 1);
+        picture = FIELD(self, 0x16C + 4 * FIELD(self, 0x60, int), void*);
+        if (picture)
+            game_FUN_00473e80(picture);
+        VIRTUAL(self, 0xE8, control_two)(self, NULL, 1, FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x180, DWORD));
+        tip = (tooltip*) control_user(self)->tooltip;
+        if (tip)
+            tooltip_show_for(tip, NULL, self);
+    }
+    return 1;
+}
+
+/* Vtable slot 32: focus went: back to state 0 (when enabled), and the tooltip goes. */
+PORT(0x00473560)
+void __fastcall control_unfocused(BYTE* self, void* edx_unused, DWORD to)
+{
+    tooltip* tip;
+
+    (void) edx_unused;
+    (void) to;
+    if (FIELD(self, 0x6C, int))
+        VIRTUAL(self, 0x74, method_1)(self, NULL, 0);
+    tip = (tooltip*) control_user(self)->tooltip;
+    if (tip)
+        tooltip_set_text(tip, NULL, NULL, NULL, 1.0f);
+}
+
+/* Vtable slot 58: play its sound `index` (0x194). */
+PORT(0x004735A0)
+void __fastcall control_play_sound(BYTE* self, void* edx_unused, int index, DWORD b)
+{
+    (void) edx_unused;
+    (void) b;
+    if (FIELD(self, 0x194 + 4 * index, void*))
+        play_sound(self, FIELD(self, 0x194 + 4 * index, void*));
+}
+
+/* Vtable slot 53: a walk over the controls of its dialog, on the game's heap. */
+PORT(0x004735E0)
+void* __fastcall control_walk_dialog(BYTE* self)
+{
+    BYTE* walk = game_new(0x94, GAMEUI_CPP, 0x1267);
+
+    if (!walk)
+        return NULL;
+    walk_begin(walk, NULL, FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_CONTAINER, void*), 1,
+               UICONTROL_CLASS);
+    return walk;
+}
+
+PORT(0x00473660)
+void __fastcall control_walk_end(void* self, void* edx_unused, BYTE* walk)
+{
+    (void) self;
+    (void) edx_unused;
+    if (walk) {
+        walk_end(walk);
+        game_delete(walk);
+    }
+}
+
+/* The next control of the same group (0x7C), other than this one, in `walk`; NULL at the end. */
+PORT(0x00473680)
+BYTE* __fastcall control_next_in_group(BYTE* self, void* edx_unused, BYTE* walk)
+{
+    BYTE* other;
+
+    (void) edx_unused;
+    if (!FIELD(self, 0x7C, DWORD))
+        return NULL;
+    do
+        other = walk_next(walk);
+    while (other && (FIELD(other, 0x7C, DWORD) != FIELD(self, 0x7C, DWORD) || other == self));
+    return other;
+}
+
+/* The same, and of the same type too. */
+PORT(0x004736C0)
+BYTE* __fastcall control_next_alike(BYTE* self, void* edx_unused, BYTE* walk)
+{
+    BYTE* other = control_next_in_group(self, NULL, walk);
+
+    (void) edx_unused;
+    while (other && FIELD(other, CTL_TYPE, int) != FIELD(self, CTL_TYPE, int))
+        other = control_next_in_group(self, NULL, walk);
+    return other;
+}
+
+/* A control focus can move to: enabled, shown, and not of type 5 or 12. */
+static BOOL takes_focus(BYTE* control)
+{
+    int type = FIELD(control, CTL_TYPE, int);
+
+    return FIELD(control, 0x6C, int) && FIELD(control, 0x70, int) && type != 5 && type != 12;
+}
+
+/* The control before this one that can take focus, round to the last; NULL when none. */
+PORT(0x004736F0)
+BYTE* __fastcall control_previous(BYTE* self)
+{
+    BYTE* control = self;
+
+    if (!self)
+        return NULL;
+    for (;;) {
+        if (control != self && takes_focus(control))
+            return control;
+        if (FIELD(control, 8, BYTE*)) {
+            control = FIELD(control, 8, BYTE*);
+        } else {
+            while (FIELD(control, 0xC, BYTE*))
+                control = FIELD(control, 0xC, BYTE*);
+        }
+        if (control == self)
+            return NULL;
+        if (!control)
+            return NULL;
+    }
+}
+
+/* The control after this one that can take focus, round to the dialog's first; NULL when none. */
+PORT(0x00473740)
+BYTE* __fastcall control_next(BYTE* self)
+{
+    BYTE* control = self;
+
+    if (!self)
+        return NULL;
+    for (;;) {
+        if (control != self && takes_focus(control))
+            return control;
+        control = FIELD(control, 0xC, BYTE*);
+        if (!control)
+            control = FIELD(FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_CONTAINER, BYTE*), 0x10, BYTE*);
+        if (control == self)
+            return NULL;
+        if (!control)
+            return NULL;
+    }
+}
+
+/* Vtable slot 63: the picture's rectangle, sized to the picture (0x1CC) when 0xA4 is set. */
+PORT(0x00473790)
+void __fastcall control_picture_area(BYTE* self, void* edx_unused, const RECT* from, RECT* to)
+{
+    BYTE* picture;
+    BYTE* dialog;
+
+    (void) edx_unused;
+    *to = *from;
+    picture = FIELD(self, 0x1CC, BYTE*);
+    if (FIELD(self, 0xA4, int) && picture) {
+        dialog = FIELD(self, CTL_DIALOG, BYTE*);
+        to->right = (int) ((double) FIELD(picture, 0x14, int) * FIELD(dialog, 0x9C4, float)) + to->left;
+        picture = FIELD(self, 0x1CC, BYTE*);
+        dialog = FIELD(self, CTL_DIALOG, BYTE*);
+        to->bottom = (int) ((double) FIELD(picture, 0x18, int) * FIELD(dialog, 0x9C8, float)) + to->top;
+    }
+}
+
+/* Vtable slot 64: the text's rectangle: padded (0xE8, 0xEC), and a pixel down while pressed. */
+PORT(0x00473810)
+void __fastcall control_text_area(BYTE* self, void* edx_unused, const RECT* from, RECT* to)
+{
+    (void) edx_unused;
+    *to = *from;
+    if (FIELD(self, 0x60, int) == 2) {
+        to->top++;
+        to->left++;
+        to->bottom++;
+        to->right++;
+    }
+    to->left += FIELD(self, 0xE8, LONG);
+    to->top += FIELD(self, 0xEC, LONG);
+    to->right -= FIELD(self, 0xE8, LONG);
+    to->bottom -= FIELD(self, 0xEC, LONG);
+}
