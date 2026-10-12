@@ -1,0 +1,274 @@
+# -*- coding: utf-8 -*-
+"""Link game.obj into a runnable executable.
+
+At 0% reimplemented this produces a binary that IS the original game: every function is still the
+original machine code, merely assembled and linked by us rather than shipped by Rainbow Studios.
+That is the point. It is the baseline the port is measured against, and it is what makes each
+ported function individually testable the day it is written.
+
+One setting is not optional:
+
+  -FIXED -BASE:0x400000   Mcm2.exe has IMAGE_FILE_RELOCS_STRIPPED set and no base-relocation
+                          table, so it can only ever load at 0x400000. Anything else and every
+                          absolute address baked into the code is wrong - silently, because there
+                          is no relocation data for the loader to complain about.
+
+No import libraries are linked. Retail's import table is part of the .rdata the assembly emits
+and every import is called through its slot there, so the linker has nothing to import and builds
+no table of its own. That keeps .text, .rdata and .data at their retail sizes and addresses, so
+every pointer in the data is right as it stands. The PE header is then pointed at retail's import
+tables (adopt_retail_header), and the build is refused if any of those sections has moved.
+
+Sections of our own (compiled code, see build/obj) land after .data, and .rsrc after them: it is
+built by the linker from build/game.res (tools/resources.py), which keeps its RVAs right wherever
+it ends up.
+
+Compiled code reaches the game through two conventions, both bound here with /alternatename:
+
+  Win32 calls         `__imp__CreateFileA@28`, as the compiler spells a __stdcall import, is
+                      bound to the game's own `__imp__CreateFileA` slot. A function the game does
+                      not import cannot be called this way (it would need an import table) and
+                      stops the link; resolve it at runtime instead.
+  game_<name>         a C declaration of `game_entry` binds to the game's label `entry`.
+
+If the compiled code defines `open_start`, that is the entry point; it runs the game's own.
+
+THE CRT IS NOT LINKED IN. Mcm2.exe statically linked its own 1999 CRT and every one of those
+routines is already in game.obj under its ordinary C name - `_memcpy`, `_malloc`, `_sprintf`. The
+MSVC and UCRT library directories are on the search list only so a symbol game.obj does NOT define
+can be satisfied rather than becoming a hard link error; one that needs a Windows import fails to
+link, since there are no import libraries. Nothing that needs CRT initialisation will work
+regardless: the entry point is the game's own 1999 startup and the modern initialiser never runs.
+"""
+import glob
+import os
+import re
+import struct
+import subprocess
+import sys
+
+import coff
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+OBJ = os.environ.get("MCM2_OBJ", r"C:\mcm2ghidra\out\game.obj")
+ASM = os.environ.get("MCM2_ASM", r"C:\mcm2ghidra\out\game.asm")
+OUT = os.path.join(ROOT, "build", "OpenMCM2.exe")
+RETAIL = os.environ.get("MCM2_EXE", r"C:\mcm2ghidra\bin\Mcm2.exe")
+
+IMAGE_BASE = "0x400000"
+
+# Which PUBLIC symbol is the entry point depends on the Ghidra database: it creates its own `entry`
+# label at the image entry point, and a symbol recovered from elsewhere can win as primary. So the
+# name is read out of the assembly rather than assumed. Getting this wrong does not say so - the
+# linker falls back to _WinMainCRTStartup and reports THAT as the unresolved symbol, which points
+# nowhere near the actual cause.
+ENTRY_CANDIDATES = ("entry", "start", "WinMainCRTStartup")
+
+RES = os.path.join(ROOT, "build", "game.res")
+
+# The sections the game addresses, which must stay exactly where retail has them.
+FIXED_SECTIONS = (".text", ".rdata", ".data")
+
+
+# The data directories taken from retail: their tables are emitted verbatim at retail addresses.
+DIR_IMPORT, DIR_IAT = 1, 12
+
+# The OS and subsystem versions (four words at optional header +40 and +48). Windows only
+# virtualises the registry for an executable that declares a pre-Vista version, and the game keeps
+# its settings, its EULA acceptance and its profiles under HKLM: declaring the linker's 6.0 makes
+# every one of those writes fail, so it asks again on every launch.
+VERSIONS = ((40, 4), (48, 4))
+
+
+def find(pattern, what):
+    hits = sorted(glob.glob(pattern))
+    if not hits:
+        sys.exit("could not find %s (looked for %s)" % (what, pattern))
+    return hits[-1]
+
+
+def cpp_objects():
+    """Compiled reimplementations. These take precedence over the stripped assembly."""
+    return sorted(glob.glob(os.path.join(ROOT, "build", "obj", "*.obj")))
+
+
+def game_symbols():
+    """(the game's import names, its public labels), as defined in the assembly."""
+    imports, publics = set(), set()
+    with open(ASM, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.startswith("PUBLIC "):
+                name = line[7:].strip()
+                (imports if name.startswith("__imp__") else publics).add(name)
+    return imports, publics
+
+
+def bindings(objects):
+    """/alternatename options binding the compiled code's undefined symbols to the game."""
+    imports, publics = game_symbols()
+    options, missing = set(), set()
+    for path in objects:
+        with open(path, "rb") as f:
+            data = f.read()
+        for name, section, storage in coff.symbols(data):
+            if section != 0 or storage != 2:     # defined, or not external
+                continue
+            m = re.match(r"^__imp__(\w+)@\d+$", name)
+            if m:
+                target = "__imp__" + m.group(1)
+                (options.add("/ALTERNATENAME:%s=%s" % (name, target)) if target in imports
+                 else missing.add("%s (not imported by the game)" % m.group(1)))
+                continue
+            m = re.match(r"^_game_(\w+?)(@\d+)?$", name)
+            if m:
+                target = m.group(1)
+                (options.add("/ALTERNATENAME:%s=%s" % (name, target)) if target in publics
+                 else missing.add("%s (no such game label)" % target))
+    if missing:
+        sys.exit("compiled code needs symbols the game does not have:\n  " + "\n  ".join(sorted(missing)))
+    return sorted(options)
+
+
+def defines(objects, name):
+    for path in objects:
+        with open(path, "rb") as f:
+            if any(n == name and section > 0 for n, section, _ in coff.symbols(f.read())):
+                return True
+    return False
+
+
+def pe_layout(data):
+    """(offset of the data directory table, {section name: (virtual address, virtual size)})."""
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    count, = struct.unpack_from("<H", data, pe + 6)
+    opt_size, = struct.unpack_from("<H", data, pe + 20)
+    table = pe + 24 + opt_size
+    sections = {}
+    for i in range(count):
+        name, size, va = struct.unpack_from("<8sII", data, table + 40 * i)
+        sections[name.rstrip(b"\0").decode()] = (va, size)
+    return pe + 24 + 96, sections
+
+
+def adopt_retail_header(path):
+    """Point the built image at retail's import and IAT tables, and declare retail's versions.
+
+    Those tables, and every pointer in the game's data, are only valid if .text, .rdata and .data
+    are at their retail addresses - which is checked first, because a section that moved would
+    leave them pointing at whatever now sits there.
+    """
+    with open(RETAIL, "rb") as f:
+        retail = f.read()
+    with open(path, "rb") as f:
+        built = bytearray(f.read())
+
+    retail_dirs, retail_sections = pe_layout(retail)
+    built_dirs, built_sections = pe_layout(built)
+    retail_opt, built_opt = retail_dirs - 96, built_dirs - 96
+
+    moved = ["%s 0x%X -> 0x%X" % (name, retail_sections[name][0], built_sections.get(name, (0, 0))[0])
+             for name in FIXED_SECTIONS if built_sections.get(name, (0, 0))[0] != retail_sections[name][0]]
+    if moved:
+        sys.exit("sections are not at their retail addresses: " + ", ".join(moved))
+
+    # Compiled code belongs in .open. Anything that reached .data - a common symbol, say - moves
+    # nothing, so the check above cannot see it.
+    if built_sections[".data"][1] != retail_sections[".data"][1]:
+        sys.exit(".data is 0x%X bytes against retail's 0x%X: compiled code put something in it - see the map"
+                 % (built_sections[".data"][1], retail_sections[".data"][1]))
+
+    for index in (DIR_IMPORT, DIR_IAT):
+        entry = retail_dirs + 8 * index
+        built[built_dirs + 8 * index:built_dirs + 8 * index + 8] = retail[entry:entry + 8]
+
+    for offset, size in VERSIONS:
+        built[built_opt + offset:built_opt + offset + size] = retail[retail_opt + offset:retail_opt + offset + size]
+
+    with open(path, "wb") as f:
+        f.write(built)
+
+
+def entry_point():
+    if not os.path.exists(ASM):
+        sys.exit("no assembly at %s" % ASM)
+    declared = set()
+    with open(ASM, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.startswith("PUBLIC "):
+                declared.add(line[7:].strip())
+    for name in ENTRY_CANDIDATES:
+        if name in declared:
+            return name
+    sys.exit("no entry point in %s - looked for %s" % (ASM, ", ".join(ENTRY_CANDIDATES)))
+
+
+def main():
+    if not os.path.exists(OBJ):
+        sys.exit("no object at %s - assemble game.asm first" % OBJ)
+    if not os.path.exists(RES):
+        sys.exit("no resources at %s - run tools/resources.py first" % RES)
+
+    link = os.environ.get("LINK_EXE") or find(
+        r"C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC"
+        r"\*\bin\Hostx64\x86\link.exe", "link.exe")
+
+    # link.exe sits at <msvc>/bin/Hostx64/x86/link.exe, so the toolchain root is four levels up.
+    msvc_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(link))))
+    msvc_lib = os.path.join(msvc_root, "lib", "x86")
+    ucrt_lib = find(r"C:\Program Files (x86)\Windows Kits\10\Lib\*\ucrt\x86", "the UCRT x86 libraries")
+
+    objects = cpp_objects()
+    entry = "open_start" if defines(objects, "_open_start") else entry_point()
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+
+    cmd = [
+        link,
+        "-NOLOGO",
+        "-MACHINE:X86",
+        "-SUBSYSTEM:WINDOWS",
+        "-BASE:" + IMAGE_BASE,
+        "-FIXED",
+        "-ENTRY:" + entry,
+
+        # uuid.lib is requested by a CRT directive and holds nothing but COM interface GUID
+        # constants, which this image already carries in its own data - they are emitted out of
+        # Mcm2.exe's .rdata. It lives only in the SDK's um directory, the one path that must stay
+        # off the search list, so it is excluded by name rather than opening that door.
+        "-NODEFAULTLIB:uuid.lib",
+
+        # A map, so an address in appended C++ can be named. Without one a crash inside a
+        # reimplementation is just a number.
+        "-MAP:" + os.path.join(ROOT, "build", "OpenMCM2.map"),
+
+        "-OUT:" + OUT,
+        "-LIBPATH:" + msvc_lib,
+        "-LIBPATH:" + ucrt_lib,
+        OBJ,
+        RES,
+    ] + objects + bindings(objects)
+
+    print("link.exe : %s" % link)
+    print("entry    : %s" % entry)
+    print("object   : %s (%d bytes)" % (OBJ, os.path.getsize(OBJ)))
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    out = (res.stdout or "") + (res.stderr or "")
+    if res.returncode != 0:
+        # Unresolved externals come in thousands when something structural is wrong and in ones
+        # when a real symbol is missing, so show enough to tell those apart.
+        lines = out.splitlines()
+        errs = [ln for ln in lines if "error" in ln.lower()]
+        print("\n".join(lines[:6]))
+        print("... %d error lines; first 25:" % len(errs))
+        print("\n".join(errs[:25]))
+        sys.exit(res.returncode)
+
+    print(out.strip())
+    adopt_retail_header(OUT)
+    print("\nlinked -> %s (%d bytes), retail import tables and versions adopted"
+          % (OUT, os.path.getsize(OUT)))
+
+
+if __name__ == "__main__":
+    main()

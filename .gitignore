@@ -1,0 +1,17 @@
+# Build output, including everything generated from the retail executable
+build/
+data/encodings.tsv
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors and assistants
+.vs/
+.vscode/
+*.swp
+.claude/
+.claude*
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
