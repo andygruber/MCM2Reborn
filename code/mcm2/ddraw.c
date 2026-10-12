@@ -1001,8 +1001,23 @@ static HRESULT WINAPI s_Lock(IDirectDrawSurface7* self, LPRECT rect, LPDDSURFACE
     BYTE* p;
 
     (void) event;
-    if (is_zbuffer(s) || is_primary(s))
-        return unsupported(is_zbuffer(s) ? "Surface7::Lock of the z-buffer" : "Surface7::Lock of the primary");
+    if (is_zbuffer(s))
+        return unsupported("Surface7::Lock of the z-buffer");
+
+    /* The primary is what was last shown, which is still the back buffer's contents - the game
+       reads it for screenshots. Its pixels are the back buffer's; writes to it are not shown. */
+    if (is_primary(s))
+    {
+        if (!s->back)
+            return unsupported("Surface7::Lock of a windowed primary");
+        target_read(s->back);
+        if (!s->back->pixels)
+            return DDERR_OUTOFMEMORY;
+        *desc = s->desc;
+        desc->dwFlags |= DDSD_LPSURFACE;
+        desc->lpSurface = s->back->pixels + (rect ? rect->top * surface_pitch(s) + rect->left * 2 : 0);
+        return DD_OK;
+    }
 
     if (is_target(s))
     {
@@ -1028,7 +1043,7 @@ static HRESULT WINAPI s_Unlock(IDirectDrawSurface7* self, LPRECT rect)
         target_write(SELF);
         SELF->locked_target = FALSE;
     }
-    else if (!is_target(SELF))
+    else if (!is_target(SELF) && !is_primary(SELF))
     {
         SELF->top->dirty = TRUE;
     }
