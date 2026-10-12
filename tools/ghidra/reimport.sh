@@ -28,6 +28,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 GH="${GHIDRA_HEADLESS:-$GHIDRA_INSTALL_DIR/support/analyzeHeadless.bat}"
+[ -f "$GH" ] || { echo "set GHIDRA_INSTALL_DIR to a Ghidra 12.1 install, or GHIDRA_HEADLESS to its analyzeHeadless.bat"; exit 1; }
 PROJ=C:/mcm2ghidra/proj
 SCRIPTS=C:/mcm2ghidra/scripts
 OUT=C:/mcm2ghidra/out

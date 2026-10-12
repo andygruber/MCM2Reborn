@@ -26,10 +26,11 @@ import os
 import struct
 import sys
 
+from paths import RETAIL
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-RETAIL = os.environ.get("MCM2_EXE", r"C:\mcm2ghidra\bin\Mcm2.exe")
 BUILT = os.environ.get("MCM2_BUILT", os.path.join(ROOT, "build", "OpenMCM2.exe"))
 
 

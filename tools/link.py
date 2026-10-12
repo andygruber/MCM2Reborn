@@ -48,6 +48,7 @@ import subprocess
 import sys
 
 import coff
+from paths import RETAIL
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -55,7 +56,6 @@ ROOT = os.path.dirname(HERE)
 OBJ = os.environ.get("MCM2_OBJ", r"C:\mcm2ghidra\out\game.obj")
 ASM = os.environ.get("MCM2_ASM", r"C:\mcm2ghidra\out\game.asm")
 OUT = os.path.join(ROOT, "build", "OpenMCM2.exe")
-RETAIL = os.environ.get("MCM2_EXE", r"C:\mcm2ghidra\bin\Mcm2.exe")
 
 IMAGE_BASE = "0x400000"
 
