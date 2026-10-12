@@ -23,7 +23,10 @@ ROOT = os.path.dirname(HERE)
 SRC = os.path.join(ROOT, "code", "mcm2")
 OBJ = os.path.join(ROOT, "build", "obj")
 
-FLAGS = ["/nologo", "/c", "/O2", "/W4", "/WX", "/GS-", "/Zl", "/Gy", "/std:c11", "/D_CRT_SECURE_NO_WARNINGS"]
+# /arch:IA32: floating point on the x87, as the game's own code does it, so ported arithmetic
+# rounds as the original did instead of in SSE registers.
+FLAGS = ["/nologo", "/c", "/O2", "/W4", "/WX", "/GS-", "/Zl", "/Gy", "/std:c11", "/arch:IA32",
+         "/D_CRT_SECURE_NO_WARNINGS"]
 
 # Where each kind of section goes within .open. Section names are limited to eight characters,
 # so the compiler's own $ suffixes (.text$mn) are dropped.

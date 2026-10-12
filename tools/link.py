@@ -108,9 +108,23 @@ def game_symbols():
     return imports, publics
 
 
+# Compiler helpers the compiled code calls, bound to the game's own copies. The game's __ftol is
+# MSVC 6's: the value in ST0, the result in EDX:EAX, ST0 popped, which is what __ftol2 is too.
+COMPILER_HELPERS = {"__ftol2": "__ftol", "__ftol2_sse": "__ftol"}
+
+
+def ported_names():
+    """The game names of the functions tools/port.py handed to C; they are bound to C code."""
+    if not os.path.exists(PORTS):
+        return set()
+    with open(PORTS, encoding="utf-8") as f:
+        return {line.split()[1] for line in f if line.strip()}
+
+
 def bindings(objects):
     """/alternatename options binding the compiled code's undefined symbols to the game."""
     imports, publics = game_symbols()
+    publics = publics | ported_names()
     options, missing = set(), set()
     for path in objects:
         with open(path, "rb") as f:
@@ -123,6 +137,11 @@ def bindings(objects):
                 target = "__imp__" + m.group(1)
                 (options.add("/ALTERNATENAME:%s=%s" % (name, target)) if target in imports
                  else missing.add("%s (not imported by the game)" % m.group(1)))
+                continue
+            if name in COMPILER_HELPERS:
+                target = COMPILER_HELPERS[name]
+                (options.add("/ALTERNATENAME:%s=%s" % (name, target)) if target in publics
+                 else missing.add("%s (the game has no %s)" % (name, target)))
                 continue
             m = re.match(r"^[_@]game_(\w+?)(@\d+)?$", name)
             if m:
