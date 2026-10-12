@@ -379,10 +379,15 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
             { (GLfloat) to->left, (GLfloat) to->bottom, 0, 1 },
         };
 
+        /* Every array the device's draws enable is turned off: OpenGL reads all enabled arrays,
+           and theirs point at the device's vertex memory, which may have been freed since. */
+        gl.DisableClientState(GL_COLOR_ARRAY);
+        gl.DisableClientState(GL_FOG_COORD_ARRAY);
+        gl.ClientActiveTexture(GL_TEXTURE0 + 1);
+        gl.DisableClientState(GL_TEXTURE_COORD_ARRAY);
+        gl.ClientActiveTexture(GL_TEXTURE0);
         gl.EnableClientState(GL_VERTEX_ARRAY);
         gl.EnableClientState(GL_TEXTURE_COORD_ARRAY);
-        gl.DisableClientState(GL_COLOR_ARRAY);
-        gl.ClientActiveTexture(GL_TEXTURE0);
         gl.VertexPointer(2, GL_FLOAT, sizeof quad[0], quad[0]);
         gl.TexCoordPointer(2, GL_FLOAT, sizeof quad[0], &quad[0][2]);
         gl.DrawArrays(GL_TRIANGLE_FAN, 0, 4);

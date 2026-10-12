@@ -107,12 +107,13 @@ typedef struct device
     D3DVIEWPORT7     viewport;
     D3DMATERIAL7     material;
 
-    /* What one draw hands OpenGL: position, colour, two texture coordinates. */
+    /* What one draw hands OpenGL: position, colour, two texture coordinates, fog. */
     float*           vertices;
     DWORD            capacity;
+    BOOL             fog_coordinates;   /* the draw's fog comes from each vertex, not distance */
 } device;
 
-#define FLOATS_PER_VERTEX 9     /* x y z w, colour (four bytes in one slot), u0 v0 u1 v1 */
+#define FLOATS_PER_VERTEX 10    /* x y z w, colour (four bytes in one slot), u0 v0 u1 v1, fog */
 
 static GLuint g_white;          /* a 1x1 white texture, for stages that read no texture */
 
@@ -261,27 +262,45 @@ static void apply_states(device* d)
     gl.Disable(GL_SCISSOR_TEST);
     gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
-    /* Table fog only; vertex fog would need the fog coordinate, and the game has not asked for it. */
-    if (rs[D3DRENDERSTATE_FOGENABLE] && rs[D3DRENDERSTATE_FOGTABLEMODE] != D3DFOG_NONE)
+    /*
+        Fog with a table or vertex mode is by distance, which OpenGL measures as Direct3D does,
+        from the eye. With neither, the fog is the game's own: each vertex's specular alpha says
+        how much of it shows (255 none, 0 all), which a fog coordinate of 1 - alpha over a linear
+        range of 0..1 reproduces exactly.
+    */
+    d->fog_coordinates = FALSE;
+    if (rs[D3DRENDERSTATE_FOGENABLE])
     {
-        float colour[4];
         static const GLenum mode[] = { 0, GL_EXP, GL_EXP2, GL_LINEAR };
+        DWORD table = rs[D3DRENDERSTATE_FOGTABLEMODE], vertex = rs[D3DRENDERSTATE_FOGVERTEXMODE];
+        float colour[4];
 
-        start.u = rs[D3DRENDERSTATE_FOGSTART];
-        end.u = rs[D3DRENDERSTATE_FOGEND];
-        density.u = rs[D3DRENDERSTATE_FOGDENSITY];
         colour_of(rs[D3DRENDERSTATE_FOGCOLOR], colour);
         gl.Enable(GL_FOG);
-        gl.Fogi(GL_FOG_MODE, (GLint) mode[rs[D3DRENDERSTATE_FOGTABLEMODE] & 3]);
-        gl.Fogf(GL_FOG_START, start.f);
-        gl.Fogf(GL_FOG_END, end.f);
-        gl.Fogf(GL_FOG_DENSITY, density.f);
         gl.Fogfv(GL_FOG_COLOR, colour);
+
+        if (table != D3DFOG_NONE || vertex != D3DFOG_NONE)
+        {
+            start.u = rs[D3DRENDERSTATE_FOGSTART];
+            end.u = rs[D3DRENDERSTATE_FOGEND];
+            density.u = rs[D3DRENDERSTATE_FOGDENSITY];
+            gl.Fogi(GL_FOG_COORD_SRC, GL_FRAGMENT_DEPTH);
+            gl.Fogi(GL_FOG_MODE, (GLint) mode[(table != D3DFOG_NONE ? table : vertex) & 3]);
+            gl.Fogf(GL_FOG_START, start.f);
+            gl.Fogf(GL_FOG_END, end.f);
+            gl.Fogf(GL_FOG_DENSITY, density.f);
+        }
+        else
+        {
+            gl.Fogi(GL_FOG_COORD_SRC, GL_FOG_COORD);
+            gl.Fogi(GL_FOG_MODE, GL_LINEAR);
+            gl.Fogf(GL_FOG_START, 0);
+            gl.Fogf(GL_FOG_END, 1);
+            d->fog_coordinates = TRUE;
+        }
     }
     else
     {
-        if (rs[D3DRENDERSTATE_FOGENABLE])
-            unsupported("vertex fog");
         gl.Disable(GL_FOG);
     }
 }
@@ -526,6 +545,8 @@ static float* convert(device* d, const BYTE* from, DWORD count, DWORD fvf, const
             v[5 + t * 2] = uv ? uv[0] : 0;
             v[6 + t * 2] = uv ? uv[1] : 0;
         }
+
+        v[9] = l.specular >= 0 ? 1.0f - (*(const DWORD*) (from + l.specular) >> 24) / 255.0f : 0.0f;
     }
     return out;
 }
@@ -548,6 +569,16 @@ static void submit(device* d, D3DPRIMITIVETYPE type, const float* v, DWORD count
     gl.EnableClientState(GL_TEXTURE_COORD_ARRAY);
     gl.TexCoordPointer(2, GL_FLOAT, stride, v + 7);
     gl.ClientActiveTexture(GL_TEXTURE0);
+
+    if (d->fog_coordinates)
+    {
+        gl.EnableClientState(GL_FOG_COORD_ARRAY);
+        gl.FogCoordPointer(GL_FLOAT, stride, v + 9);
+    }
+    else
+    {
+        gl.DisableClientState(GL_FOG_COORD_ARRAY);
+    }
 
     if (indices)
         gl.DrawElements(primitive(type), (GLsizei) index_count, GL_UNSIGNED_SHORT, indices);

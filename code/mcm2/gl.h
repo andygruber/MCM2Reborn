@@ -4,7 +4,7 @@
     The game does not import opengl32.dll, and an import of our own would need an import table
     (see tools/link.py), so every entry point is looked up when the renderer starts. This is the
     whole of OpenGL the renderer uses: the 1.1 fixed-function pipeline, multitexture and texture
-    combiners for the Direct3D texture stages, secondary colour for specular, and framebuffer
+    combiners for the Direct3D texture stages, fog coordinates for its vertex fog, and framebuffer
     objects for the game's back buffer.
 */
 
@@ -132,6 +132,10 @@ typedef void           GLvoid;
 #define GL_ADD                          0x0104
 #define GL_REPLACE                      0x1E01
 #define GL_COLOR_SUM                    0x8458
+#define GL_FOG_COORD_SRC                0x8450
+#define GL_FOG_COORD                    0x8451
+#define GL_FRAGMENT_DEPTH               0x8452
+#define GL_FOG_COORD_ARRAY              0x8457
 #define GL_SECONDARY_COLOR_ARRAY        0x845E
 #define GL_FRAMEBUFFER                  0x8D40
 #define GL_READ_FRAMEBUFFER             0x8CA8
@@ -198,6 +202,7 @@ typedef void           GLvoid;
     X(ActiveTexture, void, (GLenum)) \
     X(ClientActiveTexture, void, (GLenum)) \
     X(SecondaryColorPointer, void, (GLint, GLenum, GLsizei, const GLvoid*)) \
+    X(FogCoordPointer, void, (GLenum, GLsizei, const GLvoid*)) \
     X(GenFramebuffers, void, (GLsizei, GLuint*)) \
     X(BindFramebuffer, void, (GLenum, GLuint)) \
     X(FramebufferTexture2D, void, (GLenum, GLenum, GLenum, GLuint, GLint)) \

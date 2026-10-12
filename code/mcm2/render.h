@@ -3,7 +3,8 @@
 
     The game gets these objects from DirectDrawCreateEx, which is taken over at start-up, so its
     own rendering code runs unchanged. What it uses was measured, not guessed: a hardware device,
-    16-bit textures, no lights, TL and LVERTEX geometry, GDI text, Blt and BltFast for 2D, and Flip.
+    16-bit textures, no lights, TL and LVERTEX geometry with fog in specular alpha, GDI text, Blt
+    and BltFast for 2D, and Flip.
     Anything else answers DDERR_UNSUPPORTED and is logged the first time.
 
     Render targets (the back buffer, and any 3D offscreen surface) are framebuffer objects at the
