@@ -630,3 +630,731 @@ void __cdecl vector_z_init_thunk(void)
 {
     vector_z_init();
 }
+
+/* ---- UIDialog: opening -------------------------------------------------------------------- */
+
+#define GAMEUI_CPP   ((const char*) 0x005717B8)     /* "...\gameui.cpp" */
+#define DAT_FORMAT   ((const char*) 0x005717AC)     /* "%s%s.dat" */
+#define PATH_FORMAT  ((const char*) 0x0056ED34)     /* "%s%s" */
+#define READ_MODE    ((const char*) 0x0056CA38)     /* "r" */
+
+/* The C library, as the game links it. */
+int   __cdecl game_FUN_0053a11f(char* to, const char* format, ...);      /* sprintf */
+char* __cdecl game__strrchr(const char* text, int c);
+char* __cdecl game__strncpy(char* to, const char* from, size_t count);
+
+/* The resource manager's add, and the game's file object (308 bytes). */
+void* __fastcall game_FUN_004eddc0(void* resources, void* edx_unused, const char* path, DWORD a);
+void* __fastcall game_FUN_00461c80(void* self, void* edx_unused, void* resources);
+int   __fastcall game_FUN_00461ec0(void* self, void* edx_unused, const char* path, const char* mode,
+                                   DWORD a);
+void  __fastcall game_FUN_00461cd0(void* self);
+
+int __fastcall dialog_queue_focus(BYTE* self, void* edx_unused, BYTE* control, BYTE** old, BOOL now);
+int __fastcall dialog_give_up(BYTE* self);
+
+static void file_delete(void* file)
+{
+    if (file) {
+        game_FUN_00461cd0(file);
+        game_delete(file);
+    }
+}
+
+/*
+    Vtable slot 27: lay the dialog out and load it. Its .dat file comes from `folder` (named by
+    `file`, or after the dialog without its extension), or failing that from the resources. With
+    a user that has no pointing device, the first control gets focus. NULL when it cannot load.
+*/
+PORT(0x0046B230)
+BYTE* __fastcall dialog_open(BYTE* self, void* edx_unused, void* screen, const RECT* area, DWORD a,
+                             DWORD flags, void* font_object, DWORD b, const char* folder,
+                             BYTE* parent, BYTE* background, const char* face, int font_size,
+                             gui_manager* manager, gui_user* user, const char* file)
+{
+    char name[0x100];
+    char path[0x100];
+    char* dialog_name = (char*) self + DLG_NAME;
+    game_object* container;
+    ui_event event;
+
+    (void) edx_unused;
+    object_setup(self, NULL, screen);
+    if (area) {
+        FIELD(self, 0x160, RECT) = *area;
+    } else {
+        FIELD(self, 0x164, LONG) = 0;
+        FIELD(self, 0x160, LONG) = 0;
+        FIELD(self, 0x168, LONG) = FIELD(object_screen(self), 0xC, LONG);
+        FIELD(self, 0x16C, LONG) = FIELD(object_screen(self), 0x10, LONG);
+    }
+    FIELD(self, DLG_PARENT, BYTE*) = parent;
+    FIELD(self, DLG_MODAL, DWORD) = (flags & 6) ? 1 : 0;
+    FIELD(self, DLG_MANAGER, gui_manager*) = manager;
+    if (manager && FIELD(self, DLG_MODAL, DWORD))
+        FIELD(self, DLG_SWAP, int) = gui_manager_swap(manager, NULL, (int) self);
+    if (parent)
+        FIELD(self, DLG_BACKDROP, void*) = FIELD(parent, DLG_BACKDROP, void*);
+    FIELD(self, 0xC4, DWORD) = a;
+    FIELD(self, 0x114, void*) = font_object;
+    FIELD(self, DLG_BACKGROUND, BYTE*) = background;
+    FIELD(self, 0x7F20, DWORD) = b;
+    FIELD(self, DLG_SCREEN_SIZE, int) = font_size;
+    FIELD(self, DLG_USER, gui_user*) = user;
+    text_copy((char*) self + DLG_FACE, face);
+    FIELD(self, DLG_FONT, HFONT) = CreateFontA(FIELD(self, DLG_SCREEN_SIZE, int), 0, 0, 0, FW_MEDIUM, 0,
+                                               0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                               CLIP_DEFAULT_PRECIS, PROOF_QUALITY, VARIABLE_PITCH,
+                                               (char*) self + DLG_FACE);
+    FIELD(self, 0x108, DWORD) = 0;
+    FIELD(self, 0x10C, DWORD) = 0;
+
+    container = game_new(sizeof(game_object), GAMEUI_CPP, 0x16E);
+    if (container) {
+        object_construct(container, NULL, 1);
+        container->vtable = UICTLCONTAINER_VTABLE;
+    }
+    FIELD(self, DLG_CONTAINER, void*) = object_add_child(self, NULL, container, -1);
+
+    event.e = 0;
+    event.type = 4;
+    event.a = 0;
+    event.b = 0;
+    event.sender = self;
+    event.c = 0;
+    event.manager = FIELD(self, DLG_MANAGER, gui_manager*);
+    VIRTUAL(self, 0x74, dialog_handle)(self, NULL, &event);
+
+    if (dialog_name[0]) {
+        char* dot = game__strrchr(dialog_name, '.');
+        void* data;
+
+        if (!file) {
+            if (dot) {
+                size_t length = dot - dialog_name;
+
+                game__strncpy(name, dialog_name, length);
+                name[length] = 0;
+                game_FUN_0053a11f(path, DAT_FORMAT, folder ? folder : NO_TEXT, name);
+            } else {
+                game_FUN_0053a11f(path, DAT_FORMAT, folder ? folder : NO_TEXT, dialog_name);
+            }
+        } else {
+            game_FUN_0053a11f(path, PATH_FORMAT, folder ? folder : NO_TEXT, file);
+        }
+        FIELD(self, DLG_RESOURCE, void*) = game_FUN_004eddc0(game_resources, NULL, path, 0);
+        game_FUN_0053a11f(path, PATH_FORMAT, folder ? folder : NO_TEXT, dialog_name);
+
+        data = game_new(0x134, GAMEUI_CPP, 0x194);
+        if (data)
+            data = game_FUN_00461c80(data, NULL, game_resources);
+        if (game_FUN_00461ec0(data, NULL, path, READ_MODE, 0)) {
+            int loaded = game_FUN_0046b850(self, NULL, data, 0);
+
+            file_delete(data);
+            if (!loaded) {
+                dialog_give_up(self);
+                return NULL;
+            }
+        } else {
+            file_delete(data);
+            if (!dialog_load(self, NULL, dialog_name)) {
+                dialog_give_up(self);
+                return NULL;
+            }
+        }
+    }
+
+    if (parent && !FIELD(self, DLG_BACKGROUND, BYTE*))
+        FIELD(self, DLG_BACKGROUND, BYTE*) = FIELD(parent, DLG_BACKGROUND, BYTE*);
+    if (FIELD(self, DLG_BACKGROUND, BYTE*))
+        background_invalidate(FIELD(self, DLG_BACKGROUND, BYTE*));
+    if (user && !user->input) {
+        BYTE walk[0x94];
+
+        walk_begin(walk, NULL, FIELD(self, DLG_CONTAINER, void*), 1, UICONTROL_CLASS);
+        dialog_queue_focus(self, NULL, walk_next(walk), NULL, 0);
+        walk_end(walk);
+    }
+    dialog_notify_controls(self, NULL, 0);
+    FIELD(self, 0x7F40, DWORD) = 1;
+    return self;
+}
+
+/* Give up on opening: no closing sound, and vtable slot 0x68. */
+PORT(0x00470E90)
+int __fastcall dialog_give_up(BYTE* self)
+{
+    FIELD(self, DLG_SOUND, DWORD) = 0;
+    return VIRTUAL(self, 0x68, method_0)(self);
+}
+
+/* Queue `control` for focus with the dialog's user. */
+PORT(0x00470F30)
+int __fastcall dialog_queue_focus(BYTE* self, void* edx_unused, BYTE* control, BYTE** old, BOOL now)
+{
+    (void) edx_unused;
+    return gui_user_queue_focus(FIELD(self, DLG_USER, gui_user*), NULL, control, old, now);
+}
+
+/* ---- UIDialog: every frame ---------------------------------------------------------------- */
+
+/* A UITimer under the dialog: counts up to its period, then calls its target or tells the dialog. */
+typedef struct ui_timer {
+    void**       vtable;
+    DWORD        unknown_04;
+    DWORD        id;
+    DWORD        elapsed;               /* milliseconds */
+    DWORD        period;
+    BYTE*        target;                /* told through its slot 0xF0, or NULL */
+} ui_timer;
+
+#define MILLISECONDS (*(const float*) 0x00555FFC)  /* 1000.0f */
+
+BYTE* __fastcall game_FUN_004736f0(BYTE* control);     /* the control before it */
+BYTE* __fastcall game_FUN_00473740(BYTE* control);     /* the control after it */
+BYTE* __fastcall game_FUN_004733b0(BYTE* control, void* edx_unused, POINT* at);
+void  __fastcall dialog_track_pointer(BYTE* self);
+
+/* Equal to zero as the x87 compare tests it (C3 set): NaN counts too. */
+static BOOL x87_zero(float value)
+{
+    return !(value < 0.0f || value > 0.0f);
+}
+
+/*
+    Vtable slot 10, the frame's tick: run the timers, follow the focused control with the cursor,
+    and move focus between controls with a joystick's left and right.
+*/
+PORT(0x0046FE30)
+int __fastcall dialog_tick(BYTE* self, void* edx_unused, float seconds)
+{
+    gui_user* user;
+    BYTE* focus;
+    gui_input* input;
+    int i;
+
+    (void) edx_unused;
+    if (x87_zero(FIELD(self, 0x9C0, float)))
+        FIELD(self, 0x9C0, DWORD) = 0x3A83126F;               /* 0.001: the first frame */
+    else
+        FIELD(self, 0x9C0, float) = seconds;
+
+    if (FIELD(self, 0x7F40, int)) {
+        ui_event event;
+
+        event.manager = FIELD(self, DLG_MANAGER, gui_manager*);
+        event.e = 0;
+        event.type = 0x12;
+        event.b = 0;
+        event.sender = self;
+        event.c = 0;
+        VIRTUAL(self, 0x74, dialog_handle)(self, NULL, &event);
+        FIELD(self, 0x7F40, DWORD) = 0;
+    }
+    if ((FIELD(self, 0x25, BYTE) & 4) || FIELD(self, 0x7F50, int))
+        return 1;
+
+    for (i = 0;; i++) {
+        container_list* children = &FIELD(self, DLG_CHILDREN, container_list);
+        ui_timer* timer;
+
+        if (children->count <= 0 || !children->items || i >= children->count)
+            break;
+        timer = children->items[i];
+        if (!timer)
+            break;
+        timer->elapsed += (int) ((double) seconds * MILLISECONDS);
+        if (timer->elapsed < timer->period)
+            continue;
+        timer->elapsed = 0;
+        if (timer->target) {
+            VIRTUAL(timer->target, 0xF0, method_1)(timer->target, NULL, (DWORD) timer);
+        } else {
+            ui_event event;
+
+            event.a = timer->id;
+            event.manager = FIELD(self, DLG_MANAGER, gui_manager*);
+            event.e = 0;
+            event.type = 7;
+            event.b = 0;
+            event.sender = self;
+            event.c = 0;
+            VIRTUAL(self, 0x74, dialog_handle)(self, NULL, &event);
+            if (event.e)
+                return 1;
+        }
+    }
+
+    user = FIELD(self, DLG_USER, gui_user*);
+    focus = user->focus;
+    gui_user_cursor_follow(user, NULL, focus && FIELD(focus, 0x180, BYTE*) ? FIELD(focus, 0x180, BYTE*)
+                                                                          : FIELD(self, 0x95C, BYTE*));
+    for (i = 0; (input = gui_user_claimed(FIELD(self, DLG_USER, gui_user*), NULL, i)) != NULL; i++) {
+        BYTE* next = NULL;
+        int x, y;
+
+        if (FIELD(input->device, 0xC, int) != 2 || !focus)
+            continue;
+        x = input->x;
+        y = input->y;
+        if (x <= -1) {
+            if (!FIELD(self, 0x7F1C, int))
+                continue;
+            next = game_FUN_004736f0(focus);
+        } else if (x >= 1) {
+            if (!FIELD(self, 0x7F1C, int))
+                continue;
+            next = game_FUN_00473740(focus);
+        } else {
+            if (y <= -1 || y >= 1) {
+                if (FIELD(self, 0x7F1C, int))
+                    FIELD(self, 0x7F1C, DWORD) = 0;
+            } else {
+                FIELD(self, 0x7F1C, DWORD) = 1;
+            }
+            continue;
+        }
+        FIELD(self, 0x7F1C, DWORD) = 0;
+        if (next)
+            dialog_queue_focus(self, NULL, next, NULL, 0);
+    }
+    dialog_track_pointer(self);
+    game_vf_10_46A300(self, NULL, FIELD(self, 0x9C0, DWORD));
+    return 1;
+}
+
+/*
+    With the pointing device off every control, focus goes to the dialog itself: the user's focus
+    is queued to NULL when it is on one of this dialog's controls and nothing else is waiting.
+*/
+PORT(0x00470050)
+void __fastcall dialog_track_pointer(BYTE* self)
+{
+    gui_user* user = FIELD(self, DLG_USER, gui_user*);
+    BYTE* container;
+    BYTE* focus;
+    POINT at;
+
+    if (!user->input)
+        return;
+    container = FIELD(self, DLG_CONTAINER, BYTE*);
+    if (!FIELD(container, 0x10, BYTE*))
+        return;
+    focus = user->focus;
+    if (focus && FIELD(focus, 0xB8, BYTE*) != self)
+        focus = NULL;
+    at.x = user->input->x;
+    at.y = user->input->y;
+    if (!FIELD(container, 0x10, BYTE*))
+        return;
+    FIELD(user, 0x1DC, DWORD) = 0;
+    if (!game_FUN_004733b0(FIELD(FIELD(self, DLG_CONTAINER, BYTE*), 0x10, BYTE*), NULL, &at) && focus
+        && !FIELD(self, DLG_USER, gui_user*)->next_focus)
+        gui_user_queue_focus(FIELD(self, DLG_USER, gui_user*), NULL, NULL, NULL, 1);
+}
+
+/* ---- UIDialog: drawing -------------------------------------------------------------------- */
+
+/* The frozen dialog's picture (0x7F44), drawn at its place through the background or the screen. */
+static void draw_frozen(BYTE* self, void* picture)
+{
+    if (FIELD(self, DLG_BACKGROUND, BYTE*))
+        background_draw(FIELD(self, DLG_BACKGROUND, BYTE*), NULL, picture, &FIELD(self, 0x160, RECT),
+                        NULL, 0x1000000, FIELD(self, 0x7F48, int), 1, &FIELD(self, 0x7F4C, int), 0);
+    else
+        VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL,
+                                                      &FIELD(self, 0x160, RECT), picture, NULL,
+                                                      0x1000000);
+}
+
+/*
+    Vtable slot 13: draw over. The controls' background slots are redrawn first. A frozen dialog
+    (bit 2 of byte 0x25) draws its picture instead, when it has one and 0x7F18 is clear.
+*/
+PORT(0x004700F0)
+int __fastcall dialog_draw_over(BYTE* self)
+{
+    if (!(FIELD(self, 0x25, BYTE) & 4)) {
+        BYTE walk[0x94];
+
+        walk_begin(walk, NULL, FIELD(self, DLG_CONTAINER, void*), 1, UICONTROL_CLASS);
+        if (FIELD(self, DLG_BACKGROUND, BYTE*)) {
+            BYTE* control;
+
+            for (control = walk_next(walk); control; control = walk_next(walk)) {
+                int slot = FIELD(control, 0x1B8, int);
+
+                if (slot >= 0 && (!FIELD(control, 0x1C0, int) || FIELD(control, 0x1BC, int)))
+                    background_slot_redraw(FIELD(self, DLG_BACKGROUND, BYTE*), NULL, slot,
+                                           (RECT*) (control + 0x2C));
+            }
+        }
+        game_vf_13_46A260(self);
+        walk_end(walk);
+    } else if (FIELD(self, 0x7F44, void*) && !FIELD(self, 0x7F18, int)) {
+        draw_frozen(self, FIELD(self, 0x7F44, void*));
+    }
+    return 1;
+}
+
+/* Vtable slot 14: nothing while frozen. */
+PORT(0x00470230)
+int __fastcall dialog_slot_14(BYTE* self)
+{
+    if (FIELD(self, 0x25, BYTE) & 4)
+        return 1;
+    return game_vf_14_46A290(self);
+}
+
+/* Vtable slot 15: draw; a frozen dialog draws its picture when 0x7F18 is set. Slot 0x68 follows a
+   screen change while 0x7F50 is set. */
+PORT(0x00470250)
+int __fastcall dialog_draw(BYTE* self)
+{
+    if (!(FIELD(self, 0x25, BYTE) & 4))
+        game_vf_15_46A2D0(self);
+    else if (FIELD(self, 0x7F44, void*) && FIELD(self, 0x7F18, int))
+        draw_frozen(self, FIELD(self, 0x7F44, void*));
+    if (FIELD(self, 0x7F50, int) && FIELD(self, 0x7F54, DWORD) != FIELD(object_screen(self), 0x1C, DWORD))
+        VIRTUAL(self, 0x68, method_0)(self);
+    return 1;
+}
+
+/* ---- Text --------------------------------------------------------------------------------- */
+
+/*
+    A run of a dialog's text, as the markup parser makes them: plain text, a colour change (~N) or
+    a tab stop (|X). The array ends with a run whose text is NULL.
+*/
+typedef struct text_run {
+    const char* text;
+    int         kind;               /* 1: switch to `colour`, 2: move to `tab` from the start */
+    int         length;
+    COLORREF    colour;
+    int         width;
+    int         tab;
+} text_run;
+
+_Static_assert(sizeof(text_run) == 24, "a text run is 24 bytes");
+
+/* Where the text being drawn has got to, in the game's data. */
+#define text_run_index  (*(int*) 0x0066174C)
+#define text_x          (*(int*) 0x006616AC)
+#define text_colour     (*(COLORREF*) 0x006616BC)
+#define text_size       (*(SIZE*) 0x00661728)
+#define text_left       (*(int*) 0x006616F0)
+#define text_top        (*(int*) 0x006616CC)
+
+/* `text` in `colour`, over a shadow one pixel up and left when `shadow` is set. */
+PORT(0x004702F0)
+void __fastcall text_out(void* self, void* edx_unused, HDC dc, int x, int y, const char* text,
+                         int length, COLORREF colour, BOOL shadow, COLORREF shadow_colour)
+{
+    (void) self;
+    (void) edx_unused;
+    if (shadow) {
+        SetTextColor(dc, shadow_colour);
+        TextOutA(dc, x - 1, y - 1, text, length);
+    }
+    SetTextColor(dc, colour);
+    TextOutA(dc, x, y, text, length);
+}
+
+/*
+    Draw text split into runs from (x, y): colour runs change the colour, tab runs move to their
+    stop. A shadow goes one pixel down and right of each run when `shadow` is set.
+*/
+PORT(0x00470350)
+void __fastcall text_out_runs(void* self, void* edx_unused, HDC dc, int x, int y, const char* text,
+                              int length, const text_run* runs, COLORREF colour, BOOL shadow,
+                              COLORREF shadow_colour)
+{
+    (void) self;
+    (void) edx_unused;
+    (void) text;
+    (void) length;
+    text_run_index = 0;
+    text_x = x;
+    SetTextColor(dc, colour);
+    text_colour = colour;
+    while (runs[text_run_index].text) {
+        const text_run* run = &runs[text_run_index];
+
+        if (run->kind == 2)
+            text_x = x + run->tab;
+        if (shadow) {
+            SetTextColor(dc, shadow_colour);
+            run = &runs[text_run_index];
+            TextOutA(dc, text_x + 1, y + 1, run->text, run->length);
+            SetTextColor(dc, text_colour);
+        }
+        run = &runs[text_run_index];
+        if (run->kind == 1) {
+            text_colour = run->colour;
+            SetTextColor(dc, text_colour);
+        }
+        run = &runs[text_run_index];
+        TextOutA(dc, text_x, y, run->text, run->length);
+        text_x += runs[text_run_index].width;
+        text_run_index++;
+    }
+}
+
+/*
+    Draw `text` in `area`, placed by `align`: 2 centred across, 4 right; 0x10 centred down, 0x20 at
+    the bottom (`height` high, or the dialog's font size). Align 9 keeps the last measurement.
+    `control` measures it, when given; `runs` draws it as runs.
+*/
+PORT(0x00470480)
+void __fastcall dialog_draw_text(BYTE* self, void* edx_unused, HDC dc, const RECT* area,
+                                 const char* text, int length, COLORREF colour, int height,
+                                 const text_run* runs, BOOL shadow, COLORREF shadow_colour,
+                                 DWORD align, BOOL transparent, BYTE* control)
+{
+    (void) edx_unused;
+    SetBkMode(dc, transparent ? TRANSPARENT : OPAQUE);
+    if (align != 9) {
+        if (control) {
+            text_size.cx = VIRTUAL(control, 0x94, SIZE* (__fastcall*)(void*))(control)->cy;
+            text_size.cy = FIELD(control, 0x160, LONG);
+        } else {
+            GetTextExtentPoint32A(dc, text, length, &text_size);
+        }
+    }
+    if (align & 2)
+        text_left = area->left + (area->right - area->left) / 2 - text_size.cx / 2;
+    else if (align & 4)
+        text_left = area->right - text_size.cx;
+    else
+        text_left = area->left;
+    if (!height)
+        height = FIELD(self, DLG_SCREEN_SIZE, int);
+    if (align & 0x10)
+        text_top = area->top + (area->bottom - area->top) / 2 - height / 2;
+    else if (align & 0x20)
+        text_top = area->bottom - height;
+    else
+        text_top = area->top;
+
+    if (runs)
+        text_out_runs(self, NULL, dc, text_left, text_top, text, length, runs, colour, shadow,
+                      shadow_colour);
+    else
+        text_out(self, NULL, dc, text_left, text_top, text, length, colour, shadow, shadow_colour);
+}
+
+/* What a control's text slots give: text, length, runs, and the measured size (0x88 to 0x94). */
+#define control_text(c)    VIRTUAL(c, 0x88, const char* (__fastcall*)(void*))(c)
+#define control_length(c)  VIRTUAL(c, 0x8C, int (__fastcall*)(void*))(c)
+#define control_runs(c)    VIRTUAL(c, 0x90, const text_run* (__fastcall*)(void*))(c)
+#define control_extent(c)  VIRTUAL(c, 0x94, SIZE* (__fastcall*)(void*))(c)
+
+#define control_text_left  (*(int*) 0x00661730)
+#define control_text_top   (*(int*) 0x00661708)
+#define control_text_size  (*(SIZE*) 0x006616E8)
+
+/* Draw `control`'s text inside its padded rectangle, placed by its alignment (0xD8). */
+PORT(0x004705F0)
+void __fastcall dialog_draw_control_text(BYTE* self, void* edx_unused, HDC dc, BYTE* control,
+                                         BOOL transparent)
+{
+    RECT box = *(RECT*) (control + 0x2C);
+    int pad_x = FIELD(control, 0xE8, int);
+    int pad_y = FIELD(control, 0xEC, int);
+    int left = box.left + pad_x;
+    int top = box.top + pad_y;
+    int right = box.right - pad_x;
+    int bottom = box.bottom - pad_y;
+    DWORD align;
+    int width;
+
+    (void) edx_unused;
+    SetBkMode(dc, transparent ? TRANSPARENT : OPAQUE);
+    if (FIELD(control, 0xD8, DWORD) != 9) {
+        width = control_extent(control)->cy;
+        control_text_size.cx = width;
+        control_text_size.cy = FIELD(control, 0x160, LONG);
+    } else {
+        width = control_text_size.cx;
+    }
+    align = FIELD(control, 0xD8, DWORD);
+    if (align & 2)
+        control_text_left = left + (right - left) / 2 - width / 2;
+    else if (align & 4)
+        control_text_left = right - width;
+    else
+        control_text_left = left;
+    align = FIELD(control, 0xD8, DWORD);
+    if (align & 0x10)
+        control_text_top = top + (bottom - top) / 2 - FIELD(self, DLG_SCREEN_SIZE, int) / 2;
+    else if (align & 0x20)
+        control_text_top = bottom - FIELD(self, DLG_SCREEN_SIZE, int);
+    else
+        control_text_top = top;
+
+    if (control_runs(control)) {
+        COLORREF shadow_colour = FIELD(control, 0xC8, COLORREF);
+        COLORREF colour = FIELD(control, 0xC4, COLORREF);
+        const text_run* runs = control_runs(control);
+        int length = control_length(control);
+
+        text_out_runs(self, NULL, dc, control_text_left, control_text_top, control_text(control),
+                      length, runs, colour, colour, shadow_colour);
+    } else {
+        COLORREF shadow_colour = FIELD(control, 0xC8, COLORREF);
+        BOOL shadow = FIELD(control, 0xD4, BOOL);
+        COLORREF colour = FIELD(control, 0xC4, COLORREF);
+        int length = control_length(control);
+
+        text_out(self, NULL, dc, control_text_left, control_text_top, control_text(control),
+                 length, colour, shadow, shadow_colour);
+    }
+}
+
+/* ---- Text markup -------------------------------------------------------------------------- */
+
+char* __cdecl game_FUN_0053b580(const char* text, int c);               /* strchr */
+
+/* Measure `text` in `font` (or the dialog's) on the screen's DC. FALSE when there is no DC. */
+static BOOL measure_text(BYTE* self, HFONT font, const char* text, int length, SIZE* size)
+{
+    void* surface = FIELD(object_screen(self), 0x48, void*);
+    HDC dc;
+    HGDIOBJ old;
+
+    if (VIRTUAL(surface, 0x44, HRESULT (__stdcall*)(void*, HDC*))(surface, &dc))
+        return FALSE;
+    old = SelectObject(dc, font ? font : FIELD(self, DLG_FONT, HFONT));
+    GetTextExtentPoint32A(dc, text, length, size);
+    SelectObject(dc, old);
+    surface = FIELD(object_screen(self), 0x48, void*);
+    VIRTUAL(surface, 0x68, HRESULT (__stdcall*)(void*, HDC))(surface, dc);
+    return TRUE;
+}
+
+/*
+    Split `text` into runs at its markup: "~N" switches to the dialog's colour N (0-9), "|X" moves
+    to tab stop X (0-9, then a-z or A-Z for 10 on) of `tabs`. Each run is measured in `font`. With
+    `extent`, [0] gets the length without the markup and [1] the total width. Returns the runs on
+    the heap, ended by an empty run, or NULL when the text has no markup (or no tabs for its "|"),
+    or while the game's flag 0x538 is set.
+
+    The original is split in two at 0x00470822, which only this function jumps to.
+*/
+PORT(0x004707C0)
+text_run* __fastcall dialog_parse_runs(BYTE* self, void* edx_unused, const char* text,
+                                       COLORREF colour, HFONT font, const int* tabs, int* extent)
+{
+    text_run runs[100];
+    const char* pending = NULL;           /* where the markup before the current run began */
+    const char* start;
+    SIZE size = { 0, 0 };                 /* the original leaves it unset until measured */
+    int length, i = 0, count = 0, at = 2;
+    text_run* copy;
+
+    (void) edx_unused;
+    if (FIELD(game_main, 0x538, int))
+        return NULL;
+    if (!game_FUN_0053b580(text, '~') && (!game_FUN_0053b580(text, '|') || !tabs))
+        return NULL;
+
+    length = (int) text_length(text);
+    if (text[0] != '~' && text[0] != '|') {
+        runs[0].text = text;
+        runs[0].colour = colour;
+        runs[0].kind = 1;
+        count = 1;
+    }
+    start = text;
+    if (text[0]) {
+        do {
+            char mark = text[i];
+            text_run* run;
+
+            if (mark != '~' && mark != '|') {
+                at++;
+                i++;
+                continue;
+            }
+            if (!pending)
+                pending = &text[i];
+            if (at >= length)
+                break;
+            if (text[i + 2] == '~' || text[i + 2] == '|') {
+                i += 2;
+                at += 2;
+                continue;
+            }
+
+            run = &runs[count];
+            run->text = &text[i + 2];
+            if (mark == '~') {
+                int n = text[i + 1] - '0';
+
+                run->kind = 1;
+                if (n > 9)
+                    n = 9;
+                else if (n < 0)
+                    n = 0;
+                run->colour = FIELD(self, DLG_COLOURS + 4 * n, COLORREF);
+            } else {
+                run->kind = 2;
+                if (tabs) {
+                    char stop = text[i + 1];
+                    int n;
+
+                    if (stop >= '0' && stop <= '9')
+                        n = stop - '0';
+                    else if (stop >= 'a' && stop <= 'z')
+                        n = stop - 'a' + 10;
+                    else if (stop >= 'A' && stop <= 'Z')
+                        n = stop - 'A' + 10;
+                    else
+                        n = 0;
+                    run->tab = tabs[n];
+                } else {
+                    run->tab = 0;
+                }
+            }
+            at += 2;
+            i += 2;
+            if (count) {
+                text_run* previous = &runs[count - 1];
+
+                previous->length = pending ? (int) (pending - start) : (int) (run->text - start) - 2;
+                measure_text(self, font, previous->text, previous->length, &size);
+                previous->width = size.cx;
+            }
+            start = run->text;
+            count++;
+            pending = NULL;
+        } while (text[i]);
+    }
+
+    if (count) {
+        text_run* last = &runs[count - 1];
+
+        last->length = pending ? (int) (pending - last->text) : (int) (text + length - last->text);
+        if (measure_text(self, font, last->text, last->length, &size))
+            last->width = size.cx;
+        else
+            last->width = 0;
+    }
+    if (extent) {
+        int n;
+
+        extent[1] = 0;
+        extent[0] = length - 2 * count;
+        for (n = 0; n < count; n++)
+            extent[1] += runs[n].width;
+    }
+    runs[count].text = NULL;
+    runs[count].length = 0;
+    runs[count].kind = 0;
+
+    copy = game_FUN_004a4410((count + 1) * sizeof(text_run), GAMEUI_CPP, 0xA5B);
+    if (copy)
+        __movsb((BYTE*) copy, (BYTE*) runs, (count + 1) * sizeof(text_run));
+    return copy;
+}

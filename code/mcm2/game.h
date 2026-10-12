@@ -33,6 +33,10 @@ void  __cdecl game_FUN_004a46b0(void* p);
 #define game_new    game_FUN_004a4600
 #define game_delete game_FUN_004a46b0
 
+/* The game's other tracked allocation pair, with the file and line passed to the free too. */
+void* __cdecl game_FUN_004a4410(size_t size, const char* file, int line);
+void  __cdecl game_FUN_004a4450(void* p, const char* file, int line);
+
 /* The file names the game's tracked allocations report, at the game's own strings. */
 #define GUIMANAGER_CPP ((const char*) 0x0057244C)   /* "...\GUIManager.cpp" */
 
@@ -108,6 +112,7 @@ void  __fastcall game_FUN_00469c40(void* self);
 void  __fastcall game_vf_8_46A220(void* self, void* edx_unused, void* screen);
 int   __fastcall game_vf_10_46A300(void* self, void* edx_unused, DWORD time);
 int   __fastcall game_vf_13_46A260(void* self);
+int   __fastcall game_vf_14_46A290(void* self);
 int   __fastcall game_vf_15_46A2D0(void* self);
 int   __fastcall game_vf_22_46A4B0(void* self, void* edx_unused, DWORD a, DWORD b);
 int   __fastcall game_vf_23_46A500(void* self, void* edx_unused, DWORD a, DWORD b);

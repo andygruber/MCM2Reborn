@@ -236,6 +236,10 @@ void __fastcall gui_user_make_cursor(gui_user* self, void* edx_unused, const cha
 void __fastcall gui_user_set_cursor(gui_user* self, void* edx_unused, const char* image,
                                     BOOL refresh);
 void __fastcall gui_user_drop_cursor(gui_user* self);
+void __fastcall gui_user_cursor_follow(gui_user* self, void* edx_unused, BYTE* device);
+gui_input* __fastcall gui_user_claimed(gui_user* self, void* edx_unused, int index);
+int  __fastcall gui_user_queue_focus(gui_user* self, void* edx_unused, BYTE* dialog, BYTE** old,
+                                     BOOL now);
 void __fastcall gui_manager_drop_cursors(gui_manager* self);
 void __fastcall gui_manager_set_cursors(gui_manager* self, void* edx_unused, const char* image,
                                         DWORD arg);

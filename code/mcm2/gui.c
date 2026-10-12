@@ -1543,9 +1543,7 @@ int __cdecl hires_meter_init(void)
 
 /* ---- Pictures: the screen behind the menus, and the tooltip's box ------------------------- */
 
-/* The game's other tracked allocation pair, and the bytes per pixel of a video mode. */
-void* __cdecl game_FUN_004a4410(size_t size, const char* file, int line);
-void  __cdecl game_FUN_004a4450(void* p, const char* file, int line);
+/* The bytes per pixel of a video mode. */
 int   __cdecl game_FUN_00517050(int mode);
 
 /* Hide, and show again, every object of a class under the game's scene (0x34). */
