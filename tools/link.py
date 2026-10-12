@@ -138,6 +138,12 @@ def bindings(objects):
                 (options.add("/ALTERNATENAME:%s=%s" % (name, target)) if target in imports
                  else missing.add("%s (not imported by the game)" % m.group(1)))
                 continue
+            # A Win32 call the header does not mark dllimport (imm.h's) goes to a plain routine:
+            # the game's own thunk of that name, which jumps through its import slot.
+            m = re.match(r"^_(\w+)@\d+$", name)
+            if m and m.group(1) in publics and "__imp__" + m.group(1) in imports:
+                options.add("/ALTERNATENAME:%s=%s" % (name, m.group(1)))
+                continue
             if name in COMPILER_HELPERS:
                 target = COMPILER_HELPERS[name]
                 (options.add("/ALTERNATENAME:%s=%s" % (name, target)) if target in publics

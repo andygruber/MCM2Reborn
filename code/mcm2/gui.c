@@ -12,6 +12,7 @@
 
 #include "game.h"
 #include <unknwn.h>
+#include <imm.h>
 
 typedef struct gui_manager gui_manager;
 typedef struct gui_user gui_user;
@@ -119,7 +120,7 @@ struct gui_user {
     int            unknown_c4;
     char           cursor_image[0x80];
     char           wait_image[0x80];
-    int            unknown_1c8;
+    BYTE*          own_device;          /* the cursor follows it when given no other */
     BYTE*          next_focus;          /* a dialog to take focus */
     BYTE*          next_capture;        /* a dialog to take focus and capture */
     BYTE*          capture;
@@ -218,16 +219,13 @@ void __fastcall game_FUN_00470fa0(void* dialog, void* edx_unused, DWORD a, DWORD
 /* The C library's strcmp, as the game links it. */
 int __cdecl game_FUN_0053b910(const char* a, const char* b);
 
-/* Not ported yet. */
-void* __fastcall game_FUN_00486d80(gui_manager* self);
-void* __fastcall game_FUN_00487100(gui_manager* self, void* edx_unused, DWORD a, DWORD b);
+/* Ported below. */
+void* __fastcall gui_manager_capture_screen(gui_manager* self, void* edx_unused, BOOL darken,
+                                            const RECT* area);
+void  __fastcall gui_user_set_ime(gui_user* self, void* edx_unused, BOOL on);
+void  __fastcall gui_input_reset(gui_input* self);
 void* __fastcall game_FUN_00403d80(void* self, void* edx_unused, DWORD flag);
-void  __fastcall game_FUN_00488920(gui_user* self, void* edx_unused, DWORD numeric);
-void  __fastcall game_FUN_00488d60(gui_user* self, void* edx_unused, const char* image, DWORD arg);
-void  __fastcall game_FUN_00488fa0(gui_user* self, void* edx_unused, const char* image, DWORD arg);
-void  __fastcall game_FUN_00489050(gui_user* self);
 void  __fastcall game_vf_28_483430(gui_manager* self);
-int   __fastcall game_FUN_004880e0(gui_input* self);
 
 /* Ported below, and called before they are defined. */
 void __fastcall gui_manager_drop_backdrop(gui_manager* self);
@@ -236,6 +234,13 @@ gui_user* __fastcall gui_manager_user(gui_manager* self, void* edx_unused, int i
 void __fastcall gui_user_drop_tooltip(gui_user* self);
 void __fastcall gui_user_make_tooltip(gui_user* self, void* edx_unused, void* screen,
                                       gui_manager* manager);
+BYTE* __fastcall gui_manager_active_dialog(gui_manager* self);
+void __fastcall gui_manager_refresh(gui_manager* self);
+void __fastcall gui_user_make_cursor(gui_user* self, void* edx_unused, const char* image,
+                                     DWORD arg);
+void __fastcall gui_user_set_cursor(gui_user* self, void* edx_unused, const char* image,
+                                    BOOL refresh);
+void __fastcall gui_user_drop_cursor(gui_user* self);
 void __fastcall gui_manager_drop_cursors(gui_manager* self);
 void __fastcall gui_manager_set_cursors(gui_manager* self, void* edx_unused, const char* image,
                                         DWORD arg);
@@ -500,10 +505,11 @@ void __fastcall gui_manager_show_dialog(gui_manager* self, void* edx_unused, BYT
                                         DWORD arg, DWORD wait)
 {
     DWORD shown = FIELD(dialog, 0x25, BYTE) & 1;
-    BYTE* parent = FIELD(dialog, 0x2C, BYTE*);
+    BYTE* parent;
 
     (void) edx_unused;
     dialog_show(dialog, NULL, 0);
+    parent = FIELD(dialog, 0x2C, BYTE*);
     if (parent && (FIELD(dialog, 0x144, BYTE) & 1))
         object_add_sibling(FIELD(parent, 0x7F3C, void*), NULL, dialog, -1);
     else
@@ -531,7 +537,7 @@ BYTE* __fastcall gui_manager_open(gui_manager* self, void* edx_unused, BYTE* dia
 {
     (void) edx_unused;
     if (!(flags & 4) && !(flags & 2)) {
-        if (!game_FUN_00486d80(self) || !FIELD(game_FUN_00486d80(self), 0x148, int))
+        if (!gui_manager_active_dialog(self) || !FIELD(gui_manager_active_dialog(self), 0x148, int))
             gui_manager_drop_backdrop(self);
     } else {
         RECT screen;
@@ -676,7 +682,7 @@ void __fastcall gui_manager_load_backdrop(gui_manager* self, void* edx_unused, D
 {
     (void) edx_unused;
     gui_manager_drop_backdrop(self);
-    self->backdrop = game_FUN_00487100(self, NULL, flag, 0);
+    self->backdrop = gui_manager_capture_screen(self, NULL, flag, NULL);
     if (self->background) {
         self->backdrop_slot = background_new_slot(self->background, NULL, 1);
         background_invalidate(self->background);
@@ -749,7 +755,7 @@ void __fastcall gui_manager_set_cursors(gui_manager* self, void* edx_unused, con
     (void) edx_unused;
     for (i = 0; i < self->user_count; i++) {
         if (self->users[i])
-            game_FUN_00488fa0(self->users[i], NULL, image ? image : self->cursor_image, arg);
+            gui_user_set_cursor(self->users[i], NULL, image ? image : self->cursor_image, arg);
     }
 }
 
@@ -780,7 +786,7 @@ void __fastcall gui_manager_drop_cursors(gui_manager* self)
 
     for (i = 0; i < self->user_count; i++) {
         if (self->users[i])
-            game_FUN_00489050(self->users[i]);
+            gui_user_drop_cursor(self->users[i]);
     }
 }
 
@@ -792,7 +798,7 @@ void __fastcall gui_manager_set_font(gui_manager* self, void* edx_unused, const 
     text_copy(self->font_name, face);
     if (self->font)
         DeleteObject(self->font);
-    self->font = CreateFontA(12, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
+    self->font = CreateFontA(12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                              CLIP_DEFAULT_PRECIS, PROOF_QUALITY, VARIABLE_PITCH, face);
 }
 
@@ -1017,7 +1023,7 @@ int __fastcall gui_input_slot_25(gui_input* self, void* edx_unused, DWORD a)
 {
     (void) edx_unused;
     game_vf_25_46A650(self, NULL, a);
-    game_FUN_004880e0(self);
+    gui_input_reset(self);
     return 1;
 }
 
@@ -1036,7 +1042,7 @@ gui_user* __fastcall gui_user_construct(gui_user* self)
     self->manager = NULL;
     self->tooltip = NULL;
     self->cursor = NULL;
-    self->unknown_1c8 = 0;
+    self->own_device = NULL;
     self->cursor_image[0] = 0;
     self->wait_image[0] = 0;
     self->unknown_c4 = 0;
@@ -1133,9 +1139,9 @@ int __fastcall gui_user_set_capture(gui_user* self, void* edx_unused, BYTE* cont
         if (FIELD(control, 0x5C, int) == 11) {
             const char* allowed = FIELD(control, 0x210, const char*);
 
-            game_FUN_00488920(self, NULL, !(allowed && text_equal(allowed, DIGITS)));
+            gui_user_set_ime(self, NULL, !(allowed && text_equal(allowed, DIGITS)));
         } else {
-            game_FUN_00488920(self, NULL, 0);
+            gui_user_set_ime(self, NULL, 0);
         }
     }
     return taken;
@@ -1304,6 +1310,899 @@ void __fastcall gui_manager_add_cursors(gui_manager* self, void* edx_unused, con
     (void) edx_unused;
     for (i = 0; i < self->user_count; i++) {
         if (self->users[i])
-            game_FUN_00488d60(self->users[i], NULL, image ? image : self->cursor_image, arg);
+            gui_user_make_cursor(self->users[i], NULL, image ? image : self->cursor_image, arg);
     }
+}
+
+/* ---- GUIManager: set-up ------------------------------------------------------------------- */
+
+/* The device lists the game keeps: keyboard, mouse and joysticks (at 0x10, input_count() of them). */
+#define game_inputs FIELD(game_main, 0x14, BYTE*)
+
+/* Make sure the game's sound bank 0x5622 is loaded. */
+int  __fastcall game_FUN_004c2cf0(void* sound, void* edx_unused, DWORD bank, DWORD a, DWORD b,
+                                  DWORD size, DWORD c);
+void __fastcall game_FUN_004c3060(void* sound, void* edx_unused, DWORD bank, DWORD a, DWORD b);
+
+/* The menus' font texture: 72 bytes, made when the caller passes none. */
+void* __fastcall game_FUN_00401a60(void* self, void* edx_unused, DWORD flag);
+
+gui_input* __fastcall gui_input_setup(gui_input* self, void* edx_unused, void* screen,
+                                      BYTE* device, float x_from, float x_to, float y_from,
+                                      float y_to);
+
+/* Make a GUIInputDevice for `device` in `slot`, under the manager and before its dialogs. */
+static void add_input(gui_manager* self, gui_input** slot, int line, BYTE* device, float from,
+                      float to)
+{
+    gui_input* input = game_new(sizeof(gui_input), GUIMANAGER_CPP, line);
+
+    if (input)
+        input = gui_input_construct(input);
+    *slot = object_add_child(self, NULL, gui_input_setup(input, NULL, object_screen(self), device,
+                                                           from, to, from, to), -1);
+    object_move_before(*slot, NULL, self->group, -1);
+    gui_input_reset(*slot);
+}
+
+/*
+    Set the manager up on `screen`: the font object (made when `font_object` is NULL), the dialog
+    container, the input devices and the first user, who claims the devices and is paired with the
+    mouse.
+*/
+PORT(0x00486340)
+gui_manager* __fastcall gui_manager_setup(gui_manager* self, void* edx_unused, void* screen,
+                                          int a, int b, BYTE* background, DWORD load_sound,
+                                          void* font_object, const char* name, short font_size,
+                                          const char* cursor_image, int c)
+{
+    BYTE* inputs;
+    void* group;
+    gui_user* user;
+    int i;
+
+    (void) edx_unused;
+    object_setup(self, NULL, screen);
+    self->unknown_d8 = b;
+    self->font_object = font_object;
+    if (load_sound && !game_FUN_004c2cf0(FIELD(game_main, 4, void*), NULL, 0x5622, 1, 0x10,
+                                         4000000, 0))
+        game_FUN_004c3060(FIELD(game_main, 4, void*), NULL, 0x5622, 1, 0x10);
+    if (!font_object) {
+        void* made = game_new(0x48, GUIMANAGER_CPP, 0x82);
+
+        if (made)
+            made = game_FUN_00401a60(made, NULL, 1);
+        self->font_object = made;
+        object_add_child(self, NULL, made, -1);
+        self->font_object_made = 1;
+    }
+
+    group = game_new(sizeof(game_object), GUIMANAGER_CPP, 0x88);
+    if (group) {
+        object_construct(group, NULL, 1);
+        *(void***) group = GROUP_VTABLE;
+    }
+    self->group = object_add_child(self, NULL, group, -1);
+    self->unknown_38 = a;
+    self->unknown_34 = a;
+    self->background = background;
+    text_copy(self->name, name);
+    self->font_size = font_size;
+    if (cursor_image)
+        text_copy(self->cursor_image, cursor_image);
+    VIRTUAL(self, 0x48, method_0)(self);
+    self->unknown_d4 = c;
+    self->font = CreateFontA(12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, PROOF_QUALITY, VARIABLE_PITCH, ARIAL);
+
+    inputs = game_inputs;
+    if (FIELD(inputs, 0x30, BYTE*))
+        add_input(self, &self->mouse, 0xA2, FIELD(inputs, 0x30, BYTE*), 0.0f, 0.0f);
+    if (FIELD(inputs, 0x34, BYTE*))
+        add_input(self, &self->keyboard, 0xA9, FIELD(inputs, 0x34, BYTE*), 0.0f, 0.0f);
+    if (FIELD(inputs, 4, int)) {
+        for (i = 0; i < FIELD(inputs, 4, int); i++)
+            add_input(self, &self->joysticks[i], 0xB1, FIELD(inputs, 0x10 + 4 * i, BYTE*), -2.0f,
+                      2.0f);
+    }
+
+    user = game_new(sizeof(gui_user), GUIMANAGER_CPP, 0xBC);
+    if (user)
+        user = gui_user_construct(user);
+    self->users[0] = object_add_child(self, NULL, gui_user_setup(user, NULL, object_screen(self), self),
+                                      -1);
+    if (self->users[0]) {
+        self->user_count = 1;
+        gui_user_claim_inputs(self->users[0]);
+        if (self->mouse) {
+            gui_user_pair(self->users[0], NULL, self->mouse);
+            gui_manager_add_cursors(self, NULL, NULL, 1);
+            gui_manager_set_cursors(self, NULL, NULL, 0);
+        }
+    }
+    gui_user_set_ime(self->users[0], NULL, 0);
+    self->language = LoadLibraryA("uilang.dll");
+    return self;
+}
+
+/*
+    The dialog the users are on: the one marked modal (0x148) if any, else the last one under the
+    mouse, else the first.
+*/
+PORT(0x00486D80)
+BYTE* __fastcall gui_manager_active_dialog(gui_manager* self)
+{
+    BYTE walk[0x94];
+    BYTE* found = NULL;
+    BYTE* dialog;
+
+    game_FUN_0046a880(walk, NULL, self, 1, UIDIALOG);
+    for (dialog = game_FUN_0046a980(walk); dialog; dialog = game_FUN_0046a980(walk)) {
+        if (!found)
+            found = dialog;
+        if (self->mouse) {
+            POINT at;
+
+            at.x = self->mouse->x;
+            at.y = self->mouse->y;
+            if (PtInRect((RECT*) (dialog + 0x160), at))
+                found = dialog;
+        }
+        if (FIELD(dialog, 0x148, int))
+            found = dialog;
+    }
+    game_FUN_0046a970(walk);
+    return found;
+}
+
+/* ---- ToolTip: placing it ------------------------------------------------------------------ */
+
+void __fastcall tooltip_set_text(tooltip* self, void* edx_unused, const char* text,
+                                 const POINT* at, float delay);
+
+/*
+    Show `control`'s tooltip text: under the cursor of the user its dialog belongs to, or else
+    centred under the control.
+*/
+PORT(0x00487AA0)
+void __fastcall tooltip_show_for(tooltip* self, void* edx_unused, BYTE* control)
+{
+    gui_user* user = FIELD(FIELD(control, 0xB8, BYTE*), 0x34, gui_user*);
+    POINT at;
+
+    (void) edx_unused;
+    if (user->input) {
+        at.x = user->input->x;
+        at.y = user->input->y + 16;
+    } else {
+        LONG left = FIELD(control, 0x3C, LONG);
+
+        at.x = left + (FIELD(control, 0x44, LONG) - left) / 2;
+        at.y = FIELD(control, 0x48, LONG);
+    }
+    tooltip_set_text(self, NULL, FIELD(control, 0xF0, const char*), &at, 1.0f);
+}
+
+/* ---- GUIUser: capture, cursor, devices ---------------------------------------------------- */
+
+/* Release the capture, telling the control; the old one is returned through `old` if wanted. */
+PORT(0x00488B80)
+int __fastcall gui_user_release_capture(gui_user* self, void* edx_unused, BYTE** old)
+{
+    (void) edx_unused;
+    if (self->capture && !(FIELD(self->capture, 0x25, BYTE) & 8))
+        VIRTUAL(self->capture, 0x84, control_lose)(self->capture, NULL, NULL);
+    if (old)
+        *old = self->capture;
+    self->capture = NULL;
+    return 1;
+}
+
+/* Let go of every claimed device, up to the first empty entry, and empty the list. */
+PORT(0x00488CF0)
+void __fastcall gui_user_release_inputs(gui_user* self)
+{
+    int i;
+
+    for (i = 0; self->inputs.count > 0 && self->inputs.items && i < self->inputs.count; i++) {
+        gui_input* input = self->inputs.items[i];
+
+        if (!input)
+            break;
+        input->user = NULL;
+    }
+    __stosd((unsigned long*) self->inputs.items, 0, self->inputs.count);
+    self->inputs.count = 0;
+}
+
+/* The cursor kinds GameCursor makes: one that follows a device's axes, and one that does not. */
+void* __fastcall game_FUN_0043fa10(void* self, void* edx_unused, void* screen, void* axis_x,
+                                   void* axis_y, const char* image, int a, BYTE* background,
+                                   DWORD style, void* b);
+void* __fastcall game_FUN_0043fa90(void* self, void* edx_unused, void* screen, const char* image,
+                                   int a, BYTE* background, DWORD style, void* b);
+
+/*
+    Give the user a cursor showing `image` (or its own cursor image), unless it has one or has no
+    device. None is made while the game is in a mode below 8, or in mode 8 with nothing set at
+    the manager's 0x34. In the game's pointer mode the cursor follows the device's axes.
+*/
+PORT(0x00488D60)
+void __fastcall gui_user_make_cursor(gui_user* self, void* edx_unused, const char* image,
+                                     DWORD arg)
+{
+    gui_manager* manager = self->manager;
+    BOOL pointer;
+    int mode;
+    BYTE* owner;
+    DWORD style;
+    gui_cursor* cursor;
+
+    (void) edx_unused;
+    if (manager && manager->background)
+        background_release_dc(manager->background);
+    if (self->cursor || !self->input)
+        return;
+
+    pointer = (FIELD(game_main, 0x2D4, BYTE) & 2) != 0;
+    mode = FIELD(FIELD(game_main, 0x10, BYTE*), 0x28, int);
+    if (mode < 8 || (mode == 8 && !self->manager->unknown_34))
+        return;
+    owner = (BYTE*) self->manager->unknown_34;
+    style = owner ? FIELD(owner, 0x708, DWORD) : 0;
+    if (!image)
+        image = self->cursor_image;
+
+    cursor = game_new(sizeof(gui_cursor), GUIMANAGER_CPP, pointer ? 0x762 : 0x76A);
+    if (cursor)
+        cursor = gui_cursor_construct(cursor, NULL, arg);
+    manager = self->manager;
+    if (pointer)
+        self->cursor = object_add_child(self, NULL,
+                                        game_FUN_0043fa10(cursor, NULL, object_screen(self),
+                                                          self->input->axis_x, self->input->axis_y,
+                                                          image, manager->unknown_d8,
+                                                          manager->background, style,
+                                                          (void*) manager->unknown_34), -1);
+    else
+        self->cursor = object_add_sibling(self, NULL,
+                                          game_FUN_0043fa90(cursor, NULL, object_screen(self), image,
+                                                            manager->unknown_d8,
+                                                            manager->background, style,
+                                                            (void*) manager->unknown_34), -1);
+}
+
+/*
+    Make the cursor follow `device`, or the user's own with NULL. A device the cursor
+    switches to first takes over the old one's place in the tree, when it comes later in it.
+*/
+PORT(0x00488F40)
+void __fastcall gui_user_cursor_follow(gui_user* self, void* edx_unused, BYTE* device)
+{
+    gui_cursor* cursor = (gui_cursor*) self->cursor;
+    BYTE* old;
+
+    (void) edx_unused;
+    if (!cursor)
+        return;
+    if (!device && self->own_device)
+        device = self->own_device;
+    old = cursor->follows;
+    if (old && self->unknown_c4 && device != old && FIELD(device, 0x10, int) > FIELD(old, 8, int)) {
+        FIELD(device, 8, int) = FIELD(old, 8, int);
+        FIELD(device, 0xC, int) = FIELD(old, 0xC, int);
+        FIELD(device, 0x20, int) = FIELD(old, 0x20, int);
+    }
+    gui_cursor_follow((gui_cursor*) self->cursor, NULL, device);
+}
+
+/* The cursor is left alone while bit 1 of the game's flags at 0x2D5 is set. */
+#define cursors_locked() (FIELD(game_main, 0x2D5, BYTE) & 2)
+
+PORT(0x00489050)
+void __fastcall gui_user_drop_cursor(gui_user* self)
+{
+    if (!cursors_locked() && self->cursor)
+        object_destroy(self->cursor);
+    self->cursor = NULL;
+}
+
+/*
+    Make the user's cursor again with `image` (its own with NULL, then following its own
+    device), shown as the old one was. With `refresh`, the whole screen is redrawn.
+*/
+PORT(0x00488FA0)
+void __fastcall gui_user_set_cursor(gui_user* self, void* edx_unused, const char* image,
+                                    BOOL refresh)
+{
+    DWORD shown;
+
+    (void) edx_unused;
+    if (cursors_locked() || !self->input)
+        return;
+    shown = self->cursor ? FIELD(self->cursor, 0x25, BYTE) & 1 : 1;
+    gui_user_drop_cursor(self);
+    if (FIELD(FIELD(game_main, 0x10, BYTE*), 0x28, int) == 8 && !self->manager->unknown_34)
+        return;
+    gui_user_make_cursor(self, NULL, image ? image : self->cursor_image, shown);
+    if (!image && self->own_device && self->cursor)
+        gui_cursor_follow((gui_cursor*) self->cursor, NULL, self->own_device);
+    if (refresh)
+        gui_manager_refresh(self->manager);
+}
+
+/* Whether the user hears from `device`: its paired one, or one it claimed. No device, all. */
+PORT(0x004890F0)
+BOOL __fastcall gui_user_hears(gui_user* self, void* edx_unused, BYTE* device)
+{
+    int count = self->inputs.count;
+    int i;
+
+    (void) edx_unused;
+    if (!self->input || self->input->device == device)
+        return TRUE;
+    for (i = 0; count > 0 && self->inputs.items && i < count; i++) {
+        gui_input* input = self->inputs.items[i];
+
+        if (!input)
+            return FALSE;
+        if (input->device == device)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/* The user's GUIInputDevice for `device`, or NULL. */
+PORT(0x004891D0)
+gui_input* __fastcall gui_user_input_for(gui_user* self, void* edx_unused, BYTE* device)
+{
+    int count = self->inputs.count;
+    int i;
+
+    (void) edx_unused;
+    if (!self->input || self->input->device == device)
+        return self->input;
+    for (i = 0; count > 0 && self->inputs.items && i < count; i++) {
+        gui_input* input = self->inputs.items[i];
+
+        if (!input)
+            return NULL;
+        if (input->device == device)
+            return input;
+    }
+    return NULL;
+}
+
+/* The game's device an input event came from: type 0 keyboard, 1 mouse, 2 and 3 a joystick. */
+static BYTE* event_device(const BYTE* event, BOOL* known)
+{
+    int type = FIELD(event, 4, int);
+
+    *known = TRUE;
+    if (type == 0)
+        return FIELD(game_inputs, 0x34, BYTE*);
+    if (type == 1)
+        return FIELD(game_inputs, 0x30, BYTE*);
+    if (type == 2 || type == 3)
+        return FIELD(game_inputs, 0x10 + 4 * FIELD(event, 8, int), BYTE*);
+    *known = FALSE;
+    return NULL;
+}
+
+PORT(0x00489160)
+BOOL __fastcall gui_user_hears_event(gui_user* self, void* edx_unused, const BYTE* event)
+{
+    BOOL known;
+    BYTE* device = event_device(event, &known);
+
+    (void) edx_unused;
+    return known ? gui_user_hears(self, NULL, device) : FALSE;
+}
+
+PORT(0x00489230)
+gui_input* __fastcall gui_user_input_for_event(gui_user* self, void* edx_unused,
+                                               const BYTE* event)
+{
+    BOOL known;
+    BYTE* device = event_device(event, &known);
+
+    (void) edx_unused;
+    return known ? gui_user_input_for(self, NULL, device) : NULL;
+}
+
+/* A claimed device by index, or NULL past the end. */
+PORT(0x004892A0)
+gui_input* __fastcall gui_user_claimed(gui_user* self, void* edx_unused, int index)
+{
+    (void) edx_unused;
+    if (self->inputs.count > 0 && self->inputs.items && index < self->inputs.count)
+        return self->inputs.items[index];
+    return NULL;
+}
+
+/* ---- UIDlgContainer ----------------------------------------------------------------------- */
+
+PORT(0x004890A0)
+void __fastcall dialog_container_destruct(game_object* self)
+{
+    self->vtable = GROUP_VTABLE;
+    object_destruct(self);
+}
+
+PORT(0x00489080)
+game_object* __fastcall dialog_container_delete(game_object* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    dialog_container_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* ---- The static HiResMeter ---------------------------------------------------------------- */
+
+/* A HiResMeter the game keeps at 0x006815B0, made and destroyed by the C runtime's start-up. */
+#define HIRES_METER ((void*) 0x006815B0)
+void* __fastcall game_FUN_00489310(void* self, void* edx_unused, DWORD flag);
+void  __fastcall game_FUN_004893c0(void* self);
+int   __cdecl    game_FUN_0053aaa0(void (__cdecl* at_exit)(void));      /* atexit */
+
+static void __cdecl hires_meter_destroy(void)
+{
+    game_FUN_004893c0(HIRES_METER);
+}
+
+PORT(0x004892E0)
+void* __cdecl hires_meter_make(void)
+{
+    return game_FUN_00489310(HIRES_METER, NULL, 0);
+}
+
+PORT(0x004892F0)
+int __cdecl hires_meter_destroy_at_exit(void)
+{
+    return game_FUN_0053aaa0(hires_meter_destroy);
+}
+
+/* The C runtime's initializer for it. */
+PORT(0x004892D0)
+int __cdecl hires_meter_init(void)
+{
+    hires_meter_make();
+    return hires_meter_destroy_at_exit();
+}
+
+/* ---- Pictures: the screen behind the menus, and the tooltip's box ------------------------- */
+
+/* The game's other tracked allocation pair, and the bytes per pixel of a video mode. */
+void* __cdecl game_FUN_004a4410(size_t size, const char* file, int line);
+void  __cdecl game_FUN_004a4450(void* p, const char* file, int line);
+int   __cdecl game_FUN_00517050(int mode);
+
+/* Hide, and show again, every object of a class under the game's scene (0x34). */
+void __fastcall game_FUN_00469cb0(void* scene, void* edx_unused, const char* class_name);
+void __fastcall game_FUN_00469df0(void* scene, void* edx_unused, const char* class_name);
+#define GUICURSOR_CLASS ((const char*) 0x00572488)  /* "GUICursor" */
+#define TOOLTIP_CLASS   ((const char*) 0x00572480)  /* "ToolTip" */
+
+/* A picture (128 bytes), and its vtable slot 4 that fills it from pixels. */
+void* __fastcall game_FUN_004ca650(void* self, void* edx_unused, int a, DWORD flag);
+typedef int (__fastcall* picture_fill)(void* picture, void* edx_unused, BYTE* pixels, int width,
+                                       int height, int a, int b, int format, int mode, DWORD c,
+                                       DWORD d, DWORD e, DWORD f, DWORD g, DWORD h, DWORD i,
+                                       DWORD j, DWORD k, DWORD key);
+
+#define video_mode() FIELD(FIELD(game_main, 0x10, BYTE*), 0x28, int)
+
+/* DirectDraw surface calls, by vtable offset: GetDC, ReleaseDC, Lock and Unlock. */
+typedef HRESULT (__stdcall* surface_get_dc)(void* surface, HDC* dc);
+typedef HRESULT (__stdcall* surface_release_dc)(void* surface, HDC dc);
+typedef HRESULT (__stdcall* surface_lock)(void* surface, RECT* area, void* desc, DWORD flags,
+                                          HANDLE event);
+typedef HRESULT (__stdcall* surface_unlock)(void* surface, RECT* area);
+
+/* What DDSURFACEDESC2 fields the capture reads, by offset; the whole is 0x7C bytes. */
+#define DESC_SIZE    0x7C
+#define DESC_HEIGHT  0x08
+#define DESC_WIDTH   0x0C
+#define DESC_PITCH   0x10
+#define DESC_PIXELS  0x24
+#define LOCK_FLAGS   0x811          /* DDLOCK_WAIT | DDLOCK_READONLY | DDLOCK_NOSYSLOCK */
+
+/*
+    A picture of the screen (or `area` of it) without the cursors and tooltips, darkened to half
+    when `darken` is set: 8-bit by blanking every other pixel, the rest by halving each channel.
+    NULL when the screen cannot be locked.
+*/
+PORT(0x00487100)
+void* __fastcall gui_manager_capture_screen(gui_manager* self, void* edx_unused, BOOL darken,
+                                            const RECT* area)
+{
+    int mode = video_mode();
+    int depth = game_FUN_00517050(mode);
+    BYTE desc[DESC_SIZE];
+    BYTE* video;
+    void* surface;
+    void* picture;
+    BYTE* pixels;
+    BYTE* to;
+    int left, top, width, height, count, row;
+
+    (void) edx_unused;
+    if (self->background)
+        background_release_dc(self->background);
+    game_FUN_00469cb0(FIELD(game_main, 0x34, void*), NULL, GUICURSOR_CLASS);
+    game_FUN_00469cb0(FIELD(game_main, 0x34, void*), NULL, TOOLTIP_CLASS);
+    VIRTUAL(game_main, 0x20, method_0)(game_main);
+    VIRTUAL(game_main, 0x24, method_0)(game_main);
+    game_FUN_004eda50(FIELD(game_main, 0x10, void*));
+    game_FUN_00469df0(FIELD(game_main, 0x34, void*), NULL, GUICURSOR_CLASS);
+    game_FUN_00469df0(FIELD(game_main, 0x34, void*), NULL, TOOLTIP_CLASS);
+
+    __stosd((unsigned long*) desc, 0, DESC_SIZE / 4);
+    FIELD(desc, 0, DWORD) = DESC_SIZE;
+    video = FIELD(game_main, 0xC, BYTE*);
+    surface = FIELD(video, 0x1A8, void*) ? FIELD(video, 0x1A8, void*) : FIELD(video, 0x19C, void*);
+    if (VIRTUAL(surface, 0x64, surface_lock)(surface, NULL, desc, LOCK_FLAGS, NULL))
+        return NULL;
+
+    if (area) {
+        left = area->left;
+        top = area->top;
+        width = area->right - left;
+        height = area->bottom - top;
+    } else {
+        left = 0;
+        top = 0;
+        width = FIELD(desc, DESC_WIDTH, int);
+        height = FIELD(desc, DESC_HEIGHT, int);
+    }
+    count = width * height;
+    pixels = game_FUN_004a4410(count * depth, GUIMANAGER_CPP, 0x351);
+    to = pixels;
+    for (row = 0; row < height; row++) {
+        __movsb(to, FIELD(desc, DESC_PIXELS, BYTE*) + (row + top) * FIELD(desc, DESC_PITCH, int)
+                        + left * depth, width * depth);
+        to += width * depth;
+    }
+    VIRTUAL(surface, 0x80, surface_unlock)(surface, NULL);
+
+    if (darken) {
+        if (depth == 1) {
+            unsigned y;
+
+            for (y = 0; y < (unsigned) height; y++) {
+                int x;
+
+                for (x = y & 1; x < width; x += 2)
+                    pixels[y * width + x] = 0;
+            }
+        } else if (depth == 2) {
+            WORD mask = (WORD) ((mode == 0x22B ? 0x7BDE : 0xF7DE) >> 1);   /* 555 or 565 */
+            WORD* pixel = (WORD*) pixels;
+            int n;
+
+            for (n = count; n > 0; n--, pixel++)
+                *pixel = (WORD) ((*pixel >> 1) & mask);
+        } else if (depth == 3 || depth == 4) {
+            BYTE* pixel = pixels;
+            int n;
+
+            for (n = count; n > 0; n--, pixel += depth) {
+                pixel[0] >>= 1;
+                pixel[1] >>= 1;
+                pixel[2] >>= 1;
+            }
+        }
+    }
+
+    picture = game_new(0x80, GUIMANAGER_CPP, 0x394);
+    if (picture)
+        picture = game_FUN_004ca650(picture, NULL, self->unknown_d8, 1);
+    VIRTUAL(picture, 0x10, picture_fill)(picture, NULL, pixels, width, height, width, width, mode,
+                                         mode, 0, 4, 0, 0, 0, 2, 1, 0, 0x80, 0xFF00FF);
+    game_FUN_004a4450(pixels, GUIMANAGER_CPP, 0x399);
+    return picture;
+}
+
+/* A picture `width` by `height` of one colour, keyed on magenta; for the tooltip's box. */
+PORT(0x004876D0)
+void* __fastcall gui_manager_make_box(gui_manager* self, void* edx_unused, int width, int height,
+                                      COLORREF colour)
+{
+    void* picture = game_new(0x80, GUIMANAGER_CPP, 0x474);
+    BYTE* owner;
+    BYTE* pixels;
+    BYTE* pixel;
+    BYTE* end;
+
+    (void) edx_unused;
+    if (picture)
+        picture = game_FUN_004ca650(picture, NULL, self->unknown_d8, 1);
+    if (!picture)
+        return NULL;
+
+    pixels = game_new(width * height * 3, GUIMANAGER_CPP, 0x478);
+    end = pixels + width * height * 3;
+    for (pixel = pixels; pixel < end; pixel += 3) {          /* 24-bit, blue first */
+        pixel[0] = GetBValue(colour);
+        pixel[1] = GetGValue(colour);
+        pixel[2] = GetRValue(colour);
+    }
+    owner = (BYTE*) self->unknown_34;
+    if (VIRTUAL(picture, 0x10, picture_fill)(picture, NULL, pixels, width, height, width, width,
+                                             0x378, video_mode(),
+                                             owner ? FIELD(owner, 0x708, DWORD) : 0, 4,
+                                             owner ? FIELD(owner, 0x70C, DWORD) : 0, 1, 0, 2, 1, 0,
+                                             0x80, 0xFF00FF))
+        VIRTUAL(picture, 0x48, method_1)(picture, NULL, 0xFF00FF);
+    game_delete(pixels);
+    return picture;
+}
+
+/*
+    Set the tooltip's text, to show at `at` after `delay` seconds: the box is made to fit the
+    text in the manager's font, centred on `at` and kept on the screen. NULL hides it.
+*/
+PORT(0x00487B10)
+void __fastcall tooltip_set_text(tooltip* self, void* edx_unused, const char* text,
+                                 const POINT* at, float delay)
+{
+    BYTE* screen;
+    BYTE* box;
+    void* surface;
+    HDC dc;
+    HGDIOBJ old;
+    SIZE size;
+    int width, height, left, top;
+
+    (void) edx_unused;
+    if (self->text) {
+        object_destroy(self->text);
+        self->text = NULL;
+    }
+    if (!text)
+        goto hide;
+    if (self->manager->background && self->background_slot == -1) {
+        self->background_slot = background_new_slot(self->manager->background, NULL, 0);
+        self->redraws = 3;
+    }
+
+    surface = FIELD(object_screen(self), 0x48, void*);
+    if (VIRTUAL(surface, 0x44, surface_get_dc)(surface, &dc))
+        goto hide;
+    old = SelectObject(dc, self->manager->font);
+    GetTextExtentPoint32A(dc, text, (int) text_length(text), &size);
+    SelectObject(dc, old);
+    VIRTUAL(FIELD(object_screen(self), 0x48, void*), 0x68, surface_release_dc)(
+        FIELD(object_screen(self), 0x48, void*), dc);
+
+    screen = object_screen(self);
+    width = size.cx + 2;
+    if (width >= FIELD(screen, 0xC, int) - 2)
+        width = FIELD(screen, 0xC, int) - 2;
+    height = size.cy + 2;
+    self->text_area.top = 0;
+    self->text_area.left = 0;
+    self->text_area.right = width;
+    self->text_area.bottom = height;
+    self->place.left = at->x;
+    self->place.top = at->y;
+
+    left = self->place.left - width / 2;
+    if (left < 0)
+        left = 0;
+    if (FIELD(screen, 0xC, int) - width < left)
+        left = FIELD(screen, 0xC, int) - width;
+    self->place.left = left;
+    top = self->place.top;
+    if (FIELD(screen, 0x10, int) - height < top)
+        top = FIELD(screen, 0x10, int) - height;
+    self->place.top = top;
+    self->place.right = left + width;
+    self->place.bottom = top + height;
+
+    box = gui_manager_make_box(self->manager, NULL, width, height, RGB(0x80, 0x80, 0x80));
+    self->text = (game_object*) box;
+    if (!box || !FIELD(box, 0x70, void*)) {
+        self->shown = 0;
+        self->delay = -1.0f;
+        return;
+    }
+    surface = FIELD(box, 0x70, void*);
+    if (!VIRTUAL(surface, 0x44, surface_get_dc)(surface, &dc)) {
+        old = SelectObject(dc, self->manager->font);
+        SetTextColor(dc, RGB(0xCC, 0xCC, 0xCC));
+        SetBkColor(dc, RGB(0x40, 0x40, 0x40));
+        DrawTextA(dc, text, (int) text_length(text), &self->text_area,
+                  DT_END_ELLIPSIS | DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        SelectObject(dc, old);
+        surface = FIELD(box, 0x70, void*);
+        VIRTUAL(surface, 0x68, surface_release_dc)(surface, dc);
+    }
+    self->shown = 1;
+    self->delay = delay;
+    return;
+
+hide:
+    self->shown = 0;
+    self->delay = -1.0f;
+}
+
+/* ---- GUIInputDevice: its axes ------------------------------------------------------------- */
+
+int   __cdecl    game_FUN_0043de30(void);                               /* a new axis id */
+void* __fastcall game_FUN_0043dbf0(void* axis, void* edx_unused, float from, float to,
+                                   float value, int id, DWORD a, float dead_zone);
+void  __fastcall game_FUN_0048a9b0(void* device, void* edx_unused, void* axis, float a, float b);
+void  __fastcall game_FUN_0048b3b0(void* device, void* edx_unused, void* axis);
+
+/*
+    Make `axis` run from `from` to `to`, at `value`. The original builds it in a temporary, copies
+    it and releases the temporary, and so does this.
+*/
+static void axis_make(BYTE* axis, float from, float to, float value)
+{
+    BYTE made[0x3C];
+    int id = game_FUN_0043de30();
+
+    game_FUN_0043dbf0(made, NULL, from, to, value, id, 0, 0.0f);
+    __movsd((unsigned long*) axis, (unsigned long*) made, sizeof made / 4);
+    game_thunk_FUN_0043dd80(made);
+}
+
+/* Equal to zero as the x87 compare tests it (C3 set): NaN counts too. */
+static BOOL x87_zero(float value)
+{
+    return !(value < 0.0f || value > 0.0f);
+}
+
+/* Register both axes with the device: type 2 with a 0.01 sensitivity, type 1 plainly. */
+static void axes_register(gui_input* self)
+{
+    int type = FIELD(self->device, 0xC, int);
+
+    if (type == 2) {
+        game_FUN_0048a9b0(self->device, NULL, self->axis_x, 0.01f, 0.01f);
+        game_FUN_0048a9b0(self->device, NULL, self->axis_y, 0.01f, 0.01f);
+    } else if (type == 1) {
+        game_FUN_0048b3b0(self->device, NULL, self->axis_x);
+        game_FUN_0048b3b0(self->device, NULL, self->axis_y);
+    }
+}
+
+/*
+    Set the device up on `device`, its axes running over `x_from`..`x_to` and `y_from`..`y_to`;
+    all zero means the whole screen.
+*/
+PORT(0x00487F40)
+gui_input* __fastcall gui_input_setup(gui_input* self, void* edx_unused, void* screen,
+                                      BYTE* device, float x_from, float x_to, float y_from,
+                                      float y_to)
+{
+    (void) edx_unused;
+    object_setup(self, NULL, screen);
+    self->device = device;
+    self->range[0] = x_from;
+    self->range[1] = x_to;
+    self->range[2] = y_from;
+    self->range[3] = y_to;
+    if (x87_zero(x_from) && x87_zero(x_to) && x87_zero(y_from) && x87_zero(y_to)) {
+        x_to = (float) (FIELD(object_screen(self), 0xC, int) - 1);
+        y_to = (float) (FIELD(object_screen(self), 0x10, int) - 1);
+    }
+    axis_make(self->axis_x, self->range[0], x_to, 0.0f);
+    axis_make(self->axis_y, self->range[2], y_to, 0.0f);
+    axes_register(self);
+    return self;
+}
+
+/* Make the axes again over the device's range, where they are now, and register them anew. */
+PORT(0x004880E0)
+void __fastcall gui_input_reset(gui_input* self)
+{
+    int x = (int) FIELD(self->axis_x, 0x24, float);
+    int y = (int) FIELD(self->axis_y, 0x24, float);
+    float x_to, y_to;
+    int type;
+
+    if (!self->device)
+        return;
+    type = FIELD(self->device, 0xC, int);
+    if (type == 2 || type == 1) {
+        VIRTUAL(self->device, 0, method_1)(self->device, NULL, FIELD(self->axis_x, 4, DWORD));
+        VIRTUAL(self->device, 0, method_1)(self->device, NULL, FIELD(self->axis_y, 4, DWORD));
+    }
+    x_to = self->range[1];
+    y_to = self->range[3];
+    if (x87_zero(self->range[0]) && x87_zero(self->range[1]) && x87_zero(self->range[2])
+        && x87_zero(self->range[3])) {
+        x_to = (float) (FIELD(object_screen(self), 0xC, int) - 1);
+        y_to = (float) (FIELD(object_screen(self), 0x10, int) - 1);
+    }
+    axis_make(self->axis_x, self->range[0], x_to, (float) x);
+    axis_make(self->axis_y, self->range[2], y_to, (float) y);
+    axes_register(self);
+}
+
+/* ---- GUIUser: the IME --------------------------------------------------------------------- */
+
+#define game_window       FIELD(game_main, 0x31C, HWND)
+#define game_ime          FIELD(game_main, 0x53C, HIMC)    /* the game's input context */
+#define game_ime_previous FIELD(game_main, 0x540, HIMC)    /* the window's own, put back */
+
+/*
+    Turn the IME on for the control with capture, in its font and at its place, or off with
+    `on` FALSE (cancelling what was being composed).
+*/
+PORT(0x00488920)
+void __fastcall gui_user_set_ime(gui_user* self, void* edx_unused, BOOL on)
+{
+    COMPOSITIONFORM form;
+    LOGFONTA font;
+    POINT status;
+    BYTE* control;
+    const char* face;
+    HWND ime;
+
+    (void) edx_unused;
+    if (!on) {
+        ime = ImmGetDefaultIMEWnd(game_window);
+        if (ime)
+            SendMessageA(ime, WM_IME_CONTROL, IMC_CLOSESTATUSWINDOW, 0);
+        ImmNotifyIME(game_ime, NI_COMPOSITIONSTR, CPS_CANCEL, 0);
+        ImmAssociateContext(game_window, game_ime_previous);
+        return;
+    }
+
+    ImmAssociateContext(game_window, game_ime);
+    control = self->capture;
+    form.dwStyle = CFS_FORCE_POSITION;
+    form.ptCurrentPos.x = FIELD(control, 0x214, LONG);
+    form.ptCurrentPos.y = FIELD(control, 0x218, LONG);
+    form.rcArea = *(RECT*) (control + 0x214);       /* unused with CFS_FORCE_POSITION */
+    ImmSetCompositionWindow(game_ime, &form);
+
+    font.lfWidth = 0;
+    font.lfEscapement = 0;
+    font.lfOrientation = 0;
+    font.lfItalic = 0;
+    font.lfUnderline = 0;
+    font.lfStrikeOut = 0;
+    font.lfCharSet = DEFAULT_CHARSET;
+    font.lfOutPrecision = OUT_DEFAULT_PRECIS;
+    font.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+    font.lfQuality = PROOF_QUALITY;
+    font.lfPitchAndFamily = VARIABLE_PITCH;
+    if (FIELD(control, 0x130, char)) {                       /* the control's own font */
+        face = (const char*) (control + 0x130);
+        font.lfHeight = FIELD(control, 0x160, LONG);
+        font.lfWeight = FIELD(control, 0x158, int) ? FW_BOLD : FW_MEDIUM;
+    } else {
+        BYTE* dialog = FIELD(control, 0xB8, BYTE*);
+
+        if (FIELD(dialog, 0xE0, char)) {                     /* its dialog's */
+            face = (const char*) (dialog + 0xE0);
+            font.lfHeight = FIELD(dialog, 0xDC, LONG);
+            font.lfWeight = FIELD(FIELD(control, 0xB8, BYTE*), 0x108, int) ? FW_BOLD : FW_MEDIUM;
+        } else {                                             /* the manager's */
+            gui_manager* manager = FIELD(control, 0xBC, gui_manager*);
+
+            face = manager->name;
+            font.lfHeight = manager->font_size;
+            font.lfWeight = FIELD(control, 0xBC, gui_manager*)->unknown_3d0[1] ? FW_BOLD : FW_MEDIUM;
+            font.lfItalic = (BYTE) FIELD(control, 0xBC, gui_manager*)->unknown_3d0[2];
+        }
+    }
+    text_copy(font.lfFaceName, face);
+    ImmSetCompositionFontA(game_ime, &font);
+
+    status.x = 550;
+    status.y = 450;
+    ImmSetStatusWindowPos(game_ime, &status);
+    ime = ImmGetDefaultIMEWnd(game_window);
+    if (ime)
+        SendMessageA(ime, WM_IME_CONTROL, IMC_OPENSTATUSWINDOW, 0);
+    ImmSetOpenStatus(game_ime, FALSE);
 }
