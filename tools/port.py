@@ -106,11 +106,13 @@ def main():
     for address, c_name in sorted(ports.items()):
         name, start, end = find_function(lines, address)
 
+        # The function owns everything up to the next one, such as a jump table after its ENDP.
+        extent = next((n for n in range(end, len(lines)) if lines[n].startswith("; @")), len(lines))
         inside = {m.group(1) for line in lines[start:end] for m in [LABEL.match(line)] if m}
         if inside:
             pattern = re.compile("|".join(symbol(l) for l in inside))
             for n, line in enumerate(lines):
-                if (n < start or n >= end) and pattern.search(line):
+                if (n < start or n >= extent) and pattern.search(line):
                     sys.exit("cannot port %s (0x%08X): line %d jumps inside it - %s"
                              % (name, address, n + 1, line.strip()))
 

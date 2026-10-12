@@ -238,6 +238,9 @@ void __fastcall gui_user_set_cursor(gui_user* self, void* edx_unused, const char
                                     BOOL refresh);
 void __fastcall gui_user_drop_cursor(gui_user* self);
 void __fastcall gui_user_cursor_follow(gui_user* self, void* edx_unused, BYTE* device);
+int  __fastcall gui_user_release_capture(gui_user* self, void* edx_unused, BYTE** old);
+void __fastcall tooltip_set_text(tooltip* self, void* edx_unused, const char* text,
+                                 const POINT* at, float delay);
 gui_input* __fastcall gui_user_claimed(gui_user* self, void* edx_unused, int index);
 int  __fastcall gui_user_queue_focus(gui_user* self, void* edx_unused, BYTE* dialog, BYTE** old,
                                      BOOL now);

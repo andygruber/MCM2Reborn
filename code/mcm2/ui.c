@@ -1617,3 +1617,610 @@ void __fastcall dialog_freeze(void* dialog, void* edx_unused, DWORD frozen, DWOR
         dialog_thaw_picture(self);
     game_vf_16_46A3B0(self, NULL, frozen);
 }
+
+/* ---- UIControl ---------------------------------------------------------------------------- */
+
+/*
+    UIControl, the base of every control on a dialog. Fields by offset; 0x2C is its rectangle
+    (also copied to 0x3C), 0xB8 the dialog it is on and 0xBC that dialog's manager.
+*/
+#define CTL_RECT          0x2C
+#define CTL_TYPE          0x5C      /* 11 is a text box */
+#define CTL_STATE         0x64
+#define CTL_ID            0x78
+#define CTL_ANIMATION     0xB4      /* 100 to 106 pick a routine at 0x1D0 */
+#define CTL_DIALOG        0xB8
+#define CTL_MANAGER       0xBC
+#define CTL_TEXT          0xC0      /* char*, on the game's heap */
+#define CTL_COLOUR        0xC4
+#define CTL_SHADOW_COLOUR 0xC8
+#define CTL_LENGTH        0xD0
+#define CTL_SHADOW        0xD4
+#define CTL_ALIGN         0xD8
+#define CTL_EXTENT        0xDC      /* int[2]: length without markup, width */
+#define CTL_RUNS          0xE4      /* text_run*, on the game's heap */
+#define CTL_NAME          0xF4      /* char[0x32] */
+#define CTL_FONT          0x128
+#define CTL_TABS          0x1C4
+#define CTL_SLOT          0x1B8     /* its background slot, or -1 */
+
+#define UICONTROL_VTABLE ((void**) 0x00557C5C)
+
+/*
+    The animation a control runs is a pointer to member function, stored at 0x1D0: each is the
+    compiler's thunk for one vtable slot, which jumps to the method with its arguments in place.
+    These are those thunks, instruction for instruction (the game's own are at 0x0047C540 to
+    0x0047C5A0).
+*/
+#define VCALL_THUNK(name, slot)                                          \
+    static __declspec(naked) void name(void)                             \
+    {                                                                    \
+        __asm mov eax, dword ptr [ecx]                                   \
+        __asm jmp dword ptr [eax + slot]                                 \
+    }
+
+VCALL_THUNK(animate_hide, 0xBC)      /* 0x0047C540 */
+VCALL_THUNK(animate_100, 0xA4)       /* 0x0047C550 */
+VCALL_THUNK(animate_101, 0xA8)       /* 0x0047C560 */
+VCALL_THUNK(animate_102, 0xAC)       /* 0x0047C570 */
+VCALL_THUNK(animate_103, 0xB0)       /* 0x0047C580 */
+VCALL_THUNK(animate_104, 0xB4)       /* 0x0047C590 */
+VCALL_THUNK(animate_106, 0xB8)       /* 0x0047C5A0 */
+
+int   __cdecl    game__rand(void);
+void  __fastcall game_FUN_00474d40(BYTE* box, void* edx_unused, const char* text);   /* a text box's */
+void* __fastcall game_FUN_00473d60(void* self, void* edx_unused, DWORD a, DWORD b);
+void  __fastcall game_FUN_00474010(void* self, void* edx_unused, DWORD a, DWORD b);
+
+#define RESOURCE_FAILED      ((const char*) 0x0057180C)  /* "Resource string '%d' load fail\n" */
+#define RESOURCE_UNAVAILABLE ((const char*) 0x00571D58)  /* "Resource String Unavailable" */
+
+/* Redraw: vtable slot 0xC8. */
+#define control_redraw(c) VIRTUAL(c, 0xC8, method_0)(c)
+
+PORT(0x004710A0)
+BYTE* __fastcall control_construct(BYTE* self, void* edx_unused, int type, DWORD a, const RECT* area,
+                                   BYTE* dialog)
+{
+    int i;
+
+    (void) edx_unused;
+    object_construct(self, NULL, 1);
+    *(void***) self = UICONTROL_VTABLE;
+    game_FUN_0046ac10(self, NULL, self);
+    FIELD(self, CTL_TYPE, int) = type;
+    FIELD(self, 0x74, DWORD) = a;
+    if (area) {
+        FIELD(self, CTL_RECT, RECT) = *area;
+        FIELD(self, 0x3C, RECT) = *area;
+    } else {
+        FIELD(self, 0x48, LONG) = 0;
+        FIELD(self, 0x44, LONG) = 0;
+        FIELD(self, 0x40, LONG) = 0;
+        FIELD(self, 0x3C, LONG) = 0;
+        FIELD(self, CTL_RECT, RECT) = FIELD(self, 0x3C, RECT);
+    }
+    FIELD(self, CTL_STATE, DWORD) = 0;
+    FIELD(self, 0x60, DWORD) = 0;
+    FIELD(self, 0x68, DWORD) = 0;
+    FIELD(self, 0x6C, DWORD) = 1;
+    FIELD(self, 0x70, DWORD) = 1;
+    FIELD(self, CTL_ID, DWORD) = 0;
+    FIELD(self, 0x7C, DWORD) = 0;
+    FIELD(self, CTL_DIALOG, BYTE*) = dialog;
+    FIELD(self, CTL_MANAGER, void*) = dialog ? FIELD(dialog, DLG_MANAGER, void*) : NULL;
+    FIELD(self, 0x18C, DWORD) = 0;
+    FIELD(self, 0x190, DWORD) = 0;
+    FIELD(self, 0xA0, DWORD) = 0;
+    FIELD(self, 0xA4, DWORD) = 0;
+    FIELD(self, 0x1B4, DWORD) = 0;
+    FIELD(self, CTL_SLOT, int) = -1;
+    FIELD(self, 0x1BC, DWORD) = 0;
+    FIELD(self, CTL_TEXT, char*) = NULL;
+    FIELD(self, 0xF0, DWORD) = 0;
+    FIELD(self, CTL_COLOUR, COLORREF) = 0xFFFF;
+    FIELD(self, 0xCC, COLORREF) = 0xFFFF;
+    FIELD(self, CTL_SHADOW, DWORD) = 1;
+    FIELD(self, CTL_SHADOW_COLOUR, COLORREF) = 0;
+    FIELD(self, CTL_ALIGN, DWORD) = 1;
+    FIELD(self, CTL_LENGTH, int) = 0;
+    FIELD(self, CTL_RUNS, void*) = NULL;
+    FIELD(self, 0x1C0, DWORD) = 1;
+    FIELD(self, 0x168, DWORD) = 0;
+    FIELD(self, 0x1D8, DWORD) = 0;
+    FIELD(self, 0x1C8, DWORD) = 0;
+    FIELD(self, CTL_TABS, void*) = NULL;
+    FIELD(self, 0x180, DWORD) = 0;
+    for (i = 0; i < 5; i++) {
+        FIELD(self, 0x16C + 4 * i, DWORD) = 0;
+        FIELD(self, 0x194 + 4 * i, DWORD) = 0;
+    }
+    FIELD(self, 0x164, DWORD) = 0;
+    FIELD(self, 0xAC, DWORD) = 0;
+    FIELD(self, 0xA8, DWORD) = 0;
+    FIELD(self, 0x1A8, DWORD) = 0;
+    FIELD(self, 0x188, DWORD) = 0;
+    FIELD(self, 0x184, DWORD) = 0;
+    FIELD(self, 0x1B0, DWORD) = 0;
+    FIELD(self, 0x1AC, DWORD) = 0;
+    FIELD(self, CTL_NAME, char) = 0;
+    FIELD(self, 0x12C, DWORD) = 0;
+    FIELD(self, CTL_FONT, HFONT) = NULL;
+    FIELD(self, 0x130, char) = 0;
+    FIELD(self, 0x160, DWORD) = 0;
+    FIELD(self, 0x158, DWORD) = 0;
+    FIELD(self, 0x15C, DWORD) = 0;
+    FIELD(self, 0xEC, DWORD) = 0;
+    FIELD(self, 0xE8, DWORD) = 0;
+    FIELD(self, 0x1CC, DWORD) = 0;
+    FIELD(self, 0x1D0, void*) = NULL;
+    FIELD(self, CTL_ANIMATION, DWORD) = 0;
+    FIELD(self, 0x1D4, int) = -1;
+    if (dialog) {
+        FIELD(self, 0x1DC, DWORD) = FIELD(dialog, 0x7F18, DWORD);
+        FIELD(self, 0x18, void*) = object_screen(dialog);
+    } else {
+        FIELD(self, 0x1DC, DWORD) = 1;
+    }
+    FIELD(self, 0x1E0, DWORD) = 0;
+    FIELD(self, 0x1E8, DWORD) = 0;
+    return self;
+}
+
+static void heap_free(void* p, int line)
+{
+    if (p)
+        game_FUN_004a4450(p, GAMEUI_CPP, line);
+}
+
+/*
+    The control is marked dying (bit 3 of byte 0x25) so focus does not come back to it. A user
+    holding it in capture or focus lets go, and then its tooltip is hidden.
+*/
+PORT(0x00471380)
+void __fastcall control_destruct(BYTE* self)
+{
+    BYTE* dialog;
+
+    *(void***) self = UICONTROL_VTABLE;
+    dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    if (dialog && !(FIELD(game_main, 0x2D5, BYTE) & 2)) {
+        gui_user* user = FIELD(dialog, DLG_USER, gui_user*);
+        tooltip* tip = NULL;
+
+        FIELD(self, 0x25, BYTE) |= 8;
+        if (user) {
+            if (user->capture == self) {
+                gui_user_release_capture(user, NULL, NULL);
+                user = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_USER, gui_user*);
+                tip = (tooltip*) user->tooltip;
+            }
+            if (user && user->focus == self) {
+                dialog_queue_focus(FIELD(self, CTL_DIALOG, BYTE*), NULL, NULL, NULL, 1);
+                tip = (tooltip*) FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_USER, gui_user*)->tooltip;
+            }
+        }
+        if (tip)
+            tooltip_set_text(tip, NULL, NULL, NULL, 1.0f);
+    }
+    dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    if (FIELD(self, CTL_SLOT, int) != -1 && dialog && FIELD(dialog, DLG_BACKGROUND, BYTE*))
+        background_free_slot(FIELD(dialog, DLG_BACKGROUND, BYTE*), NULL, FIELD(self, CTL_SLOT, int));
+    heap_free(FIELD(self, CTL_TEXT, void*), 0xBA3);
+    heap_free(FIELD(self, 0xF0, void*), 0xBA4);
+    if (FIELD(self, 0x12C, int))
+        DeleteObject(FIELD(self, CTL_FONT, HFONT));
+    heap_free(FIELD(self, CTL_RUNS, void*), 0xBA8);
+    heap_free(FIELD(self, CTL_TABS, void*), 0xBA9);
+    object_destruct(self);
+}
+
+PORT(0x00471360)
+BYTE* __fastcall control_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    control_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* The text slots (0x88 to 0x94): text, length, runs, and the measured extent. */
+PORT(0x004712F0)
+const char* __fastcall control_get_text(BYTE* self)
+{
+    return FIELD(self, CTL_TEXT, const char*);
+}
+
+PORT(0x00471300)
+int __fastcall control_get_length(BYTE* self)
+{
+    return FIELD(self, CTL_LENGTH, int);
+}
+
+PORT(0x00471310)
+text_run* __fastcall control_get_runs(BYTE* self)
+{
+    return FIELD(self, CTL_RUNS, text_run*);
+}
+
+PORT(0x00471320)
+int* __fastcall control_get_extent(BYTE* self)
+{
+    return &FIELD(self, CTL_EXTENT, int);
+}
+
+/* Vtable slot 52. */
+PORT(0x00471330)
+void __fastcall control_set_7c(BYTE* self, void* edx_unused, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0x7C, DWORD) = value;
+}
+
+/* Vtable slots 61 and 62: its width and height. */
+PORT(0x00471340)
+int __fastcall control_width(BYTE* self)
+{
+    return FIELD(self, CTL_RECT, RECT).right - FIELD(self, CTL_RECT, RECT).left;
+}
+
+PORT(0x00471350)
+int __fastcall control_height(BYTE* self)
+{
+    return FIELD(self, CTL_RECT, RECT).bottom - FIELD(self, CTL_RECT, RECT).top;
+}
+
+PORT(0x00471C70)
+int __fastcall control_set_colour(BYTE* self, void* edx_unused, COLORREF colour)
+{
+    (void) edx_unused;
+    FIELD(self, CTL_COLOUR, COLORREF) = colour;
+    return control_redraw(self);
+}
+
+PORT(0x00471C90)
+int __fastcall control_set_shadow(BYTE* self, void* edx_unused, BOOL shadow)
+{
+    (void) edx_unused;
+    FIELD(self, CTL_SHADOW, BOOL) = shadow;
+    return control_redraw(self);
+}
+
+PORT(0x00471CB0)
+int __fastcall control_set_shadow_colour(BYTE* self, void* edx_unused, COLORREF colour)
+{
+    (void) edx_unused;
+    FIELD(self, CTL_SHADOW_COLOUR, COLORREF) = colour;
+    return control_redraw(self);
+}
+
+PORT(0x00471CD0)
+int __fastcall control_set_align(BYTE* self, void* edx_unused, DWORD align)
+{
+    (void) edx_unused;
+    FIELD(self, CTL_ALIGN, DWORD) = align;
+    return control_redraw(self);
+}
+
+/* Its name, up to 49 characters. */
+PORT(0x00471CF0)
+void __fastcall control_set_name(BYTE* self, void* edx_unused, const char* name)
+{
+    (void) edx_unused;
+    game__strncpy((char*) self + CTL_NAME, name, 0x31);
+    FIELD(self, CTL_NAME + 0x31, char) = 0;
+}
+
+PORT(0x00471D20)
+const char* __fastcall control_get_name(BYTE* self)
+{
+    return (const char*) self + CTL_NAME;
+}
+
+/*
+    Vtable slot 49: enable or disable. Disabled, a control with a disabled look (0x17C) shows
+    state 4, and its text goes grey (its colour is kept at 0xCC for when it is enabled again).
+*/
+PORT(0x00471500)
+void __fastcall control_enable(BYTE* self, void* edx_unused, BOOL enabled)
+{
+    (void) edx_unused;
+    if (FIELD(self, 0x6C, BOOL) == enabled)
+        return;
+    FIELD(self, 0x6C, BOOL) = enabled;
+    if (enabled) {
+        VIRTUAL(self, 0x74, method_1)(self, NULL, FIELD(self, CTL_STATE, DWORD));
+        control_set_colour(self, NULL, FIELD(self, 0xCC, COLORREF));
+        return;
+    }
+    if (FIELD(self, 0x17C, int)) {
+        FIELD(self, CTL_STATE, DWORD) = FIELD(self, 0x60, DWORD);
+        VIRTUAL(self, 0x74, method_1)(self, NULL, 4);
+    }
+    FIELD(self, 0xCC, COLORREF) = FIELD(self, CTL_COLOUR, COLORREF);
+    control_set_colour(self, NULL, RGB(0x99, 0x99, 0x99));
+}
+
+/* Vtable slot 50. */
+PORT(0x00471570)
+void __fastcall control_slot_50(BYTE* self)
+{
+    FIELD(self, 0x1C0, DWORD) = 0;
+    FIELD(self, 0x1BC, DWORD) = 3;
+}
+
+/*
+    Show or hide the control. With an animation, showing starts it (106 swaps to the routine at
+    0x0047C5A0), and hiding a type 106 one with `animate`, on a dialog that animates (0xC8), runs
+    the routine at 0x0047C540 instead of hiding at once.
+*/
+PORT(0x00471590)
+void __fastcall control_show(BYTE* self, void* edx_unused, DWORD shown, BOOL animate)
+{
+    (void) edx_unused;
+    if (FIELD(self, 0x1D0, void*)) {
+        if (shown) {
+            FIELD(self, 0x68, DWORD) = 1;
+            if (FIELD(self, CTL_ANIMATION, int) == 106)
+                FIELD(self, 0x1D0, void*) = (void*) animate_106;
+            FIELD(self, 0x1CC, DWORD) = 0;
+            FIELD(self, 0x70, DWORD) = shown;
+            return;
+        }
+        if (FIELD(self, CTL_ANIMATION, int) == 106 && animate
+            && FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0xC8, int)) {
+            FIELD(self, 0x1CC, DWORD) = 0;
+            FIELD(self, 0x68, DWORD) = 2;
+            FIELD(self, 0x1D0, void*) = (void*) animate_hide;
+            return;
+        }
+        FIELD(self, 0x68, DWORD) = 2;
+        FIELD(self, 0x70, DWORD) = 0;
+        control_redraw(self);
+        FIELD(self, 0x1CC, DWORD) = 0;
+        return;
+    }
+    FIELD(self, 0x68, DWORD) = 0;
+    FIELD(self, 0x70, DWORD) = shown;
+    control_redraw(self);
+}
+
+PORT(0x00471650)
+BOOL __fastcall control_enabled(BYTE* self)
+{
+    return FIELD(self, 0x6C, BOOL);
+}
+
+/* The picture for state `state` (1 is also kept at 0x178). */
+PORT(0x00471660)
+int __fastcall control_set_picture(BYTE* self, void* edx_unused, int state, DWORD picture)
+{
+    (void) edx_unused;
+    FIELD(self, 0x16C + 4 * state, DWORD) = picture;
+    if (state == 1)
+        FIELD(self, 0x178, DWORD) = picture;
+    return control_redraw(self);
+}
+
+/* Load the picture `file` for state `state`, through the dialog's picture settings. */
+PORT(0x00471690)
+int __fastcall control_load_picture(BYTE* self, void* edx_unused, int state, DWORD file)
+{
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+
+    (void) edx_unused;
+    if (dialog) {
+        void* picture = game_new(0xF8, GAMEUI_CPP, 0xC10);
+
+        if (picture)
+            picture = game_FUN_00473d60(picture, NULL, FIELD(dialog, 0x7F20, DWORD), 0);
+        game_FUN_00474010(picture, NULL, file, FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKDROP, DWORD));
+        control_set_picture(self, NULL, state, (DWORD) picture);
+    }
+    return control_redraw(self);
+}
+
+PORT(0x00471740)
+void __fastcall control_set_194(BYTE* self, void* edx_unused, int index, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0x194 + 4 * index, DWORD) = value;
+}
+
+PORT(0x00471760)
+void __fastcall control_set_link(BYTE* self, void* edx_unused, BYTE* next, DWORD b)
+{
+    (void) edx_unused;
+    FIELD(self, 0x18C, BYTE*) = next;
+    FIELD(self, 0x190, DWORD) = b;
+}
+
+/* The last control in the chain from this one (0x18C), or `otherwise` when it links to none. */
+PORT(0x00471780)
+BYTE* __fastcall control_chain_end(BYTE* self, void* edx_unused, BYTE* otherwise)
+{
+    BYTE* last;
+    BYTE* next = FIELD(self, 0x18C, BYTE*);
+
+    (void) edx_unused;
+    if (!next)
+        return otherwise;
+    do {
+        last = next;
+        next = FIELD(next, 0x18C, BYTE*);
+    } while (next);
+    return last;
+}
+
+/*
+    Set the control's animation: kinds 100 to 106 pick a routine (105 none). `start` shows it at
+    once; `delay` 0xFFFF means a random one of up to two seconds.
+*/
+PORT(0x004717A0)
+int __fastcall control_set_animation(BYTE* self, void* edx_unused, int kind, DWORD a, BOOL start,
+                                     DWORD delay, DWORD b)
+{
+    (void) edx_unused;
+    if (start) {
+        control_show(self, NULL, 1, 1);
+        FIELD(self, 0x68, DWORD) = 1;
+    }
+    FIELD(self, CTL_ANIMATION, int) = kind;
+    switch (kind) {
+    case 100: FIELD(self, 0x1D0, void*) = (void*) animate_100; break;
+    case 101: FIELD(self, 0x1D0, void*) = (void*) animate_101; break;
+    case 102: FIELD(self, 0x1D0, void*) = (void*) animate_102; break;
+    case 103: FIELD(self, 0x1D0, void*) = (void*) animate_103; break;
+    case 104: FIELD(self, 0x1D0, void*) = (void*) animate_104; break;
+    case 106: FIELD(self, 0x1D0, void*) = (void*) animate_106; break;
+    default:  FIELD(self, 0x1D0, void*) = NULL; break;
+    }
+    FIELD(self, 0xA8, DWORD) = 0;
+    FIELD(self, 0xB0, DWORD) = b;
+    FIELD(self, 0xAC, DWORD) = delay == 0xFFFF ? (DWORD) (game__rand() % 2000) : delay;
+    FIELD(self, 0x1A8, DWORD) = a;
+    return control_redraw(self);
+}
+
+/* Vtable slot 29: the state shown. */
+PORT(0x004718A0)
+int __fastcall control_set_state(BYTE* self, void* edx_unused, DWORD state)
+{
+    (void) edx_unused;
+    FIELD(self, 0x60, DWORD) = state;
+    return control_redraw(self);
+}
+
+/* Vtable slot 28: whether (x, y) is in its rectangle. */
+PORT(0x004718C0)
+BOOL __fastcall control_contains(BYTE* self, void* edx_unused, LONG x, LONG y, DWORD unused)
+{
+    RECT area = FIELD(self, CTL_RECT, RECT);
+    POINT at;
+
+    (void) edx_unused;
+    (void) unused;
+    at.x = x;
+    at.y = y;
+    return PtInRect(&area, at);
+}
+
+PORT(0x00471900)
+int __fastcall control_set_a0(BYTE* self, void* edx_unused, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0xA0, DWORD) = value;
+    return control_redraw(self);
+}
+
+/* Vtable slot 51: hit by (x, y): its rectangle, or its own test (slot 0x70) when 0xA0 is set. */
+PORT(0x00471920)
+BOOL __fastcall control_hit(BYTE* self, void* edx_unused, LONG x, LONG y)
+{
+    RECT area = FIELD(self, CTL_RECT, RECT);
+
+    (void) edx_unused;
+    if (!FIELD(self, 0xA0, int)) {
+        POINT at;
+
+        at.x = x;
+        at.y = y;
+        return PtInRect(&area, at) ? TRUE : FALSE;
+    }
+    return VIRTUAL(self, 0x70, int (__fastcall*)(void*, void*, LONG, LONG, DWORD))(
+               self, NULL, x, y, FIELD(self, 0x60, DWORD)) ? TRUE : FALSE;
+}
+
+/* Vtable slot 54. */
+PORT(0x004719A0)
+void __fastcall control_set_1b4(BYTE* self, void* edx_unused, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0x1B4, DWORD) = value;
+}
+
+int __fastcall control_set_text(BYTE* self, void* edx_unused, const char* text);
+
+/* The text from string resource `id` of `module`. */
+PORT(0x004719B0)
+int __fastcall control_load_text(BYTE* self, void* edx_unused, HINSTANCE module, UINT id)
+{
+    char text[0x400];
+
+    (void) edx_unused;
+    if (LoadStringA(module, id, text, sizeof text)) {
+        if (FIELD(self, CTL_TYPE, int) == 11)
+            game_FUN_00474d40(self, NULL, text);
+        else
+            control_set_text(self, NULL, text);
+    } else {
+        game_FUN_0053a11f(text, RESOURCE_FAILED, id);
+        if (FIELD(self, CTL_TYPE, int) == 11)
+            game_FUN_00474d40(self, NULL, text);
+        else
+            control_set_text(self, NULL, RESOURCE_UNAVAILABLE);
+    }
+    return control_redraw(self);
+}
+
+/*
+    The control's text: copied to the game's heap and split into runs at its markup; without
+    markup it is measured in the control's font (or its dialog's). NULL clears it. A text box
+    (type 11) keeps its own.
+*/
+PORT(0x00471A50)
+int __fastcall control_set_text(BYTE* self, void* edx_unused, const char* text)
+{
+    char* copy;
+    void* surface;
+    HDC dc;
+    SIZE size;
+
+    (void) edx_unused;
+    if (!text) {
+        heap_free(FIELD(self, CTL_TEXT, void*), 0xCDE);
+        heap_free(FIELD(self, CTL_RUNS, void*), 0xCDF);
+        FIELD(self, CTL_TEXT, char*) = NULL;
+        FIELD(self, CTL_RUNS, void*) = NULL;
+        return 0;
+    }
+    if (FIELD(self, CTL_TYPE, int) == 11) {
+        game_FUN_00474d40(self, NULL, text);
+        return control_redraw(self);
+    }
+    heap_free(FIELD(self, CTL_TEXT, void*), 0xCC2);
+    heap_free(FIELD(self, CTL_RUNS, void*), 0xCC3);
+    copy = game_FUN_004a4410(text_length(text) + 1, GAMEUI_CPP, 0xCC4);
+    FIELD(self, CTL_TEXT, char*) = copy;
+    text_copy(copy, text);
+    FIELD(self, CTL_RUNS, text_run*) = dialog_parse_runs(FIELD(self, CTL_DIALOG, BYTE*), NULL,
+                                                         FIELD(self, CTL_TEXT, char*),
+                                                         FIELD(self, CTL_COLOUR, COLORREF),
+                                                         FIELD(self, CTL_FONT, HFONT),
+                                                         FIELD(self, CTL_TABS, int*),
+                                                         &FIELD(self, CTL_EXTENT, int));
+    if (FIELD(self, CTL_RUNS, text_run*))
+        return control_redraw(self);
+
+    FIELD(self, CTL_EXTENT, int) = (int) text_length(FIELD(self, CTL_TEXT, char*));
+    FIELD(self, CTL_LENGTH, int) = FIELD(self, CTL_EXTENT, int);
+    surface = FIELD(FIELD(game_main, 0x10, BYTE*), 0x48, void*);
+    if (!VIRTUAL(surface, 0x44, HRESULT (__stdcall*)(void*, HDC*))(surface, &dc)) {
+        HFONT font = FIELD(self, CTL_FONT, HFONT);
+        HGDIOBJ old;
+
+        if (!font)
+            font = FIELD(self, CTL_DIALOG, BYTE*) ? FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_FONT, HFONT)
+                                                  : NULL;
+        old = SelectObject(dc, font);
+        GetTextExtentPoint32A(dc, FIELD(self, CTL_TEXT, char*), FIELD(self, CTL_LENGTH, int), &size);
+        SelectObject(dc, old);
+        surface = FIELD(FIELD(game_main, 0x10, BYTE*), 0x48, void*);
+        VIRTUAL(surface, 0x68, HRESULT (__stdcall*)(void*, HDC))(surface, dc);
+        FIELD(self, CTL_EXTENT + 4, int) = size.cx;
+        return control_redraw(self);
+    }
+    FIELD(self, CTL_EXTENT + 4, int) = 0;
+    return control_redraw(self);
+}
