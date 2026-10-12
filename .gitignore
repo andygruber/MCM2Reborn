@@ -10,8 +10,4 @@ __pycache__/
 .vs/
 .vscode/
 *.swp
-.claude/
-.claude*
-CLAUDE.md
-CLAUDE.local.md
 .mcp.json
