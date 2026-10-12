@@ -189,7 +189,7 @@ void __fastcall dialog_destruct(BYTE* self)
                 game_vf_28_483430(FIELD(self, DLG_MANAGER, gui_manager*));
         }
         if (FIELD(self, DLG_MODAL, int) && FIELD(self, DLG_PARENT, BYTE*))
-            game_FUN_00470fa0(FIELD(self, DLG_PARENT, BYTE*), NULL, 0, 0, NULL);
+            dialog_freeze(FIELD(self, DLG_PARENT, BYTE*), NULL, 0, 0, NULL);
         if ((FIELD(self, DLG_OPEN_FLAGS, DWORD) & 4) && (FIELD(self, DLG_OPEN_FLAGS, DWORD) & 0x10))
             gui_manager_drop_backdrop(FIELD(self, DLG_MANAGER, gui_manager*));
     }
@@ -1357,4 +1357,263 @@ text_run* __fastcall dialog_parse_runs(BYTE* self, void* edx_unused, const char*
     if (copy)
         __movsb((BYTE*) copy, (BYTE*) runs, (count + 1) * sizeof(text_run));
     return copy;
+}
+
+/* ---- UIDialog: timers, children, freezing ------------------------------------------------- */
+
+#define UITIMER_VTABLE ((void**) 0x00557C48)
+
+/* BaseObject's constructor and destructor: UITimer is not a GameObject. */
+void __fastcall game_FUN_00405f40(void* self);
+void __fastcall game_FUN_00405f70(void* self);
+int  __fastcall game_vf_16_46A3B0(void* self, void* edx_unused, DWORD frozen);
+
+/*
+    Whether `at` is on a double-byte character of `text` (its lead or trail byte), looking at
+    no more than `count` bytes; FALSE once a single-byte character past it is reached.
+*/
+PORT(0x00470BB0)
+BOOL __fastcall text_on_double_byte(void* self, void* edx_unused, const char* text, const char* at,
+                                    int count)
+{
+    const char* p = text;
+    int i;
+
+    (void) self;
+    (void) edx_unused;
+    for (i = 0; i < count; i++, p++) {
+        if (IsDBCSLeadByte((BYTE) *p)) {
+            if (p == at || text + i + 1 == at)
+                return TRUE;
+            i++;
+            p++;
+        } else if (p > at) {
+            return FALSE;
+        }
+    }
+    return FALSE;
+}
+
+/* Add a timer that fires every `period` milliseconds: at `target` (slot 0xF0), or as event 7. */
+PORT(0x00470C10)
+void __fastcall dialog_add_timer(BYTE* self, void* edx_unused, DWORD id, DWORD period, BYTE* target)
+{
+    ui_timer* timer;
+
+    (void) edx_unused;
+    if (!period)
+        return;
+    timer = game_new(sizeof(ui_timer), GAMEUI_CPP, 0xA76);
+    if (timer) {
+        game_FUN_00405f40(timer);
+        timer->vtable = UITIMER_VTABLE;
+        timer->id = id;
+        timer->period = period;
+        timer->elapsed = 0;
+        timer->target = target;
+    }
+    list_add(&FIELD(self, DLG_CHILDREN, container_list), timer);
+}
+
+PORT(0x00470D60)
+void __fastcall ui_timer_destruct(ui_timer* self)
+{
+    self->vtable = UITIMER_VTABLE;
+    game_FUN_00405f70(self);
+}
+
+PORT(0x00470D40)
+ui_timer* __fastcall ui_timer_delete(ui_timer* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    ui_timer_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/*
+    Take `item` out of the children by moving the last one into its place. The original does not
+    destroy it, and the walk then goes on past the moved one.
+*/
+static void children_remove(container_list* children, void* item)
+{
+    int j;
+
+    for (j = 0; j < children->count; j++) {
+        if (children->items[j] == item) {
+            children->items[j] = children->items[children->count - 1];
+            children->count--;
+            return;
+        }
+    }
+}
+
+/* Take every timer with `id` out of the dialog's children. */
+PORT(0x00470D70)
+void __fastcall dialog_remove_timer(BYTE* self, void* edx_unused, DWORD id)
+{
+    container_list* children = &FIELD(self, DLG_CHILDREN, container_list);
+    int i;
+
+    (void) edx_unused;
+    for (i = 0; children->count > 0 && children->items && i < children->count; i++) {
+        ui_timer* timer = children->items[i];
+
+        if (!timer)
+            break;
+        if (timer->id == id && children->count > 0)
+            children_remove(children, timer);
+    }
+}
+
+/* Take `object` out of the dialog's children. */
+PORT(0x00470DF0)
+void __fastcall dialog_remove_child(BYTE* self, void* edx_unused, void* object)
+{
+    container_list* children = &FIELD(self, DLG_CHILDREN, container_list);
+    int i;
+
+    (void) edx_unused;
+    for (i = 0; children->count > 0 && children->items && i < children->count; i++) {
+        void* item = children->items[i];
+
+        if (!item)
+            break;
+        if (item == object && children->count > 0)
+            children_remove(children, object);
+    }
+}
+
+/* Close at the next screen change, with `sound` (see dialog_draw). Only the first call counts. */
+PORT(0x00470E60)
+void __fastcall dialog_end(BYTE* self, void* edx_unused, DWORD sound)
+{
+    (void) edx_unused;
+    if (FIELD(self, 0x7F50, int))
+        return;
+    FIELD(self, DLG_SOUND_ID, DWORD) = sound;
+    FIELD(self, 0x7F50, DWORD) = 1;
+    FIELD(self, 0x7F54, DWORD) = FIELD(object_screen(self), 0x1C, DWORD);
+}
+
+/* Tell the parent dialog's handler: event `kind` from this one, with `sound`. */
+PORT(0x00470EA0)
+void __fastcall dialog_tell_parent(BYTE* self, void* edx_unused, DWORD sound, DWORD kind)
+{
+    BYTE* parent = FIELD(self, DLG_PARENT, BYTE*);
+    ui_event event;
+
+    (void) edx_unused;
+    if (!parent)
+        return;
+    event.type = kind;
+    event.a = sound;
+    event.e = 0;
+    event.b = 0;
+    event.sender = parent;
+    event.c = (DWORD) self;
+    event.manager = FIELD(parent, DLG_MANAGER, gui_manager*);
+    VIRTUAL(parent, 0x74, dialog_handle)(parent, NULL, &event);
+}
+
+PORT(0x00470EF0)
+void __fastcall dialog_set_170(BYTE* self, void* edx_unused, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0x170, DWORD) = value;
+}
+
+/* The background, for this dialog and every parent up the chain. */
+PORT(0x00470F00)
+void __fastcall dialog_set_background(BYTE* self, void* edx_unused, BYTE* background)
+{
+    (void) edx_unused;
+    if (FIELD(self, DLG_PARENT, BYTE*))
+        dialog_set_background(FIELD(self, DLG_PARENT, BYTE*), NULL, background);
+    FIELD(self, DLG_BACKGROUND, BYTE*) = background;
+}
+
+/* Vtable slots 29 to 31: the dialog's callbacks, when it has them. */
+typedef void (__cdecl* callback_arg)(DWORD arg);
+typedef int  (__fastcall* callback_self)(BYTE* self);
+typedef void (__cdecl* callback_self_arg)(BYTE* self, DWORD arg);
+
+PORT(0x00470F50)
+void __fastcall dialog_slot_29(BYTE* self, void* edx_unused, DWORD arg)
+{
+    callback_arg callback = FIELD(self, 0xCC, callback_arg);
+
+    (void) edx_unused;
+    if (callback)
+        callback(arg);
+}
+
+PORT(0x00470F70)
+int __fastcall dialog_slot_30(BYTE* self)
+{
+    callback_self callback = FIELD(self, 0xD4, callback_self);
+
+    return callback ? callback(self) : 0;
+}
+
+PORT(0x00470F80)
+void __fastcall dialog_slot_31(BYTE* self, void* edx_unused, DWORD arg)
+{
+    callback_self_arg callback = FIELD(self, 0xD0, callback_self_arg);
+
+    (void) edx_unused;
+    if (callback)
+        callback(self, arg);
+}
+
+/* Drop the frozen picture and its background slot. */
+PORT(0x00471040)
+void __fastcall dialog_thaw_picture(BYTE* self)
+{
+    BYTE* background;
+
+    if (FIELD(self, 0x7F44, void*))
+        object_destroy(FIELD(self, 0x7F44, void*));
+    background = FIELD(self, DLG_BACKGROUND, BYTE*);
+    if (background && FIELD(self, 0x7F48, int) >= 0) {
+        background_free_slot(background, NULL, FIELD(self, 0x7F48, int));
+        FIELD(FIELD(self, DLG_BACKGROUND, BYTE*), 0x30, int) = 1;
+    }
+    FIELD(self, 0x7F44, void*) = NULL;
+    FIELD(self, 0x7F48, int) = -1;
+    FIELD(self, 0x7F4C, int) = 0;
+}
+
+/* Take a picture of the screen behind the dialog (`area`, or its own), darkened with `darken`. */
+PORT(0x00470FE0)
+void __fastcall dialog_freeze_picture(BYTE* self, void* edx_unused, BOOL darken, const RECT* area)
+{
+    BYTE* background;
+
+    (void) edx_unused;
+    dialog_thaw_picture(self);
+    FIELD(self, 0x7F44, void*) = gui_manager_capture_screen(FIELD(self, DLG_MANAGER, gui_manager*),
+                                                            NULL, darken,
+                                                            area ? area : &FIELD(self, 0x160, RECT));
+    background = FIELD(self, DLG_BACKGROUND, BYTE*);
+    if (background) {
+        FIELD(self, 0x7F48, int) = background_new_slot(background, NULL, 1);
+        background_invalidate(FIELD(self, DLG_BACKGROUND, BYTE*));
+        FIELD(FIELD(self, DLG_BACKGROUND, BYTE*), 0x30, int) = 0;
+    }
+}
+
+/* Freeze the dialog behind a picture of itself, or thaw it; GameObject's slot 16 follows. */
+PORT(0x00470FA0)
+void __fastcall dialog_freeze(void* dialog, void* edx_unused, DWORD frozen, DWORD darken, RECT* area)
+{
+    BYTE* self = dialog;
+
+    (void) edx_unused;
+    if (frozen)
+        dialog_freeze_picture(self, NULL, darken, area);
+    else
+        dialog_thaw_picture(self);
+    game_vf_16_46A3B0(self, NULL, frozen);
 }

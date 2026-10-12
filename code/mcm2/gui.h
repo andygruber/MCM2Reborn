@@ -206,7 +206,8 @@ typedef int (__fastcall* screen_draw)(void* screen, void* edx_unused, RECT* area
 /* A dialog (ui.c): shown or hidden, and its controls. */
 int  __fastcall dialog_show(void* dialog, void* edx_unused, DWORD shown);
 int  __fastcall dialog_find(void* dialog, void* edx_unused, const char* name);
-void __fastcall game_FUN_00470fa0(void* dialog, void* edx_unused, DWORD a, DWORD b, RECT* area);
+void __fastcall dialog_freeze(void* dialog, void* edx_unused, DWORD frozen, DWORD darken,
+                              RECT* area);
 
 /* The C library's strcmp, as the game links it. */
 int __cdecl game_FUN_0053b910(const char* a, const char* b);

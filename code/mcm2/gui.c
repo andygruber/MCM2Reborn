@@ -319,7 +319,7 @@ BYTE* __fastcall gui_manager_open(gui_manager* self, void* edx_unused, BYTE* dia
             area = &screen;
         }
         if (parent)
-            game_FUN_00470fa0(parent, NULL, 1, flags & 8, area);
+            dialog_freeze(parent, NULL, 1, flags & 8, area);
         else if ((flags & 4) && (flags & 0x10))
             gui_manager_load_backdrop(self, NULL, flags & 8);
     }
