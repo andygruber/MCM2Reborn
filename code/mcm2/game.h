@@ -112,6 +112,8 @@ int   __fastcall game_vf_15_46A2D0(void* self);
 int   __fastcall game_vf_22_46A4B0(void* self, void* edx_unused, DWORD a, DWORD b);
 int   __fastcall game_vf_23_46A500(void* self, void* edx_unused, DWORD a, DWORD b);
 int   __fastcall game_vf_25_46A650(void* self, void* edx_unused, DWORD a);
+int   __fastcall game_vf_4_469F80(void* self);                          /* hide */
+int   __fastcall game_vf_5_469F90(void* self);                          /* show */
 #define object_construct  game_FUN_00469b80
 #define object_destruct   game_FUN_00469c40
 #define object_setup      game_vf_8_46A220
