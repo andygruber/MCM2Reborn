@@ -1800,20 +1800,21 @@ hide:
 
 int   __cdecl    game_FUN_0043de30(void);                               /* a new axis id */
 void* __fastcall game_FUN_0043dbf0(void* axis, void* edx_unused, float from, float to,
-                                   float value, int id, DWORD a, float dead_zone);
+                                   float value, int id, int device_axis, float dead_zone);
 void  __fastcall game_FUN_0048a9b0(void* device, void* edx_unused, void* axis, float a, float b);
 void  __fastcall game_FUN_0048b3b0(void* device, void* edx_unused, void* axis);
 
 /*
-    Make `axis` run from `from` to `to`, at `value`. The original builds it in a temporary, copies
-    it and releases the temporary, and so does this.
+    Make `axis` follow the device's axis `device_axis` (0 across, 1 down) from `from` to `to`, at
+    `value`. The original builds it in a temporary, copies it and releases the temporary, and so
+    does this.
 */
-static void axis_make(BYTE* axis, float from, float to, float value)
+static void axis_make(BYTE* axis, int device_axis, float from, float to, float value)
 {
     BYTE made[0x3C];
     int id = game_FUN_0043de30();
 
-    game_FUN_0043dbf0(made, NULL, from, to, value, id, 0, 0.0f);
+    game_FUN_0043dbf0(made, NULL, from, to, value, id, device_axis, 0.0f);
     __movsd((unsigned long*) axis, (unsigned long*) made, sizeof made / 4);
     game_thunk_FUN_0043dd80(made);
 }
@@ -1858,8 +1859,8 @@ gui_input* __fastcall gui_input_setup(gui_input* self, void* edx_unused, void* s
         x_to = (float) (FIELD(object_screen(self), 0xC, int) - 1);
         y_to = (float) (FIELD(object_screen(self), 0x10, int) - 1);
     }
-    axis_make(self->axis_x, self->range[0], x_to, 0.0f);
-    axis_make(self->axis_y, self->range[2], y_to, 0.0f);
+    axis_make(self->axis_x, 0, self->range[0], x_to, 0.0f);
+    axis_make(self->axis_y, 1, self->range[2], y_to, 0.0f);
     axes_register(self);
     return self;
 }
@@ -1887,8 +1888,8 @@ void __fastcall gui_input_reset(gui_input* self)
         x_to = (float) (FIELD(object_screen(self), 0xC, int) - 1);
         y_to = (float) (FIELD(object_screen(self), 0x10, int) - 1);
     }
-    axis_make(self->axis_x, self->range[0], x_to, (float) x);
-    axis_make(self->axis_y, self->range[2], y_to, (float) y);
+    axis_make(self->axis_x, 0, self->range[0], x_to, (float) x);
+    axis_make(self->axis_y, 1, self->range[2], y_to, (float) y);
     axes_register(self);
 }
 
