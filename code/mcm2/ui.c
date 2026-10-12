@@ -2224,3 +2224,273 @@ int __fastcall control_set_text(BYTE* self, void* edx_unused, const char* text)
     FIELD(self, CTL_EXTENT + 4, int) = 0;
     return control_redraw(self);
 }
+
+/* ---- UIControl: every frame and drawing --------------------------------------------------- */
+
+/* The last control of this one's chain is still on its way in (shown but not settled). */
+static BOOL chain_settled(BYTE* last)
+{
+    return !last || (FIELD(last, 0x70, int) && !FIELD(last, 0x68, int));
+}
+
+void __fastcall game_FUN_00473f10(void* picture);         /* update a picture's frame */
+int  __fastcall game_FUN_00472430(BYTE* self);
+
+#define screen_width()  FIELD(FIELD(game_main, 0x10, BYTE*), 0xC, LONG)
+#define screen_height() FIELD(FIELD(game_main, 0x10, BYTE*), 0x10, LONG)
+
+/*
+    Vtable slot 10, the frame's tick: run the control's own update (slot 0x6C), then its animation
+    step unless it is still moving in (0x00472430), and keep its rectangle on the screen.
+*/
+PORT(0x00471D30)
+int __fastcall control_tick(BYTE* self, void* edx_unused, DWORD time)
+{
+    RECT* area = &FIELD(self, CTL_RECT, RECT);
+
+    (void) edx_unused;
+    VIRTUAL(self, 0x6C, method_0)(self);
+    if (!FIELD(self, 0x70, int)
+        || !chain_settled(control_chain_end(self, NULL, NULL))
+        || !game_FUN_00472430(self)) {
+        gui_input* input;
+
+        FIELD(self, 0x1CC, DWORD) = VIRTUAL(self, 0xC0, method_1)(self, NULL, (DWORD) -1);
+        VIRTUAL(self, 0x98, method_0)(self);
+        VIRTUAL(self, 0x9C, method_0)(self);
+        input = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_USER, gui_user*)->input;
+        if (input && FIELD(self, 0x1D4, int) != -1) {
+            POINT at;
+
+            input = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_USER, gui_user*)->input;
+            at.x = input->x;
+            at.y = input->y;
+            VIRTUAL(self, 0xE4, int (__fastcall*)(void*, void*, int, POINT*))(
+                self, NULL, FIELD(self, 0x1D4, int), &at);
+        }
+    }
+    if (area->left < 0)
+        area->left = 0;
+    if (area->top < 0)
+        area->top = 0;
+    if (screen_width() < area->right)
+        area->right = screen_width();
+    if (screen_height() < area->bottom)
+        area->bottom = screen_height();
+    return game_vf_10_46A300(self, NULL, time);
+}
+
+/*
+    Vtable slot 39: lay the control out from its design rectangle (0x3C), scaled by the dialog
+    and placed relative to the control it links to, or to the dialog. The parts off the screen
+    are clipped: 0x4C is the offset into it, 0x54 by 0x58 the size left.
+*/
+PORT(0x00471E40)
+void __fastcall control_layout(BYTE* self)
+{
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    RECT* area = &FIELD(self, CTL_RECT, RECT);
+    RECT design = FIELD(self, 0x3C, RECT);
+    BYTE* anchor = FIELD(self, 0x18C, BYTE*);
+    int width = design.right - design.left;
+    int height = design.bottom - design.top;
+    int over;
+
+    /* An int times a float is exact in double here, as in the x87's extended precision. */
+    area->left = (int) ((double) design.left * FIELD(dialog, 0x9C4, float));
+    area->top = (int) ((double) design.top * FIELD(dialog, 0x9C8, float));
+    area->right = (int) ((double) design.right * FIELD(dialog, 0x9C4, float));
+    area->bottom = (int) ((double) design.bottom * FIELD(dialog, 0x9C8, float));
+    if (anchor && FIELD(self, 0x190, int)) {
+        area->top += FIELD(anchor, CTL_RECT + 4, LONG);
+        area->bottom += FIELD(anchor, CTL_RECT + 4, LONG);
+        area->left += FIELD(anchor, CTL_RECT, LONG);
+        area->right += FIELD(anchor, CTL_RECT, LONG);
+    } else {
+        area->top += FIELD(dialog, 0x164, LONG);
+        area->bottom += FIELD(dialog, 0x164, LONG);
+        area->left += FIELD(dialog, 0x160, LONG);
+        area->right += FIELD(dialog, 0x160, LONG);
+    }
+    FIELD(self, 0x4C, LONG) = area->left < 0 ? -area->left : 0;
+    FIELD(self, 0x50, LONG) = area->top < 0 ? -area->top : 0;
+    over = area->right - screen_width();
+    if (over > 0)
+        width -= over;
+    FIELD(self, 0x54, int) = width;
+    over = area->bottom - screen_height();
+    if (over > 0)
+        height -= over;
+    FIELD(self, 0x58, int) = height;
+}
+
+/* Vtable slot 27: step the pictures, the state's and, while it animates, the moving one. */
+PORT(0x00471FA0)
+void __fastcall control_step_pictures(BYTE* self)
+{
+    void* picture = FIELD(self, 0x16C + 4 * FIELD(self, 0x60, int), void*);
+    int moving;
+
+    if (picture)
+        game_FUN_00473f10(picture);
+    moving = FIELD(self, 0x68, int);
+    if (moving == 1 || moving == 2) {
+        if (FIELD(self, 0x184, void*))
+            game_FUN_00473f10(FIELD(self, 0x184, void*));
+        if (FIELD(self, 0x188, int))
+            game_FUN_00473f10(FIELD(self, 0x184, void*));
+    }
+}
+
+/*
+    Vtable slot 38: whether the control must be drawn again (0x1C0). A settled one asks its
+    picture; otherwise it counts down its redraws (0x1BC).
+*/
+PORT(0x00471FF0)
+void __fastcall control_needs_redraw(BYTE* self)
+{
+    BYTE* last = control_chain_end(self, NULL, NULL);
+
+    if (FIELD(self, 0x70, int) && chain_settled(last)) {
+        BYTE* picture = FIELD(self, 0x16C + 4 * FIELD(self, 0x60, int), BYTE*);
+
+        if (!picture)
+            FIELD(self, 0x1C0, DWORD) = 1;
+        else
+            FIELD(self, 0x1C0, DWORD) = FIELD(picture, 0x10, int) == 1 ? 1 : 0;
+        return;
+    }
+    if (--FIELD(self, 0x1BC, int) < 0) {
+        FIELD(self, 0x1BC, int) = 0;
+        FIELD(self, 0x1C0, DWORD) = 1;
+    }
+}
+
+/* Vtable slot 13: draw over; a settled, shown control not drawn by the background (0x1DC) draws
+   itself through slot 0xA0. */
+PORT(0x00472070)
+int __fastcall control_draw_over(BYTE* self)
+{
+    int result = game_vf_13_46A260(self);
+
+    if (chain_settled(control_chain_end(self, NULL, NULL)) && !FIELD(self, 0x1DC, int)) {
+        if (FIELD(self, 0x70, int))
+            return VIRTUAL(self, 0xA0, method_0)(self);
+        FIELD(self, 0x1C0, DWORD) = 1;
+    }
+    return result;
+}
+
+/* Vtable slot 15: draw; then a hidden or unsettled control's background slot is cleared. */
+PORT(0x004720D0)
+int __fastcall control_draw(BYTE* self)
+{
+    int result = game_vf_15_46A2D0(self);
+    BYTE* last = control_chain_end(self, NULL, NULL);
+    BYTE* background;
+
+    if (chain_settled(last) && FIELD(self, 0x1DC, int)) {
+        if (FIELD(self, 0x70, int))
+            result = VIRTUAL(self, 0xA0, method_0)(self);
+        else
+            FIELD(self, 0x1C0, DWORD) = 1;
+    }
+    background = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*);
+    if (background && FIELD(self, CTL_SLOT, int) > -1
+        && (!FIELD(self, 0x70, int)
+            || (last && (!FIELD(last, 0x70, int) || FIELD(last, 0x68, int)))))
+        background_slot_clear(background, NULL, FIELD(self, CTL_SLOT, int));
+    return result;
+}
+
+typedef void (__fastcall* control_area)(void* self, void* edx_unused, RECT* from, RECT* to);
+
+/*
+    Vtable slot 40: render. The control's picture first (0x1CC), through the background or the
+    screen; then its text, in as many passes as the background asks for: with DrawText (wrapped,
+    placed by its alignment) when 0x1E8 is set, else as the dialog draws text.
+*/
+PORT(0x00472170)
+int __fastcall control_render(BYTE* self)
+{
+    BYTE* picture = FIELD(self, 0x1CC, BYTE*);
+    int redraws = FIELD(self, 0x1BC, int);
+    int kept = -1;
+    RECT area;
+    HDC dc;
+    DWORD more;
+
+    if (picture) {
+        BYTE* background;
+
+        VIRTUAL(self, 0xFC, control_area)(self, NULL, &FIELD(self, CTL_RECT, RECT), &area);
+        background = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*);
+        if (background) {
+            picture = FIELD(self, 0x1CC, BYTE*);
+            background_draw(background, NULL, picture, &area, self + 0x4C,
+                            FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000,
+                            FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
+                            &FIELD(self, 0x1BC, int), 0);
+            kept = FIELD(self, 0x1BC, int);
+        } else {
+            DWORD flags;
+
+            picture = FIELD(self, 0x1CC, BYTE*);
+            flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
+            if (!VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL, &area,
+                                                                picture, self + 0x4C, flags))
+                return 0;
+        }
+    }
+
+    if (FIELD(self, CTL_TEXT, char*) && FIELD(self, CTL_LENGTH, int)) {
+        BYTE* dialog;
+
+        FIELD(self, 0x1BC, int) = redraws;
+        VIRTUAL(self, 0x100, control_area)(self, NULL, &FIELD(self, CTL_RECT, RECT), &area);
+        dialog = FIELD(self, CTL_DIALOG, BYTE*);
+        if (dialog_begin_paint(dialog, NULL, &dc, &area, &more, self)) {
+            do {
+                if (FIELD(self, 0x1E8, int)) {
+                    DWORD align = FIELD(self, CTL_ALIGN, DWORD);
+                    UINT format = DT_NOPREFIX | DT_WORDBREAK;
+
+                    if (align & 2)
+                        format = DT_NOPREFIX | DT_WORDBREAK | DT_CENTER;
+                    else if (!(align & 1) && (align & 4))
+                        format = DT_NOPREFIX | DT_WORDBREAK | DT_RIGHT;
+                    SetBkMode(dc, TRANSPARENT);
+                    if (FIELD(self, CTL_SHADOW, int)) {
+                        area.left--;
+                        area.top--;
+                        area.right--;
+                        area.bottom--;
+                        SetTextColor(dc, FIELD(self, CTL_SHADOW_COLOUR, COLORREF));
+                        DrawTextA(dc, FIELD(self, CTL_TEXT, char*), FIELD(self, CTL_LENGTH, int),
+                                  &area, format);
+                        area.left++;
+                        area.top++;
+                        area.right++;
+                        area.bottom++;
+                    }
+                    SetTextColor(dc, FIELD(self, CTL_COLOUR, COLORREF));
+                    DrawTextA(dc, FIELD(self, CTL_TEXT, char*), FIELD(self, CTL_LENGTH, int), &area,
+                              format);
+                } else {
+                    dialog_draw_text(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc, &area,
+                                     FIELD(self, CTL_TEXT, char*), FIELD(self, CTL_LENGTH, int),
+                                     FIELD(self, CTL_COLOUR, COLORREF), FIELD(self, 0x160, int),
+                                     FIELD(self, CTL_RUNS, text_run*), FIELD(self, CTL_SHADOW, BOOL),
+                                     FIELD(self, CTL_SHADOW_COLOUR, COLORREF),
+                                     FIELD(self, CTL_ALIGN, DWORD), TRUE, NULL);
+                }
+                dialog_end_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc);
+            } while (more
+                     && dialog_begin_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, &dc, &area, &more,
+                                           self));
+        }
+        if (kept >= 0)
+            FIELD(self, 0x1BC, int) = kept;
+    }
+    return 1;
+}
