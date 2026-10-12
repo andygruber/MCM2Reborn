@@ -2494,3 +2494,345 @@ int __fastcall control_render(BYTE* self)
     }
     return 1;
 }
+
+/* ---- UIControl: animations ---------------------------------------------------------------- */
+
+/*
+    An animation moves the control from a start box to its design rectangle (0x3C) in a number of
+    steps (0xB0, or a default), counting at 0x164. 0x80 to 0x8C is the box now (x, y, width,
+    height, as floats) and 0x90 to 0x9C its step. Each returns 1 when done, 0 while running.
+
+    The arithmetic follows the original's x87 code, which runs at the C runtime's 53-bit
+    precision (OpenMCM2's renderer never lowers it): there, as here, it is double arithmetic.
+*/
+#define ANIM_STEP   0x164
+#define ANIM_X      0x80
+#define ANIM_Y      0x84
+#define ANIM_W      0x88
+#define ANIM_H      0x8C
+#define ANIM_DX     0x90
+#define ANIM_DY     0x94
+#define ANIM_DW     0x98
+#define ANIM_DH     0x9C
+
+/* Each animation's step count, while it runs, in the game's data. */
+#define zoom_steps    (*(int*) 0x00661754)
+#define left_steps    (*(int*) 0x00661758)
+#define top_steps     (*(int*) 0x0066175C)
+#define right_steps   (*(int*) 0x00661760)
+#define bottom_steps  (*(int*) 0x00661764)
+
+void  __fastcall game_FUN_004c1330(void* sound, void* edx_unused, DWORD volume, DWORD a);
+void  __fastcall game_FUN_004c0e00(void* sound, void* edx_unused, DWORD a, DWORD b, DWORD c);
+void* __fastcall game_FUN_00473ec0(void* picture);         /* its current frame */
+void  __fastcall game_FUN_00473e80(void* picture);         /* start it */
+
+/* Play `sound` at the manager's volume (0x34C). */
+static void play_sound(BYTE* self, void* sound)
+{
+    game_FUN_004c1330(sound, NULL, FIELD(FIELD(self, CTL_MANAGER, BYTE*), 0x34C, DWORD), 0);
+    game_FUN_004c0e00(sound, NULL, 1, 0, 0);
+}
+
+/* The steps an animation takes: 0xB0, or `fallback` when that is negative. */
+static int animation_steps(BYTE* self, int fallback)
+{
+    int steps = FIELD(self, 0xB0, int);
+
+    return steps < 0 ? fallback : steps;
+}
+
+/* Which control types show their picture's frame while moving in: by type, 1 to 10. */
+static const BYTE zoom_shows_frame[10]  = { 1, 0, 0, 1, 1, 0, 0, 0, 1, 1 };
+static const BYTE slide_shows_frame[10] = { 1, 1, 0, 1, 1, 0, 0, 0, 1, 1 };
+
+/*
+    Draw the frame of the state's picture while moving, for the types that do; for the others,
+    and any other type, stop with 1.
+*/
+static int animation_frame(BYTE* self, const BYTE* shows)
+{
+    int type = FIELD(self, CTL_TYPE, int);
+
+    if (type < 1 || type > 10 || !shows[type - 1]) {
+        FIELD(self, 0x1CC, void*) = NULL;
+        return 1;
+    }
+    FIELD(self, 0x1CC, void*) = game_FUN_00473ec0(FIELD(self, 0x16C + 4 * FIELD(self, 0x60, int), void*));
+    FIELD(self, ANIM_STEP, int)++;
+    return 0;
+}
+
+/* The box toward the design rectangle: x, y, width, height. */
+static void animation_place(BYTE* self)
+{
+    RECT* area = &FIELD(self, CTL_RECT, RECT);
+
+    area->left = (int) FIELD(self, ANIM_X, float);
+    area->top = (int) FIELD(self, ANIM_Y, float);
+    area->right = (int) ((double) FIELD(self, ANIM_W, float) + FIELD(self, ANIM_X, float));
+    area->bottom = (int) ((double) FIELD(self, ANIM_Y, float) + FIELD(self, ANIM_H, float));
+}
+
+/* Vtable slot 41 (kind 100): zoom out from a 21 by 11 box at the control's centre. */
+PORT(0x00472500)
+int __fastcall control_zoom_in(BYTE* self)
+{
+    if (!FIELD(self, ANIM_STEP, int) && FIELD(self, 0xB0, int) && !(FIELD(self, 0x25, BYTE) & 4)) {
+        RECT design = FIELD(self, 0x3C, RECT);
+        int width = design.right - design.left;
+        int height = design.bottom - design.top;
+        double x, y;
+
+        zoom_steps = animation_steps(self, 7);
+        FIELD(self, ANIM_W, float) = 21.0f;
+        FIELD(self, ANIM_H, float) = 11.0f;
+        x = (double) (design.left + width / 2) - 10.5f;
+        if (0.0f > x)
+            x = 0.0f;
+        FIELD(self, ANIM_X, float) = (float) x;
+        y = (double) (design.top + height / 2) - 5.5f;
+        if (0.0f > y)
+            y = 0.0f;
+        FIELD(self, ANIM_Y, float) = (float) y;
+        FIELD(self, ANIM_DX, float) = (float) (((double) design.left - x) / zoom_steps);
+        FIELD(self, ANIM_DY, float) = (float) (((double) design.top - y) / zoom_steps);
+        FIELD(self, ANIM_DW, float) = (float) (((double) width - 21.0f) / zoom_steps);
+        FIELD(self, ANIM_DH, float) = (float) (((double) height - 11.0f) / zoom_steps);
+        if (FIELD(self, 0x1A8, void*))
+            play_sound(self, FIELD(self, 0x1A8, void*));
+    } else {
+        FIELD(self, ANIM_X, float) += FIELD(self, ANIM_DX, float);
+        FIELD(self, ANIM_Y, float) += FIELD(self, ANIM_DY, float);
+        FIELD(self, ANIM_W, float) += FIELD(self, ANIM_DW, float);
+        FIELD(self, ANIM_H, float) += FIELD(self, ANIM_DH, float);
+    }
+    if (FIELD(self, ANIM_STEP, int) == zoom_steps)
+        return 1;
+    control_redraw(self);
+    if ((FIELD(self, 0x25, BYTE) & 4) && !FIELD(self, ANIM_STEP, int))
+        return 0;
+    animation_place(self);
+    return animation_frame(self, zoom_shows_frame);
+}
+
+/*
+    The slides: from off one side to the design rectangle. Each keeps the design size and moves
+    one coordinate; a step entirely off the screen draws nothing.
+*/
+static int slide_start(BYTE* self, int* steps, float from, int to, int axis_offset)
+{
+    *steps = animation_steps(self, 25);
+    FIELD(self, axis_offset, float) = from;
+    FIELD(self, axis_offset + 0x10, float) = (float) (((double) to - from) / *steps);
+    if (FIELD(self, 0x1A8, void*))
+        play_sound(self, FIELD(self, 0x1A8, void*));
+    return 0;
+}
+
+/* Vtable slot 42 (kind 101): slide in from the left. */
+PORT(0x00472780)
+int __fastcall control_slide_from_left(BYTE* self)
+{
+    RECT* area = &FIELD(self, CTL_RECT, RECT);
+
+    if (!FIELD(self, ANIM_STEP, int) && FIELD(self, 0xB0, int)) {
+        RECT design = FIELD(self, 0x3C, RECT);
+
+        slide_start(self, &left_steps, (float) (design.left - design.right - 1), design.left, ANIM_X);
+    } else {
+        FIELD(self, ANIM_X, float) += FIELD(self, ANIM_DX, float);
+    }
+    if (FIELD(self, ANIM_STEP, int) == left_steps)
+        return 1;
+    control_redraw(self);
+    *area = FIELD(self, 0x3C, RECT);
+    area->left = (int) FIELD(self, ANIM_X, float);
+    area->right = area->left + (FIELD(self, 0x44, LONG) - FIELD(self, 0x3C, LONG));
+    if (area->right <= 0) {
+        FIELD(self, ANIM_STEP, int)++;
+        return 0;
+    }
+    return animation_frame(self, slide_shows_frame);
+}
+
+/* Vtable slot 44 (kind 103): slide in from the top. */
+PORT(0x004728F0)
+int __fastcall control_slide_from_top(BYTE* self)
+{
+    RECT* area = &FIELD(self, CTL_RECT, RECT);
+
+    if (!FIELD(self, ANIM_STEP, int) && FIELD(self, 0xB0, int)) {
+        RECT design = FIELD(self, 0x3C, RECT);
+
+        slide_start(self, &top_steps, (float) (design.top - design.bottom), design.top, ANIM_Y);
+    } else {
+        FIELD(self, ANIM_Y, float) += FIELD(self, ANIM_DY, float);
+    }
+    if (FIELD(self, ANIM_STEP, int) == top_steps)
+        return 1;
+    control_redraw(self);
+    *area = FIELD(self, 0x3C, RECT);
+    area->top = (int) FIELD(self, ANIM_Y, float);
+    area->bottom = area->top + (FIELD(self, 0x48, LONG) - FIELD(self, 0x40, LONG));
+    if (area->bottom <= 0) {
+        FIELD(self, ANIM_STEP, int)++;
+        return 0;
+    }
+    return animation_frame(self, slide_shows_frame);
+}
+
+/* Vtable slot 43 (kind 102): slide in from the right edge of the dialog's design size (0x174). */
+PORT(0x00472A60)
+int __fastcall control_slide_from_right(BYTE* self)
+{
+    RECT* area = &FIELD(self, CTL_RECT, RECT);
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+
+    if (!FIELD(self, ANIM_STEP, int) && FIELD(self, 0xB0, int))
+        slide_start(self, &right_steps, (float) FIELD(dialog, 0x174, int), FIELD(self, 0x3C, LONG),
+                    ANIM_X);
+    else
+        FIELD(self, ANIM_X, float) += FIELD(self, ANIM_DX, float);
+    if (FIELD(self, ANIM_STEP, int) == right_steps)
+        return 1;
+    control_redraw(self);
+    *area = FIELD(self, 0x3C, RECT);
+    area->left = (int) FIELD(self, ANIM_X, float);
+    area->right = area->left + (FIELD(self, 0x44, LONG) - FIELD(self, 0x3C, LONG));
+    if (area->left >= FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x174, LONG)) {
+        FIELD(self, ANIM_STEP, int)++;
+        return 0;
+    }
+    return animation_frame(self, slide_shows_frame);
+}
+
+/* Vtable slot 45 (kind 104): slide in from the bottom of the dialog's design size (0x178). */
+PORT(0x00472BC0)
+int __fastcall control_slide_from_bottom(BYTE* self)
+{
+    RECT* area = &FIELD(self, CTL_RECT, RECT);
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+
+    if (!FIELD(self, ANIM_STEP, int) && FIELD(self, 0xB0, int))
+        slide_start(self, &bottom_steps, (float) FIELD(dialog, 0x178, int), FIELD(self, 0x40, LONG),
+                    ANIM_Y);
+    else
+        FIELD(self, ANIM_Y, float) += FIELD(self, ANIM_DY, float);
+    if (FIELD(self, ANIM_STEP, int) == bottom_steps)
+        return 1;
+    control_redraw(self);
+    *area = FIELD(self, 0x3C, RECT);
+    area->top = (int) FIELD(self, ANIM_Y, float);
+    area->bottom = area->top + (FIELD(self, 0x48, LONG) - FIELD(self, 0x40, LONG));
+    if (area->top >= FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x178, LONG)) {
+        FIELD(self, ANIM_STEP, int)++;
+        return 0;
+    }
+    return animation_frame(self, slide_shows_frame);
+}
+
+/* A picture's frame number and frame count. */
+#define picture_frame(p) FIELD(p, 8, int)
+#define picture_count(p) FIELD(p, 0x10, int)
+
+/* Vtable slot 46 (kind 106): play the picture at 0x184 once through, with its sound (0x1AC). */
+PORT(0x00472D20)
+int __fastcall control_play_picture(BYTE* self)
+{
+    BYTE* picture;
+
+    if (!FIELD(self, ANIM_STEP, int)) {
+        FIELD(FIELD(self, 0x184, BYTE*), 0x24, DWORD) = 0;
+        game_FUN_00473e80(FIELD(self, 0x184, void*));
+        FIELD(self, ANIM_STEP, int) = 1;
+        if (FIELD(self, 0x1AC, void*))
+            play_sound(self, FIELD(self, 0x1AC, void*));
+    }
+    picture = FIELD(self, 0x184, BYTE*);
+    if (FIELD(self, ANIM_STEP, int) == 1 && picture_frame(picture) <= picture_count(picture) - 1) {
+        FIELD(self, 0x1CC, void*) = game_FUN_00473ec0(picture);
+        control_redraw(self);
+        picture = FIELD(self, 0x184, BYTE*);
+        if (picture_frame(picture) == picture_count(picture) - 1)
+            FIELD(self, ANIM_STEP, int) = 2;
+        return 0;
+    }
+    FIELD(self, ANIM_STEP, int) = 0;
+    return 1;
+}
+
+/*
+    Vtable slot 47 (hiding a kind 106): play the picture at 0x188 out, backwards when it is the same as
+    the one played in; then hide the control.
+*/
+PORT(0x00472DE0)
+int __fastcall control_play_picture_out(BYTE* self)
+{
+    BYTE* picture;
+    int step;
+
+    if (!FIELD(self, ANIM_STEP, int)) {
+        if (FIELD(self, 0x188, BYTE*) == FIELD(self, 0x184, BYTE*)) {
+            FIELD(FIELD(self, 0x188, BYTE*), 0x24, DWORD) = 1;
+            FIELD(self, ANIM_STEP, int) = 2;
+        } else {
+            FIELD(self, ANIM_STEP, int) = 1;
+        }
+        game_FUN_00473e80(FIELD(self, 0x188, void*));
+        if (FIELD(self, 0x1B0, void*))
+            play_sound(self, FIELD(self, 0x1B0, void*));
+    }
+    step = FIELD(self, ANIM_STEP, int);
+    picture = FIELD(self, 0x188, BYTE*);
+    if ((step == 1 && picture_frame(picture) < picture_count(picture) - 1)
+        || (step == 2 && picture_frame(picture) >= 0)) {
+        FIELD(self, 0x1CC, void*) = game_FUN_00473ec0(picture);
+        control_redraw(self);
+        if (!picture_frame(FIELD(self, 0x188, BYTE*)))
+            FIELD(self, ANIM_STEP, int) = 3;
+        return 0;
+    }
+    FIELD(self, ANIM_STEP, int) = 0;
+    FIELD(self, 0x70, DWORD) = 0;
+    return 1;
+}
+
+/* Vtable slot 48: the current frame of state `state`'s picture (-1: the state shown). */
+PORT(0x00472ED0)
+void* __fastcall control_frame(BYTE* self, void* edx_unused, int state)
+{
+    void* picture;
+
+    (void) edx_unused;
+    if (state == -1)
+        state = FIELD(self, 0x60, int);
+    picture = FIELD(self, 0x16C + 4 * state, void*);
+    return picture ? game_FUN_00473ec0(picture) : NULL;
+}
+
+/*
+    Run one step of the control's animation (0x1D0) once its delay (0xAC) has passed, on a
+    dialog that animates. 1 while it is still running; 0 when it is done, or not animating,
+    and the rectangle is back to its design.
+*/
+PORT(0x00472430)
+int __fastcall control_animate(BYTE* self)
+{
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    callback_self step = FIELD(self, 0x1D0, callback_self);
+    int type = FIELD(self, CTL_TYPE, int);
+
+    if (FIELD(dialog, 0xC8, int) && step && FIELD(self, 0x68, int) && type != 3 && type != 12) {
+        FIELD(self, 0xA8, DWORD) += (int) ((double) FIELD(dialog, 0x9C0, float) * MILLISECONDS);
+        if (FIELD(self, 0xA8, DWORD) < FIELD(self, 0xAC, DWORD) || !step(self))
+            return 1;
+        FIELD(self, ANIM_STEP, int) = 0;
+        FIELD(self, 0x68, DWORD) = 0;
+    } else if (FIELD(self, 0x68, int)) {
+        FIELD(self, 0x68, DWORD) = 0;
+        control_redraw(self);
+    }
+    FIELD(self, CTL_RECT, RECT) = FIELD(self, 0x3C, RECT);
+    return 0;
+}
