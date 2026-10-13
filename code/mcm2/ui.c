@@ -3288,7 +3288,7 @@ _Static_assert(sizeof(ui_frame) == 36, "UIFrame is 36 bytes");
 BYTE* __cdecl game_FUN_00517ca0(const char* name, DWORD a, void* resources);
 BYTE* __cdecl game_FUN_005174b0(const void* data, DWORD a, DWORD size);
 void  __cdecl game_FUN_005184b0(BYTE* image);
-int   __cdecl game_FUN_0047c3d0(void* picture, COLORREF key);     /* whether it has `key` */
+BOOL  __cdecl picture_has_colour(BYTE* picture, COLORREF key);
 void* __fastcall game_FUN_004c0160(void* self, void* edx_unused, DWORD a, DWORD b);
 void  __fastcall game_FUN_004c0a70(void* sound, void* edx_unused, const char* name, DWORD a,
                                    DWORD b, DWORD c, DWORD d, int e);
@@ -3314,7 +3314,7 @@ static void frame_picture(ui_frame* self, BYTE* image, BYTE* owner, int mode, in
                                          image_height(image), image_width(image),
                                          image_width(image), 0x22B, mode, style, 4, key_colour, 0,
                                          0, 2, 1, 0, 0x80, 0xFF00FF);
-    if (game_FUN_0047c3d0(self->picture, 0xFF00FF))
+    if (picture_has_colour(self->picture, 0xFF00FF))
         VIRTUAL(self->picture, 0x48, method_1)(self->picture, NULL, 0xFF00FF);
 }
 
@@ -5586,7 +5586,7 @@ const char* __fastcall list_text(BYTE* self, void* edx_unused, int index)
     return NULL;
 }
 
-void* __cdecl game_FUN_0047c4b0(void* block, size_t size);       /* realloc on the game's heap */
+void* __cdecl ui_realloc(void* block, size_t size);
 
 /* Room for `capacity` entries, the new ones zeroed. FALSE when it cannot grow. */
 PORT(0x00477EE0)
@@ -5597,7 +5597,7 @@ BOOL __fastcall list_reserve(BYTE* self, void* edx_unused, int capacity)
     (void) edx_unused;
     if (capacity <= FIELD(self, LIST_CAPACITY, int))
         return TRUE;
-    entries = game_FUN_0047c4b0(list_entries(self), capacity * sizeof(list_entry));
+    entries = ui_realloc(list_entries(self), capacity * sizeof(list_entry));
     if (!entries)
         return FALSE;
     __stosb((BYTE*) &entries[FIELD(self, LIST_CAPACITY, int)], 0,
@@ -6675,9 +6675,9 @@ BOOL __fastcall option_set_count(BYTE* self, void* edx_unused, int count)
     if (count < option_count(self)) {
         for (i = count; i < option_count(self); i++)
             option_free(self, i, 0x21B6);
-        option_list(self) = game_FUN_0047c4b0(option_list(self), count * sizeof(ui_option));
+        option_list(self) = ui_realloc(option_list(self), count * sizeof(ui_option));
     } else if (count > option_count(self)) {
-        option_list(self) = game_FUN_0047c4b0(option_list(self), count * sizeof(ui_option));
+        option_list(self) = ui_realloc(option_list(self), count * sizeof(ui_option));
         for (i = option_count(self); i < count; i++) {
             option_list(self)[i].anim = NULL;
             option_list(self)[i].anim_disabled = NULL;
@@ -7938,4 +7938,347 @@ int __fastcall combo_pressed(BYTE* self, void* edx_unused, DWORD button, DWORD b
         return 1;
     }
     return control_pressed(self, NULL, button, b);
+}
+
+/* ---- UIMovie: a picture control that plays a movie ------------------------------------------ */
+
+/*
+    The movie is a 0x80-byte stream object (a DirectShow multimedia stream drawing to a
+    DirectDraw surface, 0x2C) made a child of the control; MOVIE_SOURCE is the part of its
+    surface shown.
+*/
+#define UIMOVIE_VTABLE ((void**) 0x00558C18)
+#define MOVIE_STREAM   0x1EC
+#define MOVIE_SOURCE   0x1F0       /* RECT */
+
+BYTE* __fastcall game_FUN_004a3980(void* self, void* edx_unused, DWORD a);
+BYTE* __fastcall game_FUN_004a3ad0(void* self, void* edx_unused, void* screen, const char* file,
+                                   DWORD a, DWORD b);
+BOOL  __fastcall game_FUN_004a3ef0(void* self);
+#define stream_construct game_FUN_004a3980
+#define stream_open      game_FUN_004a3ad0   /* destroys the stream and gives NULL when it fails */
+#define stream_play      game_FUN_004a3ef0
+
+typedef HRESULT (__stdcall* surface_blt)(void* surface, RECT* to, void* from, RECT* source,
+                                         DWORD flags, void* effects);
+#define BLT_WAIT 0x1000000
+
+PORT(0x0047BD80)
+BYTE* __fastcall movie_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                 BYTE* dialog)
+{
+    (void) edx_unused;
+    picture_control_construct(self, NULL, a, area, dialog);
+    *(void***) self = UIMOVIE_VTABLE;
+    FIELD(self, MOVIE_STREAM, BYTE*) = NULL;
+    return self;
+}
+
+/* Open movie `file` in place of the one it had, showing all of it, and start it if `play`. */
+PORT(0x0047BDD0)
+BOOL __fastcall movie_open(BYTE* self, void* edx_unused, const char* file, BOOL play, DWORD a,
+                           DWORD b)
+{
+    BYTE* stream;
+
+    (void) edx_unused;
+    if (FIELD(self, MOVIE_STREAM, BYTE*))
+        object_destroy(FIELD(self, MOVIE_STREAM, BYTE*));
+    stream = game_new(0x80, GAMEUI_CPP, 0x264D);
+    if (stream)
+        stream = stream_construct(stream, NULL, 1);
+    FIELD(self, MOVIE_STREAM, BYTE*) = stream;
+    if (!stream_open(stream, NULL, object_screen(self), file, a, b)) {
+        FIELD(self, MOVIE_STREAM, BYTE*) = NULL;
+        return FALSE;
+    }
+    object_add_child(self, NULL, FIELD(self, MOVIE_STREAM, BYTE*), -1);
+    stream = FIELD(self, MOVIE_STREAM, BYTE*);
+    FIELD(self, MOVIE_SOURCE, RECT).left = 0;
+    FIELD(self, MOVIE_SOURCE, RECT).top = 0;
+    FIELD(self, MOVIE_SOURCE, RECT).right = FIELD(stream, 0x30, LONG);
+    FIELD(self, MOVIE_SOURCE, RECT).bottom = FIELD(stream, 0x34, LONG);
+    if (play)
+        stream_play(stream);
+    return TRUE;
+}
+
+/* Vtable slot 10: tick, as a control does. */
+PORT(0x0047BED0)
+int __fastcall movie_tick(BYTE* self, void* edx_unused, DWORD time)
+{
+    (void) edx_unused;
+    return control_tick(self, NULL, time);
+}
+
+/*
+    Vtable slot 40: render the movie's frame into its picture box, straight to the back buffer
+    (the screen's 0x48). Over a background the background's DC goes first and the control
+    is drawn again next frame.
+*/
+PORT(0x0047BEE0)
+BOOL __fastcall movie_render(BYTE* self)
+{
+    BYTE* background;
+    void* back;
+    RECT area;
+
+    if (!FIELD(self, MOVIE_STREAM, BYTE*))
+        return FALSE;
+    background = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*);
+    if (background) {
+        background_release_dc(background);
+        control_redraw(self);
+    }
+    VIRTUAL(self, 0xFC, control_area)(self, NULL, &FIELD(self, CTL_RECT, RECT), &area);
+    back = FIELD(object_screen(self), 0x48, void*);
+    return VIRTUAL(back, 0x14, surface_blt)(back, &area, FIELD(FIELD(self, MOVIE_STREAM, BYTE*),
+                                                               0x2C, void*),
+                                            &FIELD(self, MOVIE_SOURCE, RECT), BLT_WAIT, NULL) == 0;
+}
+
+/* ---- UIProgress: a bar that fills as steps are done ------------------------------------------ */
+
+/*
+    Its picture is drawn cut to the part done, and the part done is written over it as a
+    percentage when PROGRESS_SHOW_TEXT is set.
+*/
+#define UIPROGRESS_VTABLE  ((void**) 0x00558D20)
+#define PROGRESS_DONE      0x1EC   /* float: the part done, 0 to 1 */
+#define PROGRESS_STEPS     0x1F0
+#define PROGRESS_STEP      0x1F4
+#define PROGRESS_PICTURE   0x1F8
+#define PROGRESS_SHOW_TEXT 0x1FC
+#define PROGRESS_OWNS      0x200   /* the picture is destroyed with it */
+#define PROGRESS_FORMAT    ((const char*) 0x00572004)   /* "%3.0f%%" */
+
+PORT(0x0047BF60)
+BYTE* __fastcall progress_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                    BYTE* dialog)
+{
+    (void) edx_unused;
+    picture_control_construct(self, NULL, a, area, dialog);
+    *(void***) self = UIPROGRESS_VTABLE;
+    FIELD(self, PROGRESS_DONE, float) = 0.0f;
+    FIELD(self, PROGRESS_STEPS, int) = 0;
+    FIELD(self, PROGRESS_STEP, int) = 0;
+    FIELD(self, PROGRESS_PICTURE, BYTE*) = NULL;
+    FIELD(self, PROGRESS_SHOW_TEXT, BOOL) = TRUE;
+    return self;
+}
+
+PORT(0x0047BFD0)
+void __fastcall progress_destruct(BYTE* self)
+{
+    *(void***) self = UIPROGRESS_VTABLE;
+    if (FIELD(self, PROGRESS_PICTURE, BYTE*) && FIELD(self, PROGRESS_OWNS, BOOL))
+        object_destroy(FIELD(self, PROGRESS_PICTURE, BYTE*));
+    picture_control_destruct(self);
+}
+
+PORT(0x0047BFB0)
+BYTE* __fastcall progress_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    progress_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Vtable slot 48: its picture, whatever the state. */
+PORT(0x0047C040)
+BYTE* __fastcall progress_picture(BYTE* self, void* edx_unused, int state)
+{
+    (void) edx_unused;
+    (void) state;
+    return FIELD(self, PROGRESS_PICTURE, BYTE*);
+}
+
+/* Its picture, and whether it is destroyed with it. */
+PORT(0x0047C310)
+void __fastcall progress_set_picture(BYTE* self, void* edx_unused, BYTE* picture, BOOL owned)
+{
+    (void) edx_unused;
+    FIELD(self, PROGRESS_PICTURE, BYTE*) = picture;
+    FIELD(self, PROGRESS_OWNS, BOOL) = owned;
+}
+
+/* One more step done (no more than all of them); with `refresh` the manager redraws now. */
+PORT(0x0047C2B0)
+void __fastcall progress_step(BYTE* self, void* edx_unused, BOOL refresh)
+{
+    int steps = FIELD(self, PROGRESS_STEPS, int);
+
+    (void) edx_unused;
+    if (steps) {
+        int step = FIELD(self, PROGRESS_STEP, int) + 1;
+
+        if (step >= steps)
+            step = steps;
+        FIELD(self, PROGRESS_STEP, int) = step;
+        FIELD(self, PROGRESS_DONE, float) = (float) ((double) step / steps);
+    }
+    if (refresh && FIELD(self, CTL_MANAGER, gui_manager*))
+        gui_manager_refresh(FIELD(self, CTL_MANAGER, gui_manager*));
+}
+
+/*
+    Vtable slot 40: render. The picture cut to the part done, scaled as the dialog is, then the
+    percentage in its text box (slot 64), centred.
+*/
+PORT(0x0047C050)
+int __fastcall progress_render(BYTE* self)
+{
+    BYTE* picture = FIELD(self, PROGRESS_PICTURE, BYTE*);
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    int redraws = FIELD(self, 0x1BC, int);
+    RECT area;
+
+    if (picture && !x87_zero(FIELD(self, PROGRESS_DONE, float))) {
+        RECT source = FIELD(self, 0x4C, RECT);
+        DWORD flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
+
+        VIRTUAL(self, 0xFC, control_area)(self, NULL, &FIELD(self, CTL_RECT, RECT), &area);
+        source.right = (int) ((double) (source.right - source.left)
+                              * FIELD(self, PROGRESS_DONE, float));
+        area.right = (int) ((double) source.right * FIELD(dialog, 0x9C4, float) + area.left);
+        area.bottom = (int) ((double) source.bottom * FIELD(dialog, 0x9C8, float) + area.top);
+        if (FIELD(dialog, DLG_BACKGROUND, BYTE*)) {
+            background_draw(FIELD(dialog, DLG_BACKGROUND, BYTE*), NULL, picture, &area, &source,
+                            flags, FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
+                            &redraws, 0);
+        } else if (!VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL, &area,
+                                                                   picture, &source, flags)) {
+            return 0;
+        }
+    }
+
+    if (FIELD(self, PROGRESS_SHOW_TEXT, BOOL)) {
+        char text[16];
+        DWORD more;
+        HDC dc;
+
+        redraws = FIELD(self, 0x1BC, int);
+        VIRTUAL(self, 0x100, control_area)(self, NULL, &FIELD(self, CTL_RECT, RECT), &area);
+        game_FUN_0053a11f(text, PROGRESS_FORMAT, (double) FIELD(self, PROGRESS_DONE, float) * 100.0);
+        if (dialog_begin_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, &dc, &area, &more, self)) {
+            do {
+                dialog_draw_text(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc, &area, text,
+                                 (int) text_length(text), FIELD(self, CTL_COLOUR, COLORREF),
+                                 FIELD(self, 0x160, int), NULL, FIELD(self, CTL_SHADOW, BOOL),
+                                 FIELD(self, CTL_SHADOW_COLOUR, COLORREF), 2, TRUE, NULL);
+                dialog_end_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc);
+            } while (more && dialog_begin_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, &dc, &area,
+                                                &more, self));
+        }
+        FIELD(self, 0x1BC, int) = redraws;
+    }
+    return 1;
+}
+
+/* ---- UICtlContainer: input ------------------------------------------------------------------- */
+
+/*
+    Vtable slots 22 and 23: a key released or pressed goes to the children from the last (the
+    one on top) back, until one takes it. An object's first child is at 0x10, and siblings link
+    on at 0x0C and back at 0x08.
+*/
+static int container_pass_key(BYTE* self, int slot, key_event* event, DWORD arg)
+{
+    BYTE* child = FIELD(self, 0x10, BYTE*);
+
+    if (!child)
+        return 0;
+    while (FIELD(child, 0x0C, BYTE*))
+        child = FIELD(child, 0x0C, BYTE*);
+    for (; child; child = FIELD(child, 0x08, BYTE*)) {
+        if (VIRTUAL(child, slot, control_two)(child, NULL, (DWORD) event, arg))
+            return 1;
+    }
+    return 0;
+}
+
+PORT(0x0047C380)
+int __fastcall container_release(BYTE* self, void* edx_unused, key_event* event, DWORD arg)
+{
+    (void) edx_unused;
+    return container_pass_key(self, 0x58, event, arg);
+}
+
+PORT(0x0047C330)
+int __fastcall container_press(BYTE* self, void* edx_unused, key_event* event, DWORD arg)
+{
+    (void) edx_unused;
+    return container_pass_key(self, 0x5C, event, arg);
+}
+
+/* ---- Odds and ends ----------------------------------------------------------------------------- */
+
+/* The game's picture surfaces, by vtable offset: lock (giving the pixels) and unlock. */
+typedef WORD* (__fastcall* picture_lock)(void* picture, void* edx_unused, RECT* area, DWORD a,
+                                         DWORD flags);
+typedef BOOL  (__fastcall* picture_unlock)(void* picture, void* edx_unused, RECT* area);
+
+#define PIXELS_565 0x235           /* the picture's pixel format (0x20) */
+#define PIXELS_555 0x22B
+
+/*
+    Whether 16-bit `picture` has colour `key` anywhere (for a colour key). A key of black, or a
+    format other than 565 or 555, is never found. The rows are taken as packed.
+*/
+PORT(0x0047C3D0)
+BOOL __cdecl picture_has_colour(BYTE* picture, COLORREF key)
+{
+    WORD* pixels = VIRTUAL(picture, 0x34, picture_lock)(picture, NULL, NULL, 0, 0x11);
+    BOOL found = FALSE;
+    int width, rows, x;
+    unsigned pixel;
+
+    if (!pixels)
+        return FALSE;
+    if (FIELD(picture, 0x20, int) == PIXELS_565)
+        pixel = (key >> 8 & 0xF800) | (key >> 5 & 0x7E0) | (key >> 3 & 0x1F);
+    else if (FIELD(picture, 0x20, int) == PIXELS_555)
+        pixel = (key >> 9 & 0x7C00) | (key >> 6 & 0x3E0) | (key >> 3 & 0x1F);
+    else
+        pixel = 0;
+    if (pixel) {
+        width = FIELD(picture, 0x14, int);
+        for (rows = FIELD(picture, 0x18, int); rows > 0; rows--, pixels += width) {
+            for (x = 0; x < width; x++) {
+                if (pixels[x] == pixel) {
+                    found = TRUE;
+                    break;
+                }
+            }
+        }
+    }
+    if (!VIRTUAL(picture, 0x38, picture_unlock)(picture, NULL, NULL))
+        return FALSE;
+    return found;
+}
+
+size_t __cdecl game_FUN_0053a860(void* block);    /* _msize */
+
+/* realloc on the game's heap: a size of 0 frees the block. */
+PORT(0x0047C4B0)
+void* __cdecl ui_realloc(void* block, size_t size)
+{
+    BYTE* grown;
+
+    if (block && !size) {
+        game_FUN_004a4450(block, GAMEUI_CPP, 0x2782);
+        return NULL;
+    }
+    grown = game_FUN_004a4410(size, GAMEUI_CPP, 0x2787);
+    if (grown && block) {
+        size_t kept = game_FUN_0053a860(block);
+
+        if ((int) size <= (int) kept)
+            kept = size;
+        __movsb(grown, block, kept);
+        game_FUN_004a4450(block, GAMEUI_CPP, 0x278E);
+    }
+    return grown;
 }
