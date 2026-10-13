@@ -862,7 +862,7 @@ void __fastcall named_choice_handle(BYTE* self, void* edx_unused, ui_event* even
 
 /*
     A prompt quoting the name in the event's parameter. Left or Enter answers through
-    0x453740, Right or Escape through 0x4534C0, both with result 303.
+    0x453740, Right or Escape through result_back, both with result 303.
 */
 #define QUOTED      NAME(0x0056E540)    /* "\"%s\"" */
 #define KEY_ESCAPE  0x1B
@@ -870,7 +870,7 @@ void __fastcall named_choice_handle(BYTE* self, void* edx_unused, ui_event* even
 
 int  __fastcall control_set_align(BYTE* self, void* edx_unused, DWORD align);
 void __cdecl    game_FUN_00453740(int code, ui_event* event);
-void __cdecl    game_FUN_004534c0(int code, ui_event* event);
+void __cdecl    result_back(int code, ui_event* event);
 
 static void set_string(BYTE* control, UINT id)
 {
@@ -886,7 +886,7 @@ void __fastcall quoted_choice_handle(BYTE* self, void* edx_unused, ui_event* eve
     (void) edx_unused;
     if (event->type == EVENT_CLICK) {
         if (clicked(event, BUTTON_RIGHT))
-            game_FUN_004534c0(0x12F, event);
+            result_back(0x12F, event);
         else if (clicked(event, BUTTON_LEFT))
             game_FUN_00453740(0x12F, event);
     } else if (event->type == EVENT_OPEN) {
@@ -903,7 +903,7 @@ void __fastcall quoted_choice_handle(BYTE* self, void* edx_unused, ui_event* eve
         control_show(dialog_find_control(self, NULL, BUTTON_MIDDLE, 1), NULL, FALSE, TRUE);
     } else if (event->type == EVENT_KEY) {
         if (event->d == KEY_ESCAPE)
-            game_FUN_004534c0(0x12F, event);
+            result_back(0x12F, event);
         else if (event->d == KEY_ENTER)
             game_FUN_00453740(0x12F, event);
     }
@@ -1490,6 +1490,92 @@ void __fastcall back_restore_handle(BYTE* self, void* edx_unused, ui_event* even
         game_FUN_0045f720(FIELD(game_main, 0x570, BYTE*), NULL, 100);
         gui_manager_show_cursors(FIELD(self, 0x30, gui_manager*), NULL, TRUE);
     }
+}
+
+void __fastcall game_FUN_004ade20(BYTE* replay);
+void __fastcall game_FUN_004b0c00(BYTE* net, void* edx_unused, DWORD a);
+
+/*
+    Leaving the race (401): the replay being recorded of the watched rider is closed, the race
+    stopped, and the menus go back to the session's screen - out of a network game for a
+    one-race session (0x2D70 = 2).
+*/
+static void race_leave(void)
+{
+    BYTE* replay;
+    BYTE* net;
+
+    game_FUN_00526eb0(game_main, NULL, 0, 0x191, 0);
+    replay = FIELD(game_main, 0x568, BYTE*);
+    net = FIELD(game_main, 0x8, BYTE*);
+    if (replay && net && FIELD(net, 0x10, DWORD) && FIELD(replay, 0xA8, BYTE*)
+        && FIELD(replay, 0x34, BYTE*)
+        && FIELD(replay, 0xA8, BYTE*) == FIELD(FIELD(replay, 0x34, BYTE*), 0x38, BYTE*)) {
+        BYTE* rider = FIELD(FIELD(replay, 0x34, BYTE*), 0x38, BYTE*);
+
+        if (rider)
+            FIELD(rider, 0x4A0, DWORD) = 1;
+        game_FUN_004ade20(FIELD(game_main, 0x568, BYTE*));
+    }
+    game_FUN_0045ddd0(FIELD(game_main, 0x570, BYTE*), NULL, 2);
+    if (FIELD(game_main, 0x8, BYTE*)) {
+        game_FUN_004b0c00(FIELD(game_main, 0x8, BYTE*), NULL, 1);
+        if (FIELD(game_main, 0x2D70, int) == 2) {
+            game_FUN_004b3610();
+            game_FUN_0045f720(FIELD(game_main, 0x570, BYTE*), NULL, 100);
+        } else {
+            game_FUN_0045f720(FIELD(game_main, 0x570, BYTE*), NULL, 0x867);
+        }
+    } else {
+        game_FUN_0045f720(FIELD(game_main, 0x570, BYTE*), NULL,
+                          FIELD(game_main, 0x3440, int) ? 0x88F : 0x65);
+    }
+}
+
+/*
+    The other answer to a screen's result code (see result_go). Those it knows end the screen
+    that sent the event, most with 0, and mark the event handled; 401 leaves the race instead.
+*/
+PORT(0x004534C0)
+void __cdecl result_back(int code, ui_event* event)
+{
+    DWORD end = 0;
+
+    switch (code) {
+    case 0xC9:
+    case 0xCA:
+    case 0xCB:
+        go_to(0x66);
+        break;
+    case 0xCD:
+        go_to(FIELD(game_session, 0x30, int));
+        break;
+    case 0xD0:
+    case 0x12F:
+    case 0x1F9:
+    case 0xBB9:
+    case 0xBBA:
+    case 0xBBB:
+        break;
+    case 0xD8:
+    case 0xD9:
+        end = 14;
+        break;
+    case 0x104:
+    case 0x105:
+        go_to(0x65);
+        break;
+    case 0x12C:
+        end = 0x15;
+        break;
+    case 0x191:
+        race_leave();
+        return;
+    default:
+        return;
+    }
+    dialog_end(event_dialog(event), NULL, end);
+    event->e = 1;
 }
 
 /* ---- Records ---- */
