@@ -5843,3 +5843,74 @@ void __fastcall list_set_224(BYTE* self, void* edx_unused, DWORD value)
     (void) edx_unused;
     FIELD(self, 0x224, DWORD) = value;
 }
+
+#define LIST_LAST_PAGE 0x204        /* how many entries at its end fit its height together */
+
+/*
+    Count the entries at its end that fit its height, and move the thumb of every slider (types
+    7 and 8) of its group to where it has scrolled.
+*/
+PORT(0x00478B50)
+void __fastcall list_tell_sliders(BYTE* self)
+{
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    BYTE walk[0x94];
+    BYTE* control;
+    int room, used = 0, i;
+
+    if (!dialog)
+        return;
+    FIELD(self, LIST_LAST_PAGE, int) = 0;
+    room = FIELD(self, CTL_RECT, RECT).bottom - FIELD(self, CTL_RECT, RECT).top;
+    for (i = list_count(self) - 1; i >= 0; i--) {
+        used += list_entries(self)[i].height;
+        if (used > room)
+            break;
+        FIELD(self, LIST_LAST_PAGE, int)++;
+    }
+    if (FIELD(self, LIST_LAST_PAGE, int) < 0)
+        FIELD(self, LIST_LAST_PAGE, int) = 0;
+
+    walk_begin(walk, NULL, FIELD(dialog, DLG_CONTAINER, void*), 1, UICONTROL_CLASS);
+    for (control = walk_next(walk); control; control = walk_next(walk)) {
+        int type = FIELD(control, CTL_TYPE, int);
+
+        if (FIELD(control, 0x7C, DWORD) == FIELD(self, 0x7C, DWORD) && (type == 8 || type == 7))
+            slider_follow(control, NULL, self);
+    }
+    control_redraw(self);
+    walk_end(walk);
+}
+
+/* Remove every entry. Brushes are deleted here, once each, and cleared where shared. */
+PORT(0x00478580)
+void __fastcall list_clear(BYTE* self)
+{
+    int i;
+
+    for (i = 0; i < list_count(self); i++) {
+        list_entry* entry;
+
+        game_FUN_004a4450(list_entries(self)[i].text, GAMEUI_CPP, 0x1ECF);
+        game_FUN_004a4450(list_entries(self)[i].text_2, GAMEUI_CPP, 0x1ED0);
+        game_FUN_004a4450(list_entries(self)[i].runs, GAMEUI_CPP, 0x1ED1);
+        if (list_entries(self)[i].brush) {
+            int j;
+
+            DeleteObject(list_entries(self)[i].brush);
+            for (j = 0; j < list_count(self); j++) {
+                if (list_entries(self)[j].brush == list_entries(self)[i].brush)
+                    list_entries(self)[j].brush = NULL;
+            }
+        }
+        entry = &list_entries(self)[i];
+        if (entry->anim && !entry->anim->unknown_f4)
+            object_destroy(entry->anim);
+    }
+    list_count(self) = 0;
+    FIELD(self, LIST_FIRST, int) = 0;
+    list_select_all(self, NULL, 0);
+    FIELD(self, LIST_LAST_PAGE, int) = 0;
+    __stosb((BYTE*) list_entries(self), 0, FIELD(self, LIST_CAPACITY, int) * sizeof(list_entry));
+    list_tell_sliders(self);
+}
