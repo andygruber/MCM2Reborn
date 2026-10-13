@@ -1220,6 +1220,92 @@ int __fastcall race_start_tick(BYTE* self, void* edx_unused, float seconds)
     return dialog_tick(self, NULL, seconds);
 }
 
+/*
+    The loading screen. Opening puts a 20-step ProgressBar (drawn with the BlueBar animation) in
+    place of StaBarRect, and starts the race loading; its timer (event 7) ends the screen and
+    starts the race on the tenth tick (0x5A0F4C).
+*/
+#define loading_ticks   (*(int*) 0x005A0F4C)
+#define loading_d8      (*(DWORD*) 0x005A0FD8)   /* cleared as the screen opens */
+#define EVENT_TIMER     7
+
+BYTE* __fastcall progress_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                    BYTE* dialog);
+void  __fastcall progress_set_picture(BYTE* self, void* edx_unused, BYTE* picture, BOOL owned);
+void  __fastcall control_set_name(BYTE* self, void* edx_unused, const char* name);
+int   __fastcall dialog_find(void* dialog, void* edx_unused, const char* name);
+BYTE* __fastcall anim_picture(ui_anim* self);
+void  __fastcall dialog_remove_timer(BYTE* self, void* edx_unused, DWORD id);
+void  __fastcall game_FUN_0049aa90(BYTE* session);
+void  __fastcall game_FUN_00528bb0(char* profile);
+void  __fastcall game_FUN_004b0fc0(BYTE* net, void* edx_unused, DWORD a, DWORD b);
+void  __fastcall game_FUN_0045e280(BYTE* events);       /* start the race */
+void  __fastcall game_FUN_00527090(BYTE* game);
+void  __fastcall game_FUN_00421f90(BYTE* race);
+void  __fastcall game_FUN_004e6c70(BYTE* object);
+
+static void loading_open(BYTE* self)
+{
+    BYTE* place = dialog_find_control(self, NULL, NAME(0x0056FE00), 5);         /* StaBarRect */
+    BYTE* bar = game_new(0x204, DLGPROCS_CPP, 0xADF);
+
+    if (bar)
+        bar = progress_construct(bar, NULL, 0, (const RECT*) (place + 0x3C), self);
+    dialog_add(self, NULL, bar, 0, 0);
+    control_set_name(bar, NULL, NAME(0x0056FDF4));                              /* ProgressBar */
+    progress_set_picture(bar, NULL,
+                         anim_picture((ui_anim*) dialog_find(self, NULL, NAME(0x0056FDEC))),
+                         FALSE);                                                /* BlueBar */
+    FIELD(bar, 0x1F0, int) = 20;                    /* steps */
+    FIELD(bar, 0x1FC, DWORD) = 0;                   /* no percentage */
+    control_show(place, NULL, FALSE, TRUE);
+
+    FIELD(game_session, 0x490, BYTE*) = self;
+    game_FUN_0049aa90(game_session);
+    race_starting = 0;
+    game_FUN_00528bb0(game_profile);
+    if (FIELD(game_main, 0x8, BYTE*))
+        game_FUN_004b0fc0(FIELD(game_main, 0x8, BYTE*), NULL,
+                          FIELD(FIELD(game_main, 0x570, BYTE*), 0x2C, DWORD),
+                          FIELD(FIELD(game_main, 0x570, BYTE*), 0x30, DWORD));
+    loading_ticks = 0;
+    loading_d8 = 0;
+    FIELD(self, 0x7F58, DWORD) = 0;
+}
+
+PORT(0x00451E30)
+void __fastcall loading_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_OPEN) {
+        loading_open(self);
+    } else if (event->type == EVENT_CLOSE) {
+        dialog_remove_timer(self, NULL, 0);
+        gui_manager_show_cursors(FIELD(self, 0x30, gui_manager*), NULL, FALSE);
+        FIELD(game_session, 0x490, BYTE*) = NULL;
+    } else if (event->type == EVENT_TIMER) {
+        if (loading_ticks >= 10) {
+            if (FIELD(game_main, 0x8, BYTE*)) {
+                FIELD(game_main, 0xC1C, DWORD) = 0;
+                dialog_end(event_dialog(event), NULL, 0);
+                event->e = 1;
+            } else {
+                dialog_end(event_dialog(event), NULL, 0);
+                event->e = 1;
+                game_FUN_00527090(game_main);
+                game_FUN_00469760(game_main);
+                game_FUN_00421f90(game_FUN_0045e300(FIELD(game_main, 0x570, BYTE*)));
+                if (FIELD(game_main, 0x55C, BYTE*))
+                    game_FUN_004e6c70(FIELD(game_main, 0x55C, BYTE*));
+                if (FIELD(game_main, 0x568, BYTE*))
+                    game_FUN_004e6c70(FIELD(game_main, 0x568, BYTE*));
+            }
+            game_FUN_0045e280(FIELD(game_main, 0x570, BYTE*));
+        }
+        loading_ticks++;
+    }
+}
+
 /* ---- Tracks ---- */
 
 #define LIST_TRACK  NAME(0x005700EC)    /* "LstTrack" */
