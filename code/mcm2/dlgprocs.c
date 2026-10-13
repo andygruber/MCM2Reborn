@@ -592,6 +592,56 @@ int __fastcall wait_key_when_shown(BYTE* self, void* edx_unused, const DWORD* ke
     return 1;
 }
 
+/*
+    Vtable slot 10 of the wait screens. A count of ticks (0x7F58) moves the session on once the
+    screen has drawn; a timer ends the wait after 3 seconds, or when a key skipped it.
+*/
+#define WAIT_SECONDS 3.0
+
+void __fastcall game_FUN_00499ca0(BYTE* session, void* edx_unused, int stage);
+
+PORT(0x00454350)
+int __fastcall wait_stage_tick(BYTE* self, void* edx_unused, float seconds)
+{
+    (void) edx_unused;
+    if (++FIELD(self, 0x7F58, int) == 3) {
+        game_FUN_00499ca0(FIELD(game_main, 0x56C, BYTE*), NULL, 1);
+        dialog_end(self, NULL, 0);
+    }
+    return dialog_tick(self, NULL, seconds);
+}
+
+/* The time waited (0x7F58); keys count once it has ticked (0x7F5C). */
+PORT(0x00454680)
+int __fastcall wait_timed_tick(BYTE* self, void* edx_unused, float seconds)
+{
+    double waited = (double) seconds + FIELD(self, 0x7F58, float);
+
+    (void) edx_unused;
+    FIELD(self, 0x7F5C, int) = 1;
+    FIELD(self, 0x7F58, float) = (float) waited;
+    if (wait_skipped || waited > WAIT_SECONDS)
+        dialog_end(self, NULL, 0);
+    return dialog_tick(self, NULL, seconds);
+}
+
+/* Both: the session moves on at the third tick, and the wait (0x7F5C) ends no sooner. */
+PORT(0x004544F0)
+int __fastcall wait_stage_timed_tick(BYTE* self, void* edx_unused, float seconds)
+{
+    double waited;
+
+    (void) edx_unused;
+    if (++FIELD(self, 0x7F58, int) == 3)
+        game_FUN_00499ca0(FIELD(game_main, 0x56C, BYTE*), NULL, 2);
+    waited = (double) seconds + FIELD(self, 0x7F5C, float);
+    FIELD(self, 0x7F60, int) = 1;
+    FIELD(self, 0x7F5C, float) = (float) waited;
+    if ((wait_skipped || waited > WAIT_SECONDS) && FIELD(self, 0x7F58, int) >= 3)
+        dialog_end(self, NULL, 0);
+    return dialog_tick(self, NULL, seconds);
+}
+
 /* Vtable slot 23: a key closes the screen once the race under way has finished (0x18A). */
 PORT(0x00456AE0)
 int __fastcall race_over_key(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg)
@@ -619,6 +669,174 @@ int __fastcall leave_request_tick(BYTE* self, void* edx_unused, float seconds)
         return 0;
     }
     return dialog_tick(self, NULL, seconds);
+}
+
+/* ---- Asking ---- */
+
+/* Three choices ending the dialog itself: left with 101, middle with 102, right with 103. */
+PORT(0x004565B0)
+void __fastcall three_way_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type != EVENT_CLICK)
+        return;
+    if (clicked(event, BUTTON_LEFT))
+        dialog_end(self, NULL, 0x65);
+    else if (clicked(event, BUTTON_MIDDLE))
+        dialog_end(self, NULL, 0x66);
+    else if (clicked(event, BUTTON_RIGHT))
+        dialog_end(self, NULL, 0x67);
+}
+
+/*
+    A line of text to type: the caller's buffer (0x7F58) and its size (0x7F5C) take the edit
+    box's text when OK ends the dialog with 201; Cancel ends it with 202.
+*/
+#define EDIT_BOX      NAME(0x0056FE58)      /* "EditBox" */
+#define OK_BUTTON     NAME(0x0056FE60)      /* "OkButton" */
+#define CANCEL_BUTTON NAME(0x0056FF44)      /* "CancelButton" */
+
+int   __fastcall edit_set_capacity(BYTE* self, void* edx_unused, int length);
+int   __fastcall edit_set_text(BYTE* self, void* edx_unused, const char* text);
+char* __fastcall edit_get_text(BYTE* self, void* edx_unused, char* buffer, int size);
+
+/* Out of line: the ids variant calls it, as in the original. */
+__declspec(noinline) void __fastcall text_entry_setup(BYTE* self, void* edx_unused,
+                                                      const char* title, const char* prompt,
+                                                      char* buffer, int size);
+
+PORT(0x00456840)
+void __fastcall text_entry_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, OK_BUTTON)) {
+            edit_get_text(dialog_find_control(self, NULL, EDIT_BOX, 11), NULL,
+                          FIELD(self, 0x7F58, char*), FIELD(self, 0x7F5C, int));
+            dialog_end(self, NULL, 0xC9);
+        } else if (clicked(event, CANCEL_BUTTON)) {
+            dialog_end(self, NULL, 0xCA);
+        }
+    } else if (event->type == EVENT_OPEN) {
+        FIELD(self, 0x7F58, char*) = NULL;
+        FIELD(self, 0x7F5C, int) = 0;
+        gui_user_queue_capture(FIELD(self, 0x34, gui_user*), NULL,
+                               dialog_find_control(self, NULL, EDIT_BOX, 0), NULL, FALSE);
+    }
+}
+
+PORT(0x004568F0)
+void __fastcall text_entry_setup(BYTE* self, void* edx_unused, const char* title,
+                                 const char* prompt, char* buffer, int size)
+{
+    BYTE* edit;
+
+    (void) edx_unused;
+    FIELD(self, 0x7F58, char*) = buffer;
+    FIELD(self, 0x7F5C, int) = size;
+    control_set_text(dialog_find_control(self, NULL, TITLE_TEXT, 0), NULL, title);
+    control_set_text(dialog_find_control(self, NULL, PROMPT_TEXT, 0), NULL, prompt);
+    edit = dialog_find_control(self, NULL, EDIT_BOX, 11);
+    edit_set_capacity(edit, NULL, size - 1);
+    edit_set_text(edit, NULL, buffer);
+}
+
+/* The same, the title and prompt given by string ids where those are not 0. */
+PORT(0x00456970)
+void __fastcall text_entry_setup_ids(BYTE* self, void* edx_unused, const char* title,
+                                     UINT title_id, const char* prompt, UINT prompt_id,
+                                     char* buffer, int size)
+{
+    char title_text[0x80];
+    char prompt_text[0x80];
+
+    (void) edx_unused;
+    if (title_id)
+        game_FUN_00526fc0(game_main, NULL, title_id, title_text, sizeof title_text);
+    if (prompt_id) {
+        game_FUN_00526fc0(game_main, NULL, prompt_id, prompt_text, sizeof prompt_text);
+        prompt = prompt_text;
+    }
+    text_entry_setup(self, NULL, title_id ? title_text : title, prompt, buffer, size);
+}
+
+/* ---- Leaving ---- */
+
+void __fastcall game_FUN_0045f530(BYTE* events);
+void __fastcall game_FUN_0049aaa0(BYTE* session, void* edx_unused, int screen);
+void __fastcall game_FUN_00526eb0(BYTE* game, void* edx_unused, DWORD a, DWORD b, DWORD c);
+
+/* The session's next screen. */
+static void go_to(int screen)
+{
+    game_FUN_0049aaa0(FIELD(game_main, 0x56C, BYTE*), NULL, screen);
+}
+
+/*
+    Where a screen's result code takes the session. Those it knows end the screen that sent the
+    event (with 14 for 252, else 0) and mark the event handled; 400 asks the game instead.
+*/
+PORT(0x00453EA0)
+void __cdecl result_go(int code, ui_event* event)
+{
+    DWORD end = 0;
+    BYTE* session;
+    int screen;
+
+    switch (code) {
+    case 0x10E:
+        game_FUN_0045f530(FIELD(game_main, 0x570, BYTE*));
+        go_to(FIELD(game_main, 0x8, int) ? 0x867 : 0x65);
+        break;
+    case 0x65:
+        go_to(100);
+        break;
+    case 0x66:
+        go_to(FIELD(FIELD(game_main, 0x56C, BYTE*), 0x30, int));
+        break;
+    case 0xFC:
+        end = 14;
+        break;
+    case 0x190:
+        game_FUN_00526eb0(game_main, NULL, 0, 400, 1);
+        return;
+    case 0x910:
+    case 0x911:
+        session = FIELD(game_main, 0x56C, BYTE*);
+        screen = FIELD(session, 0x3C, int);
+        if (screen == 0x910)
+            go_to(0x65);
+        else if (screen == 0x911)
+            go_to(FIELD(session, 0x38, int));
+        break;
+    default:
+        return;
+    }
+    dialog_end(event_dialog(event), NULL, end);
+    event->e = 1;
+}
+
+/* ---- Records ---- */
+
+/* A record of three 128-character names and the numbers after them, emptied; scales 1, 1, 0.5. */
+PORT(0x00456BA0)
+BYTE* __fastcall record_init(BYTE* self)
+{
+    int offset;
+
+    self[0] = 0;
+    self[0x80] = 0;
+    self[0x100] = 0;
+    for (offset = 0x180; offset <= 0x1B8; offset += 4)
+        FIELD(self, offset, DWORD) = 0;
+    FIELD(self, 0x1BC, float) = 1.0f;
+    FIELD(self, 0x1C0, float) = 1.0f;
+    FIELD(self, 0x1C4, DWORD) = 0;
+    FIELD(self, 0x1C8, float) = 0.5f;
+    FIELD(self, 0x204, DWORD) = 0;
+    FIELD(self, 0x20C, DWORD) = 0;
+    FIELD(self, 0x208, DWORD) = 0;
+    return self;
 }
 
 /* ---- Numbers ---- */
