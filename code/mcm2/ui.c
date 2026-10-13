@@ -4945,3 +4945,247 @@ int __fastcall slider_get_value(BYTE* self)
     return (int) (FIELD(self, SLIDER_RANGE, unsigned) * offset
                   / (height - FIELD(self, SLIDER_THUMB + 4, unsigned)));
 }
+
+#define SLIDER_TRACK    0x204       /* ui_anim*: the track's picture */
+#define SLIDER_DRAGGING 0x208
+#define SLIDER_HELD_AT  0x20C       /* POINT: where the pointer last stopped */
+#define SLIDER_HOLD     0x214       /* seconds there before event 17 */
+#define SLIDER_HELD     0x218
+
+void __fastcall game_FUN_004777f0(BYTE* list, void* edx_unused, int first, BOOL b);  /* scroll */
+
+/* Fill `event` as the control's (keeping its `e`) and tell the dialog. */
+static void control_tell(BYTE* self, ui_event* event, DWORD type)
+{
+    BYTE* dialog;
+
+    event->a = FIELD(self, 0x74, DWORD);
+    event->type = type;
+    event->b = (DWORD) control_get_name(self);
+    event->manager = FIELD(self, CTL_MANAGER, gui_manager*);
+    dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    event->sender = dialog;
+    event->c = (DWORD) self;
+    VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, event);
+}
+
+/* Draw `picture` in `box`, through the dialog's background or straight to the screen. */
+static BOOL slider_blit(BYTE* self, BYTE* picture, RECT* box)
+{
+    BYTE* background = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*);
+    DWORD flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
+
+    if (!background)
+        return VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL, box,
+                                                             picture, NULL, flags) != 0;
+    background_draw(background, NULL, picture, box, NULL, flags, FIELD(self, CTL_SLOT, int),
+                    FIELD(self, 0x1C0, DWORD), &FIELD(self, 0x1BC, int), 0);
+    return TRUE;
+}
+
+/*
+    Vtable slot 40: render. The track centred across the control, then the thumb at its offset,
+    centred the other way. A thumb with one frame settles; otherwise it is drawn again.
+*/
+PORT(0x00475E70)
+int __fastcall slider_render(BYTE* self)
+{
+    const RECT* area = &FIELD(self, CTL_RECT, RECT);
+    BYTE* thumb;
+    RECT box;
+
+    if (FIELD(self, SLIDER_TRACK, ui_anim*) && FIELD(self, 0x1CC, BYTE*)) {
+        BYTE* track = anim_picture(FIELD(self, SLIDER_TRACK, ui_anim*));
+        int redraws = FIELD(self, 0x1BC, int);
+        int margin;
+
+        box = *area;
+        if (slider_across(self)) {
+            margin = (area->bottom - area->top - FIELD(track, 0x18, int)) / 2;
+            box.top += margin < 0 ? 0 : margin;
+            box.bottom = FIELD(track, 0x18, int) + box.top;
+        } else {
+            margin = (area->right - area->left - FIELD(track, 0x14, int)) / 2;
+            box.left += margin < 0 ? 0 : margin;
+            box.right = FIELD(track, 0x14, int) + box.left;
+        }
+        if (!slider_blit(self, track, &box))
+            return 0;
+        FIELD(self, 0x1BC, int) = redraws;
+    }
+
+    thumb = FIELD(self, 0x1CC, BYTE*);
+    if (!thumb)
+        return 1;
+    if (slider_across(self)) {
+        box.top = (area->bottom - FIELD(self, SLIDER_THUMB + 4, int) - area->top) / 2 + area->top;
+        box.left = (int) FIELD(self, SLIDER_AT, float) + area->left;
+        box.bottom = FIELD(self, SLIDER_THUMB + 4, int) + box.top;
+        box.right = FIELD(self, SLIDER_THUMB, int) + box.left;
+    } else {
+        box.top = (int) FIELD(self, SLIDER_AT, float) + area->top;
+        box.left = (area->right - FIELD(self, SLIDER_THUMB, int) - area->left) / 2 + area->left;
+        box.bottom = FIELD(self, SLIDER_THUMB + 4, int) + box.top;
+        box.right = FIELD(self, SLIDER_THUMB, int) + box.left;
+    }
+    if (!FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*))
+        return slider_blit(self, thumb, &box) ? 1 : 0;
+    slider_blit(self, thumb, &box);
+    if (FIELD(FIELD(self, 0x16C + 4 * FIELD(self, 0x60, int), BYTE*), 0x10, int) == 1)
+        FIELD(self, 0x1C0, DWORD) = 1;
+    else
+        control_redraw(self);
+    return 1;
+}
+
+/* Scroll every list (type 3) of the group to `first`, or by a page of 0x200 entries. */
+static void slider_page(BYTE* self, int direction)
+{
+    BYTE* walk = control_walk_of(self);
+    BYTE* list;
+
+    while ((list = control_next_in_group(self, NULL, walk)) != NULL) {
+        if (FIELD(list, CTL_TYPE, int) == 3) {
+            int page = FIELD(list, 0x200, int);
+
+            game_FUN_004777f0(list, NULL, list_last(list) + direction * page, TRUE);
+        }
+    }
+    control_walk_end(self, NULL, walk);
+}
+
+/* An offset along the track: no less than 0, no more than the track. */
+static int slider_place(int offset, int track)
+{
+    if (offset < 0)
+        offset = 0;
+    return track < offset ? track : offset;
+}
+
+/*
+    Vtable slot 55: pressed with the first button while it has focus. With steps the thumb jumps
+    to the pointer; without, a press past the thumb pages its lists forward, before it back.
+*/
+PORT(0x00476560)
+int __fastcall slider_pressed(BYTE* self, void* edx_unused, DWORD button, const POINT* at)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && !button && at) {
+        BOOL across = slider_across(self);
+        LONG near_edge = across ? FIELD(self, CTL_RECT, RECT).left : FIELD(self, CTL_RECT, RECT).top;
+        LONG pointer = across ? at->x : at->y;
+        int thumb = FIELD(self, across ? SLIDER_THUMB : SLIDER_THUMB + 4, int);
+
+        if (slider_steps(self)) {
+            int track = (across ? VIRTUAL(self, 0xF4, method_0)(self)
+                                : VIRTUAL(self, 0xF8, method_0)(self)) - thumb;
+
+            FIELD(self, SLIDER_AT, float) = (float) slider_place(pointer - near_edge, track);
+        } else {
+            double from = (double) near_edge + FIELD(self, SLIDER_AT, float);
+
+            if ((double) pointer > (double) thumb + near_edge + FIELD(self, SLIDER_AT, float))
+                slider_page(self, 1);
+            else if (x87_less(pointer, from))
+                slider_page(self, -1);
+        }
+        if (slider_steps(self))
+            slider_set_value(self, NULL, slider_value_at(self, NULL, slider_steps(self)),
+                             slider_steps(self));
+    }
+    return control_pressed(self, NULL, button, (DWORD) at);
+}
+
+/* Vtable slot 56: released, it ends a drag (event 16), then is released as a kind button is. */
+PORT(0x00476810)
+int __fastcall slider_released(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    ui_event event;
+
+    (void) edx_unused;
+    event.e = 0;
+    if (FIELD(self, SLIDER_DRAGGING, int))
+        control_tell(self, &event, 16);
+    FIELD(self, SLIDER_DRAGGING, int) = 0;
+    if (control_user(self)->focus == self && !button && FIELD(self, 0x60, int) == 2) {
+        control_tell(self, &event, 1);
+        if (event.e)
+            return 1;
+    }
+    return control_released(self, NULL, button, b);
+}
+
+/*
+    Vtable slot 57: dragged with the first button: the thumb follows the pointer (centred on it
+    without steps), the dialog hears of the drag starting (15), of each move (3) and of the
+    pointer resting SLIDER_HOLD seconds in one place (17), and the lists follow the thumb.
+*/
+PORT(0x00476900)
+void __fastcall slider_drag(BYTE* self, void* edx_unused, DWORD button, const POINT* at)
+{
+    int width, height, steps, offset;
+    ui_event event;
+
+    (void) edx_unused;
+    control_drag(self, NULL, button, at);
+    event.e = 0;
+    if (button || !at)
+        return;
+    width = VIRTUAL(self, 0xF4, method_0)(self);
+    height = VIRTUAL(self, 0xF8, method_0)(self);
+    control_redraw(self);
+    steps = slider_steps(self);
+    if (slider_across(self)) {
+        offset = at->x - FIELD(self, CTL_RECT, RECT).left;
+        if (!steps)
+            offset -= FIELD(self, SLIDER_THUMB, int) / 2;
+        offset = slider_place(offset, width - FIELD(self, SLIDER_THUMB, int));
+    } else {
+        offset = at->y - FIELD(self, CTL_RECT, RECT).top;
+        if (!steps)
+            offset -= FIELD(self, SLIDER_THUMB + 4, int) / 2;
+        offset = slider_place(offset, height - FIELD(self, SLIDER_THUMB + 4, int));
+    }
+    FIELD(self, SLIDER_AT, float) = (float) offset;
+    if (steps)
+        slider_set_value(self, NULL, slider_value_at(self, NULL, steps), steps);
+
+    if (!FIELD(self, SLIDER_DRAGGING, int)) {
+        control_tell(self, &event, 15);
+        FIELD(self, SLIDER_DRAGGING, int) = 1;
+    }
+    if (event.e)
+        return;
+    if (at->x == FIELD(self, SLIDER_HELD_AT, LONG) && at->y == FIELD(self, SLIDER_HELD_AT + 4, LONG)) {
+        double held = (double) FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x9C0, float)
+                      + FIELD(self, SLIDER_HELD, float);
+
+        FIELD(self, SLIDER_HELD, float) = (float) held;
+        if (!x87_less(held, FIELD(self, SLIDER_HOLD, float))) {
+            control_tell(self, &event, 17);
+            if (event.e)
+                return;
+        }
+    } else {
+        control_tell(self, &event, 3);
+        FIELD(self, SLIDER_HELD_AT, LONG) = at->x;
+        FIELD(self, SLIDER_HELD_AT + 4, LONG) = at->y;
+        FIELD(self, SLIDER_HELD, float) = 0.0f;
+        if (event.e)
+            return;
+    }
+
+    {
+        BYTE* walk = control_walk_of(self);
+        BYTE* list;
+
+        while ((list = control_next_in_group(self, NULL, walk)) != NULL) {
+            if (FIELD(list, CTL_TYPE, int) == 3)
+                game_FUN_004777f0(list, NULL,
+                                  slider_value_at(self, NULL, FIELD(list, 0x1EC, int)
+                                                              - FIELD(list, 0x204, int)),
+                                  FALSE);
+        }
+        control_walk_end(self, NULL, walk);
+    }
+}
