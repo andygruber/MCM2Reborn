@@ -6897,3 +6897,69 @@ int __fastcall option_load_text(BYTE* self, void* edx_unused, int index, HINSTAN
     option_set_text(self, NULL, index, shown);
     return control_redraw(self);
 }
+
+/* Vtable slot 55: pressed with the first button while it has focus, it steps to the next option. */
+PORT(0x00479D10)
+int __fastcall option_pressed(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && !button) {
+        ui_event event;
+
+        event.e = 0;
+        option_next(self);
+        control_tell(self, &event, 1);
+        if (event.e)
+            return 1;
+    }
+    return control_pressed(self, NULL, button, b);
+}
+
+/* Vtable slot 28: the button's test, as the original repeats it. */
+PORT(0x00479DB0)
+BOOL __fastcall option_contains(BYTE* self, void* edx_unused, LONG x, LONG y, DWORD unused)
+{
+    return button_contains(self, edx_unused, x, y, unused);
+}
+
+/* ---- UIPicture: a control that only shows its picture ---------------------------------------- */
+
+#define UIPICTURE_VTABLE ((void**) 0x005583D0)
+
+PORT(0x00479F00)
+BYTE* __fastcall picture_control_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                           BYTE* dialog)
+{
+    (void) edx_unused;
+    control_construct(self, NULL, 5, a, area, dialog);
+    *(void***) self = UIPICTURE_VTABLE;
+    return self;
+}
+
+PORT(0x00479F50)
+void __fastcall picture_control_destruct(BYTE* self)
+{
+    *(void***) self = UIPICTURE_VTABLE;
+    control_destruct(self);
+}
+
+PORT(0x00479F30)
+BYTE* __fastcall picture_control_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    picture_control_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Vtable slot 48: its picture, whatever the state. */
+PORT(0x00479F60)
+BYTE* __fastcall picture_control_picture(BYTE* self, void* edx_unused, int state)
+{
+    ui_anim* anim = FIELD(self, 0x16C, ui_anim*);
+
+    (void) edx_unused;
+    (void) state;
+    return anim ? anim_picture(anim) : NULL;
+}
