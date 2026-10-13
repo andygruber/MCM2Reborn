@@ -241,7 +241,7 @@ void __cdecl stats_add_row(ui_event* event, const char* first, const char* secon
 #define PROMPT_TEXT   NAME(0x0056F858)      /* "TxtPrompt" */
 #define KEY_RETURN    0x1C
 
-enum { EVENT_CLICK = 1, EVENT_OPEN = 5, EVENT_CLOSE = 6 };
+enum { EVENT_CLICK = 1, EVENT_OPEN = 5, EVENT_CLOSE = 6, EVENT_KEY = 11 };
 
 static void load_text(BYTE* self, const char* name, int type, UINT id)
 {
@@ -857,6 +857,55 @@ void __fastcall named_choice_handle(BYTE* self, void* edx_unused, ui_event* even
         game_FUN_0053a11f(text, QUOTED_NAME, (const char*) event->param, what);
         control_set_text(title, NULL, text);
         load_prompt(self, 0x1403);
+    }
+}
+
+/*
+    A prompt quoting the name in the event's parameter. Left or Enter answers through
+    0x453740, Right or Escape through 0x4534C0, both with result 303.
+*/
+#define QUOTED      NAME(0x0056E540)    /* "\"%s\"" */
+#define KEY_ESCAPE  0x1B
+#define KEY_ENTER   0x0D
+
+int  __fastcall control_set_align(BYTE* self, void* edx_unused, DWORD align);
+void __cdecl    game_FUN_00453740(int code, ui_event* event);
+void __cdecl    game_FUN_004534c0(int code, ui_event* event);
+
+static void set_string(BYTE* control, UINT id)
+{
+    char text[0x80];
+
+    game_FUN_00526fc0(game_main, NULL, id, text, sizeof text);
+    control_set_text(control, NULL, text);
+}
+
+PORT(0x00453300)
+void __fastcall quoted_choice_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, BUTTON_RIGHT))
+            game_FUN_004534c0(0x12F, event);
+        else if (clicked(event, BUTTON_LEFT))
+            game_FUN_00453740(0x12F, event);
+    } else if (event->type == EVENT_OPEN) {
+        BYTE* title = dialog_find_control(self, NULL, TITLE_TEXT, 0);
+        char text[0x80];
+
+        game_FUN_00526fc0(game_main, NULL, 0xFEF, text, sizeof text);
+        control_set_align(title, NULL, 10);
+        control_set_text(title, NULL, text);
+        game_FUN_0053a11f(text, QUOTED, (const char*) event->param);
+        control_set_text(dialog_find_control(self, NULL, PROMPT_TEXT, 12), NULL, text);
+        set_string(dialog_find_control(self, NULL, BUTTON_LEFT, 0), 0x13E9);
+        set_string(dialog_find_control(self, NULL, BUTTON_RIGHT, 0), 0x13DC);
+        control_show(dialog_find_control(self, NULL, BUTTON_MIDDLE, 1), NULL, FALSE, TRUE);
+    } else if (event->type == EVENT_KEY) {
+        if (event->d == KEY_ESCAPE)
+            game_FUN_004534c0(0x12F, event);
+        else if (event->d == KEY_ENTER)
+            game_FUN_00453740(0x12F, event);
     }
 }
 
