@@ -8282,3 +8282,65 @@ void* __cdecl ui_realloc(void* block, size_t size)
     }
     return grown;
 }
+
+/*
+    UIOption's vtable slot 40: render. Its picture (sized to itself when 0xA4 is set), then the
+    option's text as a control's is drawn; sized to its picture, the text is the control's own,
+    drawn to the right of the option's picture within the padding.
+*/
+PORT(0x00479500)
+int __fastcall option_render(BYTE* self)
+{
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    BYTE* picture = FIELD(self, 0x1CC, BYTE*);
+    int redraws = FIELD(self, 0x1BC, int);
+    int kept = -1;
+    ui_option* option;
+    DWORD more;
+    RECT box;
+    HDC dc;
+
+    if (option_list(self) && picture) {
+        DWORD flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
+
+        control_picture_area(self, NULL, &FIELD(self, CTL_RECT, RECT), &box);
+        if (FIELD(dialog, DLG_BACKGROUND, BYTE*)) {
+            background_draw(FIELD(dialog, DLG_BACKGROUND, BYTE*), NULL, picture, &box, NULL, flags,
+                            FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
+                            &FIELD(self, 0x1BC, int), 0);
+            kept = FIELD(self, 0x1BC, int);
+        } else if (!VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL, &box,
+                                                                   picture, NULL, flags)) {
+            return 0;
+        }
+    }
+
+    option = option_list(self) ? option_current(self) : NULL;
+    if (!(option && option->text && option->length)
+        && !(FIELD(self, 0xA4, int) && FIELD(self, CTL_TEXT, char*) && FIELD(self, CTL_LENGTH, int)))
+        return 1;
+    FIELD(self, 0x1BC, int) = redraws;
+    do {
+        if (dialog_begin_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, &dc, &FIELD(self, CTL_RECT, RECT),
+                               &more, self)) {
+            if (FIELD(self, 0xA4, int)) {
+                box = FIELD(self, CTL_RECT, RECT);
+                box.left += anim_current(option_current(self)->anim)->width + FIELD(self, 0xE8, LONG);
+                box.right -= FIELD(self, 0xE8, LONG);
+                box.top += FIELD(self, 0xEC, LONG);
+                box.bottom -= FIELD(self, 0xEC, LONG);
+                dialog_draw_text(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc, &box,
+                                 FIELD(self, CTL_TEXT, char*), FIELD(self, CTL_LENGTH, int),
+                                 FIELD(self, CTL_COLOUR, COLORREF), FIELD(self, 0x160, int),
+                                 FIELD(self, CTL_RUNS, text_run*), FIELD(self, CTL_SHADOW, BOOL),
+                                 FIELD(self, CTL_SHADOW_COLOUR, COLORREF), 0x11, TRUE, NULL);
+            } else {
+                dialog_draw_control_text(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc, self, TRUE);
+            }
+            dialog_end_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc);
+        }
+    } while (more);
+    if (kept >= 0)
+        FIELD(self, 0x1BC, int) = kept;
+    return 1;
+}
