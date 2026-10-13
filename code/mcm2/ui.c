@@ -5192,22 +5192,22 @@ void __fastcall slider_drag(BYTE* self, void* edx_unused, DWORD button, const PO
 
 /* ---- UIList: a scrolling list of entries ------------------------------------------------------- */
 
-/* A list entry, 56 bytes: text (kind 1) or a picture, with a value and a background brush. */
+/* A list entry, 56 bytes: text (kind 1) or a picture, with its row's height and colours. */
 typedef struct list_entry {
-    int      kind;
-    DWORD    unknown_04;
-    DWORD    unknown_08;
-    DWORD    value;             /* 0x0C */
-    DWORD    unknown_10;
-    char*    text;              /* 0x14, on the game's heap */
-    char*    text_2;            /* 0x18, on the game's heap */
-    DWORD    data;              /* 0x1C: the caller's */
-    ui_anim* anim;              /* 0x20 */
-    char*    text_3;            /* 0x24, on the game's heap */
-    DWORD    unknown_28;
-    DWORD    unknown_2c;
-    DWORD    unknown_30;
-    HBRUSH   brush;             /* 0x34, possibly shared with other entries */
+    int       kind;
+    DWORD     b;
+    int       length;           /* of the text */
+    int       height;           /* 0x0C: its row's */
+    DWORD     unknown_10;
+    char*     text;             /* 0x14, on the game's heap */
+    char*     text_2;           /* 0x18, on the game's heap */
+    DWORD     data;             /* 0x1C: the caller's */
+    ui_anim*  anim;             /* 0x20 */
+    text_run* runs;             /* 0x24: the text's markup, on the game's heap */
+    COLORREF  colour;           /* 0x28: its text's, or 0 for the list's */
+    DWORD     unknown_2c;
+    DWORD     unknown_30;
+    HBRUSH    brush;            /* 0x34, possibly shared with other entries */
 } list_entry;
 
 _Static_assert(sizeof(list_entry) == 0x38, "a list entry is 56 bytes");
@@ -5300,7 +5300,7 @@ void __fastcall list_destruct(BYTE* self)
 
         game_FUN_004a4450(entry->text, GAMEUI_CPP, 0x1B79);
         game_FUN_004a4450(list_entries(self)[i].text_2, GAMEUI_CPP, 0x1B7A);
-        game_FUN_004a4450(list_entries(self)[i].text_3, GAMEUI_CPP, 0x1B7B);
+        game_FUN_004a4450(list_entries(self)[i].runs, GAMEUI_CPP, 0x1B7B);
         entry = &list_entries(self)[i];
         if (entry->anim && !entry->anim->unknown_f4)
             object_destroy(entry->anim);
@@ -5410,11 +5410,11 @@ int __fastcall list_kind(BYTE* self, void* edx_unused, int index)
 }
 
 PORT(0x00477930)
-DWORD __fastcall list_value(BYTE* self, void* edx_unused, int index)
+int __fastcall list_height(BYTE* self, void* edx_unused, int index)
 {
     (void) edx_unused;
     if (list_count(self) && index > -1 && index < list_count(self))
-        return list_entries(self)[index].value;
+        return list_entries(self)[index].height;
     return 0;
 }
 
@@ -5546,6 +5546,146 @@ int __fastcall list_set_colour(BYTE* self, void* edx_unused, COLORREF colour, in
                 DeleteObject(old);
         }
         list_entries(self)[index].brush = colour == NO_COLOUR ? NULL : CreateSolidBrush(colour);
+    }
+    return control_redraw(self);
+}
+
+/* The text colour: the list's (`index` -1) or one entry's. */
+PORT(0x00477C00)
+int __fastcall list_set_text_colour(BYTE* self, void* edx_unused, COLORREF colour, int index)
+{
+    (void) edx_unused;
+    if (index == -1) {
+        control_set_colour(self, NULL, colour);
+        return control_redraw(self);
+    }
+    if (index < list_count(self))
+        list_entries(self)[index].colour = colour;
+    return control_redraw(self);
+}
+
+PORT(0x00477C60)
+int __fastcall list_set_colour_2(BYTE* self, void* edx_unused, COLORREF colour)
+{
+    (void) edx_unused;
+    if (FIELD(self, LIST_BRUSH_2, HBRUSH))
+        DeleteObject(FIELD(self, LIST_BRUSH_2, HBRUSH));
+    FIELD(self, LIST_BRUSH_2, HBRUSH) = colour != NO_COLOUR ? CreateSolidBrush(colour) : NULL;
+    return control_redraw(self);
+}
+
+/* An entry's text: the selection's when `index` is -1; NULL when there is none. */
+PORT(0x00477CB0)
+const char* __fastcall list_text(BYTE* self, void* edx_unused, int index)
+{
+    (void) edx_unused;
+    if (FIELD(self, LIST_SELECTED, int) > -1 && index == -1)
+        return list_entries(self)[FIELD(self, LIST_SELECTED, int)].text;
+    if (list_count(self) && index > -1 && index < list_count(self))
+        return list_entries(self)[index].text;
+    return NULL;
+}
+
+void* __cdecl game_FUN_0047c4b0(void* block, size_t size);       /* realloc on the game's heap */
+
+/* Room for `capacity` entries, the new ones zeroed. FALSE when it cannot grow. */
+PORT(0x00477EE0)
+BOOL __fastcall list_reserve(BYTE* self, void* edx_unused, int capacity)
+{
+    list_entry* entries;
+
+    (void) edx_unused;
+    if (capacity <= FIELD(self, LIST_CAPACITY, int))
+        return TRUE;
+    entries = game_FUN_0047c4b0(list_entries(self), capacity * sizeof(list_entry));
+    if (!entries)
+        return FALSE;
+    __stosb((BYTE*) &entries[FIELD(self, LIST_CAPACITY, int)], 0,
+            (capacity - FIELD(self, LIST_CAPACITY, int)) * sizeof(list_entry));
+    FIELD(self, LIST_CAPACITY, int) = capacity;
+    list_entries(self) = entries;
+    return TRUE;
+}
+
+/* How many entries, from the first showing, fit its height; one at least when 0x240 is set. */
+PORT(0x00477E70)
+int __fastcall list_rows_fitting(BYTE* self)
+{
+    int room = FIELD(self, CTL_RECT, RECT).bottom - FIELD(self, CTL_RECT, RECT).top;
+    int i = FIELD(self, LIST_FIRST, int);
+    int used = 0, rows = 0;
+
+    if (i >= list_count(self))
+        return 0;
+    for (; i < list_count(self); i++) {
+        used += list_entries(self)[i].height;
+        if (used > room)
+            return !rows && FIELD(self, 0x240, int) ? 1 : rows;
+        rows++;
+    }
+    return rows;
+}
+
+/* Add a text entry with `data`, growing the list when full. FALSE without text or room. */
+PORT(0x00477D10)
+BOOL __fastcall list_add_text(BYTE* self, void* edx_unused, const char* text, DWORD data, DWORD b)
+{
+    list_entry* entry;
+    int height;
+
+    (void) edx_unused;
+    if (!text)
+        return FALSE;
+    if (list_count(self) >= FIELD(self, LIST_CAPACITY, int)
+        && !list_reserve(self, NULL, list_count(self) + 1))
+        return FALSE;
+    entry = &list_entries(self)[list_count(self)];
+    entry->length = (int) text_length(text);
+    height = FIELD(self, 0x160, int);
+    if (!height)
+        height = FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0xDC, int);
+    entry->anim = NULL;
+    entry->text_2 = NULL;
+    entry->colour = 0;
+    entry->brush = NULL;
+    entry->height = height;
+    entry->kind = 1;
+    entry->b = b;
+    entry->text = game_FUN_004a4410(entry->length + 1, GAMEUI_CPP, 0x1DC7);
+    text_copy(entry->text, text);
+    entry->runs = dialog_parse_runs(FIELD(self, CTL_DIALOG, BYTE*), NULL, entry->text,
+                                    FIELD(self, CTL_COLOUR, COLORREF), FIELD(self, CTL_FONT, HFONT),
+                                    FIELD(self, CTL_TABS, const int*), NULL);
+    list_set_data(self, NULL, list_count(self), data);
+    entry->unknown_30 = 0;
+    list_count(self)++;
+    FIELD(self, LIST_ROWS, int) = list_rows_fitting(self);
+    game_FUN_00478b50(self);
+    if (FIELD(self, 0x21C, int))
+        game_FUN_00478890(self, NULL, 1);
+    return TRUE;
+}
+
+/* Replace an entry's text. */
+PORT(0x00477F80)
+int __fastcall list_set_text(BYTE* self, void* edx_unused, int index, const char* text)
+{
+    (void) edx_unused;
+    if (index < list_count(self) && index > -1) {
+        list_entry* entry = &list_entries(self)[index];
+
+        if (entry->text)
+            game_FUN_004a4450(entry->text, GAMEUI_CPP, 0x1E0B);
+        if (list_entries(self)[index].runs)
+            game_FUN_004a4450(list_entries(self)[index].runs, GAMEUI_CPP, 0x1E0C);
+        list_entries(self)[index].length = (int) text_length(text);
+        list_entries(self)[index].text = game_FUN_004a4410(list_entries(self)[index].length + 1,
+                                                           GAMEUI_CPP, 0x1E0E);
+        text_copy(list_entries(self)[index].text, text);
+        list_entries(self)[index].runs =
+            dialog_parse_runs(FIELD(self, CTL_DIALOG, BYTE*), NULL, list_entries(self)[index].text,
+                              FIELD(self, CTL_COLOUR, COLORREF), FIELD(self, CTL_FONT, HFONT),
+                              FIELD(self, CTL_TABS, const int*), NULL);
     }
     return control_redraw(self);
 }
