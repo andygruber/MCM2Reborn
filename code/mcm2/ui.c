@@ -66,14 +66,14 @@ int __fastcall game_vf_2_46A5F0(void* self);
 /* The rest of UIDialog and UIControl, not ported yet. */
 void* __fastcall game_FUN_0046ac10(void* self, void* edx_unused, void* dialog);
 int   __fastcall dialog_read(BYTE* self, void* edx_unused, void* data, DWORD size);
-void  __fastcall game_FUN_00470050(BYTE* self);
-void  __fastcall game_FUN_00470d70(BYTE* self, void* edx_unused, DWORD key);
-void  __fastcall game_FUN_00470ea0(BYTE* self, void* edx_unused, DWORD sound, DWORD kind);
-void  __fastcall game_FUN_00471590(BYTE* control, void* edx_unused, DWORD enabled, DWORD redraw);
+void __fastcall dialog_track_pointer(BYTE* self);
+void __fastcall dialog_remove_timer(BYTE* self, void* edx_unused, DWORD id);
+void __fastcall dialog_tell_parent(BYTE* self, void* edx_unused, DWORD sound, DWORD kind);
+void __fastcall control_show(BYTE* self, void* edx_unused, DWORD shown, BOOL animate);
 void  __fastcall game_FUN_004040f0(BYTE* background, void* edx_unused, DWORD slot);
 int   __fastcall game_FUN_00404a10(BYTE* background, void* edx_unused, HDC* dc, const RECT* area,
                                    DWORD slot, DWORD a, void* b, void* out, RECT* clip);
-const char* __fastcall game_FUN_00471d20(BYTE* control);              /* its name */
+const char* __fastcall control_get_name(BYTE* self);
 
 typedef int (__fastcall* dialog_handle)(void* self, void* edx_unused, ui_event* event);
 
@@ -194,7 +194,7 @@ void __fastcall dialog_destruct(BYTE* self)
                                  FIELD(parent, DLG_BACKDROP, int));
         }
         if (FIELD(self, DLG_SOUND, int))
-            game_FUN_00470ea0(self, NULL, FIELD(self, DLG_SOUND_ID, DWORD), 9);
+            dialog_tell_parent(self, NULL, FIELD(self, DLG_SOUND_ID, DWORD), 9);
     }
     if (FIELD(self, DLG_FONT, HFONT))
         DeleteObject(FIELD(self, DLG_FONT, HFONT));
@@ -300,7 +300,7 @@ int __fastcall dialog_press(BYTE* self, void* edx_unused, key_event* event, DWOR
     if (FIELD(self, 0x25, BYTE) & 4)
         return 0;
     if (event->device == 1)
-        game_FUN_00470050(self);
+        dialog_track_pointer(self);
     return game_vf_23_46A500(self, NULL, (DWORD) event, arg);
 }
 
@@ -314,10 +314,10 @@ int __fastcall dialog_release(BYTE* self, void* edx_unused, key_event* event, DW
     if (FIELD(self, 0x25, BYTE) & 4)
         return 0;
     if (event->device == 1)
-        game_FUN_00470050(self);
+        dialog_track_pointer(self);
     if (event->device) {
-        game_FUN_00470d70(self, NULL, 0x101);
-        game_FUN_00470d70(self, NULL, 0x102);
+        dialog_remove_timer(self, NULL, 0x101);
+        dialog_remove_timer(self, NULL, 0x102);
     }
     return game_vf_22_46A4B0(self, NULL, (DWORD) event, arg);
 }
@@ -421,7 +421,7 @@ void __fastcall dialog_enable_controls(BYTE* self, void* edx_unused, DWORD id, D
     walk_begin(walk, NULL, FIELD(self, DLG_CONTAINER, void*), 1, UICONTROL_CLASS);
     for (control = walk_next(walk); control; control = walk_next(walk)) {
         if (FIELD(control, 0x78, DWORD) == id)
-            game_FUN_00471590(control, NULL, enabled, 1);
+            control_show(control, NULL, enabled, 1);
     }
     if (!enabled && FIELD(self, DLG_BACKGROUND, BYTE*))
         background_invalidate(FIELD(self, DLG_BACKGROUND, BYTE*));
@@ -442,7 +442,7 @@ BYTE* __fastcall dialog_find_control(BYTE* self, void* edx_unused, const char* n
     (void) edx_unused;
     walk_begin(walk, NULL, FIELD(self, DLG_CONTAINER, void*), 1, UICONTROL_CLASS);
     for (control = walk_next(walk); control; control = walk_next(walk)) {
-        if (!game_FUN_0053b6e0(game_FUN_00471d20(control), name)) {
+        if (!game_FUN_0053b6e0(control_get_name(control), name)) {
             int kind = FIELD(control, 0x5C, int);
 
             if (!type || kind == type || (type == 8 && kind == 7))
@@ -797,9 +797,9 @@ typedef struct ui_timer {
 
 #define MILLISECONDS (*(const float*) 0x00555FFC)  /* 1000.0f */
 
-BYTE* __fastcall game_FUN_004736f0(BYTE* control);     /* the control before it */
-BYTE* __fastcall game_FUN_00473740(BYTE* control);     /* the control after it */
-BYTE* __fastcall game_FUN_004733b0(BYTE* control, void* edx_unused, POINT* at);
+BYTE* __fastcall control_previous(BYTE* self);
+BYTE* __fastcall control_next(BYTE* self);
+int __fastcall control_hit_test(BYTE* object, void* edx_unused, POINT* at);
 void  __fastcall dialog_track_pointer(BYTE* self);
 
 /* Equal to zero as the x87 compare tests it (C3 set): NaN counts too. */
@@ -874,8 +874,9 @@ int __fastcall dialog_tick(BYTE* self, void* edx_unused, float seconds)
 
     user = FIELD(self, DLG_USER, gui_user*);
     focus = user->focus;
-    gui_user_cursor_follow(user, NULL, focus && FIELD(focus, 0x180, BYTE*) ? FIELD(focus, 0x180, BYTE*)
-                                                                          : FIELD(self, 0x95C, BYTE*));
+    gui_user_set_cursor_anim(user, NULL, focus && FIELD(focus, 0x180, ui_anim*)
+                                             ? FIELD(focus, 0x180, ui_anim*)
+                                             : FIELD(self, 0x95C, ui_anim*));
     for (i = 0; (input = gui_user_claimed(FIELD(self, DLG_USER, gui_user*), NULL, i)) != NULL; i++) {
         BYTE* next = NULL;
         int x, y;
@@ -887,11 +888,11 @@ int __fastcall dialog_tick(BYTE* self, void* edx_unused, float seconds)
         if (x <= -1) {
             if (!FIELD(self, 0x7F1C, int))
                 continue;
-            next = game_FUN_004736f0(focus);
+            next = control_previous(focus);
         } else if (x >= 1) {
             if (!FIELD(self, 0x7F1C, int))
                 continue;
-            next = game_FUN_00473740(focus);
+            next = control_next(focus);
         } else {
             if (y <= -1 || y >= 1) {
                 if (FIELD(self, 0x7F1C, int))
@@ -935,7 +936,7 @@ void __fastcall dialog_track_pointer(BYTE* self)
     if (!FIELD(container, 0x10, BYTE*))
         return;
     FIELD(user, 0x1DC, DWORD) = 0;
-    if (!game_FUN_004733b0(FIELD(FIELD(self, DLG_CONTAINER, BYTE*), 0x10, BYTE*), NULL, &at) && focus
+    if (!control_hit_test(FIELD(FIELD(self, DLG_CONTAINER, BYTE*), 0x10, BYTE*), NULL, &at) && focus
         && !FIELD(self, DLG_USER, gui_user*)->next_focus)
         gui_user_queue_focus(FIELD(self, DLG_USER, gui_user*), NULL, NULL, NULL, 1);
 }
@@ -1654,9 +1655,9 @@ VCALL_THUNK(animate_104, 0xB4)       /* 0x0047C590 */
 VCALL_THUNK(animate_106, 0xB8)       /* 0x0047C5A0 */
 
 int   __cdecl    game__rand(void);
-void  __fastcall game_FUN_00474d40(BYTE* box, void* edx_unused, const char* text);   /* a text box's */
-void* __fastcall game_FUN_00473d60(void* self, void* edx_unused, DWORD a, DWORD b);
-void  __fastcall game_FUN_00474010(void* self, void* edx_unused, DWORD a, DWORD b);
+int __fastcall edit_set_text(BYTE* self, void* edx_unused, const char* text);
+ui_anim* __fastcall anim_construct(ui_anim* self, void* edx_unused, DWORD texture, DWORD b);
+BOOL __fastcall anim_add_file(ui_anim* self, void* edx_unused, const char* name, BYTE* owner);
 
 #define RESOURCE_FAILED      ((const char*) 0x0057180C)  /* "Resource string '%d' load fail\n" */
 #define RESOURCE_UNAVAILABLE ((const char*) 0x00571D58)  /* "Resource String Unavailable" */
@@ -1991,17 +1992,17 @@ int __fastcall control_set_picture(BYTE* self, void* edx_unused, int state, DWOR
 
 /* Load the picture `file` for state `state`, through the dialog's picture settings. */
 PORT(0x00471690)
-int __fastcall control_load_picture(BYTE* self, void* edx_unused, int state, DWORD file)
+int __fastcall control_load_picture(BYTE* self, void* edx_unused, int state, const char* file)
 {
     BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
 
     (void) edx_unused;
     if (dialog) {
-        void* picture = game_new(0xF8, GAMEUI_CPP, 0xC10);
+        ui_anim* picture = game_new(sizeof(ui_anim), GAMEUI_CPP, 0xC10);
 
         if (picture)
-            picture = game_FUN_00473d60(picture, NULL, FIELD(dialog, 0x7F20, DWORD), 0);
-        game_FUN_00474010(picture, NULL, file, FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKDROP, DWORD));
+            picture = anim_construct(picture, NULL, FIELD(dialog, 0x7F20, DWORD), 0);
+        anim_add_file(picture, NULL, file, FIELD(dialog, DLG_BACKDROP, BYTE*));
         control_set_picture(self, NULL, state, (DWORD) picture);
     }
     return control_redraw(self);
@@ -2137,13 +2138,13 @@ int __fastcall control_load_text(BYTE* self, void* edx_unused, HINSTANCE module,
     (void) edx_unused;
     if (LoadStringA(module, id, text, sizeof text)) {
         if (FIELD(self, CTL_TYPE, int) == 11)
-            game_FUN_00474d40(self, NULL, text);
+            edit_set_text(self, NULL, text);
         else
             control_set_text(self, NULL, text);
     } else {
         game_FUN_0053a11f(text, RESOURCE_FAILED, id);
         if (FIELD(self, CTL_TYPE, int) == 11)
-            game_FUN_00474d40(self, NULL, text);
+            edit_set_text(self, NULL, text);
         else
             control_set_text(self, NULL, RESOURCE_UNAVAILABLE);
     }
@@ -2172,7 +2173,7 @@ int __fastcall control_set_text(BYTE* self, void* edx_unused, const char* text)
         return 0;
     }
     if (FIELD(self, CTL_TYPE, int) == 11) {
-        game_FUN_00474d40(self, NULL, text);
+        edit_set_text(self, NULL, text);
         return control_redraw(self);
     }
     heap_free(FIELD(self, CTL_TEXT, void*), 0xCC2);
@@ -2219,8 +2220,8 @@ static BOOL chain_settled(BYTE* last)
     return !last || (FIELD(last, 0x70, int) && !FIELD(last, 0x68, int));
 }
 
-void __fastcall game_FUN_00473f10(void* picture);         /* update a picture's frame */
-int  __fastcall game_FUN_00472430(BYTE* self);
+ui_frame* __fastcall anim_step(ui_anim* self);
+int __fastcall control_animate(BYTE* self);
 
 #define screen_width()  FIELD(FIELD(game_main, 0x10, BYTE*), 0xC, LONG)
 #define screen_height() FIELD(FIELD(game_main, 0x10, BYTE*), 0x10, LONG)
@@ -2238,7 +2239,7 @@ int __fastcall control_tick(BYTE* self, void* edx_unused, DWORD time)
     VIRTUAL(self, 0x6C, method_0)(self);
     if (!FIELD(self, 0x70, int)
         || !chain_settled(control_chain_end(self, NULL, NULL))
-        || !game_FUN_00472430(self)) {
+        || !control_animate(self)) {
         gui_input* input;
 
         FIELD(self, 0x1CC, DWORD) = VIRTUAL(self, 0xC0, method_1)(self, NULL, (DWORD) -1);
@@ -2318,13 +2319,13 @@ void __fastcall control_step_pictures(BYTE* self)
     int moving;
 
     if (picture)
-        game_FUN_00473f10(picture);
+        anim_step(picture);
     moving = FIELD(self, 0x68, int);
     if (moving == 1 || moving == 2) {
         if (FIELD(self, 0x184, void*))
-            game_FUN_00473f10(FIELD(self, 0x184, void*));
+            anim_step(FIELD(self, 0x184, void*));
         if (FIELD(self, 0x188, int))
-            game_FUN_00473f10(FIELD(self, 0x184, void*));
+            anim_step(FIELD(self, 0x184, void*));
     }
 }
 
@@ -2510,8 +2511,8 @@ int __fastcall control_render(BYTE* self)
 
 void  __fastcall game_FUN_004c1330(void* sound, void* edx_unused, DWORD volume, DWORD a);
 void  __fastcall game_FUN_004c0e00(void* sound, void* edx_unused, DWORD a, DWORD b, DWORD c);
-void* __fastcall game_FUN_00473ec0(void* picture);         /* its current frame */
-void  __fastcall game_FUN_00473e80(void* picture);         /* start it */
+BYTE* __fastcall anim_picture(ui_anim* self);
+void __fastcall anim_restart(ui_anim* self);
 
 /* Play `sound` at the manager's volume (0x34C). */
 static void play_sound(BYTE* self, void* sound)
@@ -2544,7 +2545,7 @@ static int animation_frame(BYTE* self, const BYTE* shows)
         FIELD(self, 0x1CC, void*) = NULL;
         return 1;
     }
-    FIELD(self, 0x1CC, void*) = game_FUN_00473ec0(FIELD(self, 0x16C + 4 * FIELD(self, 0x60, int), void*));
+    FIELD(self, 0x1CC, void*) = anim_picture(FIELD(self, 0x16C + 4 * FIELD(self, 0x60, int), void*));
     FIELD(self, ANIM_STEP, int)++;
     return 0;
 }
@@ -2718,29 +2719,29 @@ int __fastcall control_slide_from_bottom(BYTE* self)
     return animation_frame(self, slide_shows_frame);
 }
 
-/* A picture's frame number and frame count. */
-#define picture_frame(p) FIELD(p, 8, int)
-#define picture_count(p) FIELD(p, 0x10, int)
+/* The animations a kind 106 plays in (0x184) and out (0x188). */
+#define anim_in(c)  FIELD(c, 0x184, ui_anim*)
+#define anim_out(c) FIELD(c, 0x188, ui_anim*)
 
-/* Vtable slot 46 (kind 106): play the picture at 0x184 once through, with its sound (0x1AC). */
+/* Vtable slot 46 (kind 106): play its animation in once through, with its sound (0x1AC). */
 PORT(0x00472D20)
 int __fastcall control_play_picture(BYTE* self)
 {
-    BYTE* picture;
+    ui_anim* anim;
 
     if (!FIELD(self, ANIM_STEP, int)) {
-        FIELD(FIELD(self, 0x184, BYTE*), 0x24, DWORD) = 0;
-        game_FUN_00473e80(FIELD(self, 0x184, void*));
+        anim_in(self)->backwards = 0;
+        anim_restart(anim_in(self));
         FIELD(self, ANIM_STEP, int) = 1;
         if (FIELD(self, 0x1AC, void*))
             play_sound(self, FIELD(self, 0x1AC, void*));
     }
-    picture = FIELD(self, 0x184, BYTE*);
-    if (FIELD(self, ANIM_STEP, int) == 1 && picture_frame(picture) <= picture_count(picture) - 1) {
-        FIELD(self, 0x1CC, void*) = game_FUN_00473ec0(picture);
+    anim = anim_in(self);
+    if (FIELD(self, ANIM_STEP, int) == 1 && anim->frame <= anim->count - 1) {
+        FIELD(self, 0x1CC, void*) = anim_picture(anim);
         control_redraw(self);
-        picture = FIELD(self, 0x184, BYTE*);
-        if (picture_frame(picture) == picture_count(picture) - 1)
+        anim = anim_in(self);
+        if (anim->frame == anim->count - 1)
             FIELD(self, ANIM_STEP, int) = 2;
         return 0;
     }
@@ -2749,33 +2750,32 @@ int __fastcall control_play_picture(BYTE* self)
 }
 
 /*
-    Vtable slot 47 (hiding a kind 106): play the picture at 0x188 out, backwards when it is the same as
-    the one played in; then hide the control.
+    Vtable slot 47 (hiding a kind 106): play its animation out, backwards when it is the one
+    played in; then hide the control.
 */
 PORT(0x00472DE0)
 int __fastcall control_play_picture_out(BYTE* self)
 {
-    BYTE* picture;
+    ui_anim* anim;
     int step;
 
     if (!FIELD(self, ANIM_STEP, int)) {
-        if (FIELD(self, 0x188, BYTE*) == FIELD(self, 0x184, BYTE*)) {
-            FIELD(FIELD(self, 0x188, BYTE*), 0x24, DWORD) = 1;
+        if (anim_out(self) == anim_in(self)) {
+            anim_out(self)->backwards = 1;
             FIELD(self, ANIM_STEP, int) = 2;
         } else {
             FIELD(self, ANIM_STEP, int) = 1;
         }
-        game_FUN_00473e80(FIELD(self, 0x188, void*));
+        anim_restart(anim_out(self));
         if (FIELD(self, 0x1B0, void*))
             play_sound(self, FIELD(self, 0x1B0, void*));
     }
     step = FIELD(self, ANIM_STEP, int);
-    picture = FIELD(self, 0x188, BYTE*);
-    if ((step == 1 && picture_frame(picture) < picture_count(picture) - 1)
-        || (step == 2 && picture_frame(picture) >= 0)) {
-        FIELD(self, 0x1CC, void*) = game_FUN_00473ec0(picture);
+    anim = anim_out(self);
+    if ((step == 1 && anim->frame < anim->count - 1) || (step == 2 && anim->frame >= 0)) {
+        FIELD(self, 0x1CC, void*) = anim_picture(anim);
         control_redraw(self);
-        if (!picture_frame(FIELD(self, 0x188, BYTE*)))
+        if (!anim_out(self)->frame)
             FIELD(self, ANIM_STEP, int) = 3;
         return 0;
     }
@@ -2794,7 +2794,7 @@ void* __fastcall control_frame(BYTE* self, void* edx_unused, int state)
     if (state == -1)
         state = FIELD(self, 0x60, int);
     picture = FIELD(self, 0x16C + 4 * state, void*);
-    return picture ? game_FUN_00473ec0(picture) : NULL;
+    return picture ? anim_picture(picture) : NULL;
 }
 
 /*
@@ -3073,7 +3073,7 @@ int __fastcall control_focused(BYTE* self)
         VIRTUAL(self, 0x74, method_1)(self, NULL, 1);
         picture = FIELD(self, 0x16C + 4 * FIELD(self, 0x60, int), void*);
         if (picture)
-            game_FUN_00473e80(picture);
+            anim_restart(picture);
         VIRTUAL(self, 0xE8, control_two)(self, NULL, 1, FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x180, DWORD));
         tip = (tooltip*) control_user(self)->tooltip;
         if (tip)
@@ -3250,21 +3250,6 @@ void __fastcall control_text_area(BYTE* self, void* edx_unused, const RECT* from
 
 /* ---- UIFrame: one picture, or one sound ---------------------------------------------------- */
 
-/* UIFrame, 36 bytes (a BaseObject). */
-typedef struct ui_frame {
-    void** vtable;
-    DWORD  unknown_04;
-    DWORD  is_sound;        /* 1: a .wav */
-    int    width;
-    int    height;
-    void*  sound;
-    BYTE*  picture;
-    DWORD  owns_sound;
-    DWORD  texture;         /* passed to the picture's constructor */
-} ui_frame;
-
-_Static_assert(sizeof(ui_frame) == 36, "UIFrame is 36 bytes");
-
 #define UIFRAME_VTABLE ((void**) 0x00557D70)
 #define WAV            ((const char*) 0x00571DC8)   /* ".wav" */
 #define FRAME_MISSING  ((const char*) 0x00571D98)
@@ -3430,25 +3415,6 @@ ui_frame* __fastcall frame_delete(ui_frame* self, void* edx_unused, BYTE flags)
 }
 
 /* ---- UIAnim: a run of frames --------------------------------------------------------------- */
-
-/* UIAnim, 248 bytes (a BaseObject). */
-typedef struct ui_anim {
-    void**    vtable;
-    DWORD     unknown_04;
-    int       frame;            /* the one showing */
-    DWORD     restart;          /* the next step starts it over */
-    int       count;
-    int       repeats;          /* FOREVER, or how many times it plays */
-    int       repeats_left;
-    int       delay;            /* milliseconds a frame shows */
-    DWORD     last_step;
-    DWORD     backwards;
-    ui_frame* frames[50];
-    DWORD     texture;
-    DWORD     unknown_f4;
-} ui_anim;
-
-_Static_assert(sizeof(ui_anim) == 248, "UIAnim is 248 bytes");
 
 #define UIANIM_VTABLE ((void**) 0x00557D84)
 
@@ -3648,13 +3614,13 @@ BOOL __fastcall anim_add_resource(ui_anim* self, void* edx_unused, const char* n
 
 /*
     A UIControl of type 1 with a picture for each state (0x16C on, as control_set_picture keeps
-    them) and a popup (0x1EC) it opens when released. It is hit only where its picture is not the
-    colour key.
+    them) and a list box (0x1EC, the dialog file's SortLBName) it sorts when released. It is hit
+    only where its picture is not the colour key.
 */
 #define UIBUTTON_VTABLE ((void**) 0x00557D98)
-#define BTN_POPUP       0x1EC
+#define BTN_SORTS       0x1EC
 
-void __fastcall game_FUN_00478890(void* popup, void* edx_unused, DWORD a);   /* open it */
+void __fastcall list_sort(BYTE* self, void* edx_unused, BOOL outer);
 
 /* Pictures for the states: normal, under the pointer (also kept for 3), pressed and disabled. */
 PORT(0x00474200)
@@ -3704,10 +3670,10 @@ int __fastcall button_set_disabled(BYTE* self, void* edx_unused, DWORD picture)
 }
 
 PORT(0x004742C0)
-void __fastcall button_set_popup(BYTE* self, void* edx_unused, void* popup)
+void __fastcall button_set_sort_list(BYTE* self, void* edx_unused, BYTE* list)
 {
     (void) edx_unused;
-    FIELD(self, BTN_POPUP, void*) = popup;
+    FIELD(self, BTN_SORTS, BYTE*) = list;
 }
 
 PORT(0x00474120)
@@ -3719,7 +3685,7 @@ BYTE* __fastcall button_construct(BYTE* self, void* edx_unused, DWORD a, const R
     (void) edx_unused;
     control_construct(self, NULL, 1, a, area, dialog);
     *(void***) self = UIBUTTON_VTABLE;
-    FIELD(self, BTN_POPUP, void*) = NULL;
+    FIELD(self, BTN_SORTS, BYTE*) = NULL;
     button_set_pictures(self, NULL, 0, 0, 0, 0);
     for (i = 0; i < 5; i++)
         control_set_194(self, NULL, i, 0);
@@ -3765,7 +3731,7 @@ void __fastcall button_enable(BYTE* self, void* edx_unused, BOOL enabled)
 }
 
 /*
-    Vtable slot 56: released. Let go of with the first button while pressed, it opens its popup
+    Vtable slot 56: released. Let go of with the first button while pressed, it sorts its list
     and tells the dialog (event 1); the base class hears unless the dialog took it (`e`). The
     original leaves the event's `param` and `d` unset, and so does this.
 */
@@ -3778,8 +3744,8 @@ int __fastcall button_released(BYTE* self, void* edx_unused, DWORD button, DWORD
         ui_event event;
 
         event.e = 0;
-        if (FIELD(self, BTN_POPUP, void*))
-            game_FUN_00478890(FIELD(self, BTN_POPUP, void*), NULL, 1);
+        if (FIELD(self, BTN_SORTS, BYTE*))
+            list_sort(FIELD(self, BTN_SORTS, BYTE*), NULL, 1);
         event.a = FIELD(self, 0x74, DWORD);
         event.type = 1;
         event.b = (DWORD) control_get_name(self);
@@ -3957,7 +3923,7 @@ void __fastcall edit_commit(BYTE* self, void* edx_unused, BOOL out)
         game__strncpy(bound, FIELD(self, CTL_TEXT, char*), size);
         FIELD(self, EDIT_BOUND, char*)[FIELD(self, EDIT_BOUND_SIZE, int) - 1] = 0;
     } else {
-        game_FUN_00474d40(self, NULL, bound);
+        edit_set_text(self, NULL, bound);
     }
 }
 
@@ -3994,7 +3960,7 @@ int __fastcall edit_render(BYTE* self)
     DWORD more;
 
     if (!FIELD(self, CTL_TEXT, char*))
-        game_FUN_00474d40(self, NULL, EMPTY_TEXT);
+        edit_set_text(self, NULL, EMPTY_TEXT);
 
     picture = FIELD(self, 0x1CC, BYTE*);
     if (picture) {
@@ -4535,7 +4501,7 @@ typedef BYTE* (__fastcall* control_walk)(void* control);
 #define TIMER_HOLD  0x101           /* the first, longer wait while an arrow is held */
 #define TIMER_STEP  0x102
 
-void __fastcall game_FUN_004786c0(BYTE* list, void* edx_unused, int by);    /* step a list */
+void __fastcall list_step(BYTE* self, void* edx_unused, int by);
 
 /* Step every list (type 3) of the group by `by`, from the start (0x23C) when `restart`. */
 static void arrow_step(BYTE* self, int by, BOOL restart)
@@ -4547,13 +4513,13 @@ static void arrow_step(BYTE* self, int by, BOOL restart)
         if (FIELD(control, CTL_TYPE, int) == 3) {
             if (restart)
                 FIELD(control, 0x23C, DWORD) = 0;
-            game_FUN_004786c0(control, NULL, by);
+            list_step(control, NULL, by);
         }
         if (restart && FIELD(control, CTL_TYPE, int) == 6) {
             BYTE* list = FIELD(control, 0x1FC, BYTE*);
 
             FIELD(list, 0x23C, DWORD) = 0;
-            game_FUN_004786c0(list, NULL, by);
+            list_step(list, NULL, by);
         }
     }
     control_walk_end(self, NULL, walk);
@@ -4633,10 +4599,10 @@ int __fastcall arrow_released(BYTE* self, void* edx_unused, DWORD button, DWORD 
 #define SLIDER_STEPS    0x1F0       /* the values it steps through, or 0 to step by pixels */
 #define SLIDER_RANGE    0x200
 
-int  __fastcall game_FUN_004764a0(BYTE* self);                                  /* its value */
-int  __fastcall game_FUN_00476360(BYTE* self, void* edx_unused, int value, int range);
-#define slider_value(s)       game_FUN_004764a0(s)
-#define slider_set(s, v, r)   game_FUN_00476360(s, NULL, v, r)
+int __fastcall slider_get_value(BYTE* self);
+BOOL __fastcall slider_set_value(BYTE* self, void* edx_unused, int value, unsigned range);
+#define slider_value(s)       slider_get_value(s)
+#define slider_set(s, v, r)   slider_set_value(s, NULL, v, r)
 #define slider_steps(s)       FIELD(s, SLIDER_STEPS, DWORD)
 
 PORT(0x00475B40)
@@ -4768,9 +4734,9 @@ int __fastcall slider_tick(BYTE* self, void* edx_unused, DWORD time)
 #define SLIDER_FIRST    0x1FC       /* the first entry of a list it follows */
 #define SLIDER_REVERSED 0x21C
 #define slider_across(s) (FIELD(s, CTL_TYPE, int) == 8)
-#define list_first_shown(l) game_FUN_00479d00(l)   /* its first entry showing (0x1F0) */
+#define list_first_shown(l) option_current_index(l)   /* its first entry showing (0x1F0) */
 
-int __fastcall game_FUN_00479d00(BYTE* list);
+int __fastcall option_current_index(BYTE* self);
 
 /* The track's length: the control's size along it, less the thumb's. */
 static int slider_track(BYTE* self)
@@ -4937,7 +4903,7 @@ int __fastcall slider_get_value(BYTE* self)
 #define SLIDER_HOLD     0x214       /* seconds there before event 17 */
 #define SLIDER_HELD     0x218
 
-void __fastcall game_FUN_004777f0(BYTE* list, void* edx_unused, int first, BOOL b);  /* scroll */
+BOOL __fastcall list_scroll(BYTE* self, void* edx_unused, int first, BOOL tell);
 
 /* Fill `event` as the control's (keeping its `e`) and tell the dialog. */
 static void control_tell(BYTE* self, ui_event* event, DWORD type)
@@ -5033,7 +4999,7 @@ static void slider_page(BYTE* self, int direction)
         if (FIELD(list, CTL_TYPE, int) == 3) {
             int page = FIELD(list, 0x200, int);
 
-            game_FUN_004777f0(list, NULL, list_first_shown(list) + direction * page, TRUE);
+            list_scroll(list, NULL, list_first_shown(list) + direction * page, TRUE);
         }
     }
     control_walk_end(self, NULL, walk);
@@ -5166,7 +5132,7 @@ void __fastcall slider_drag(BYTE* self, void* edx_unused, DWORD button, const PO
 
         while ((list = control_next_in_group(self, NULL, walk)) != NULL) {
             if (FIELD(list, CTL_TYPE, int) == 3)
-                game_FUN_004777f0(list, NULL,
+                list_scroll(list, NULL,
                                   slider_value_at(self, NULL, FIELD(list, 0x1EC, int)
                                                               - FIELD(list, 0x204, int)),
                                   FALSE);
@@ -5215,8 +5181,8 @@ _Static_assert(sizeof(list_entry) == 0x38, "a list entry is 56 bytes");
 typedef int (__fastcall* list_select_slot)(void* list, void* edx_unused, int index);
 #define list_select_virtual(l, i) VIRTUAL(l, 0x104, list_select_slot)(l, NULL, i)
 
-void __fastcall game_FUN_00478b50(BYTE* self);                    /* tell its sliders */
-int  __cdecl    game_FUN_00478af0(const void* a, const void* b);  /* how its entries sort */
+void __fastcall list_tell_sliders(BYTE* self);
+int __cdecl list_compare_text(const list_entry* a, const list_entry* b);
 
 PORT(0x00476C00)
 BYTE* __fastcall list_construct(BYTE* self, void* edx_unused, DWORD a, int capacity,
@@ -5233,7 +5199,7 @@ BYTE* __fastcall list_construct(BYTE* self, void* edx_unused, DWORD a, int capac
     FIELD(self, LIST_CAPACITY, int) = capacity;
     FIELD(self, 0x208, COLORREF) = RGB(0xFF, 0xFF, 0xFF);
     list_entries(self) = game_FUN_004a4410(capacity * sizeof(list_entry), GAMEUI_CPP, 0x1B50);
-    FIELD(self, 0x24C, void*) = (void*) game_FUN_00478af0;
+    FIELD(self, 0x24C, void*) = (void*) list_compare_text;
     FIELD(self, 0x218, BYTE*) = self;
     FIELD(self, 0x21C, DWORD) = 0;
     FIELD(self, 0x220, DWORD) = 0;
@@ -5340,7 +5306,7 @@ BOOL __fastcall list_scroll(BYTE* self, void* edx_unused, int first, BOOL tell)
         list_select_virtual(self, FIELD(self, LIST_FIRST, int));
     control_redraw(self);
     if (tell)
-        game_FUN_00478b50(self);
+        list_tell_sliders(self);
     return TRUE;
 }
 
@@ -5439,7 +5405,7 @@ int __fastcall list_select_all(BYTE* self, void* edx_unused, int index)
     int result = list_select_virtual(self, index);
 
     (void) edx_unused;
-    game_FUN_00478b50(self);
+    list_tell_sliders(self);
     if (FIELD(self, CTL_DIALOG, BYTE*)) {
         BYTE* walk = control_walk_of(self);
         BYTE* other;
@@ -5645,9 +5611,9 @@ BOOL __fastcall list_add_text(BYTE* self, void* edx_unused, const char* text, DW
     entry->drawn = 0;
     list_count(self)++;
     FIELD(self, LIST_ROWS, int) = list_rows_fitting(self);
-    game_FUN_00478b50(self);
+    list_tell_sliders(self);
     if (FIELD(self, 0x21C, int))
-        game_FUN_00478890(self, NULL, 1);
+        list_sort(self, NULL, 1);
     return TRUE;
 }
 
@@ -5713,7 +5679,7 @@ void __fastcall list_step(BYTE* self, void* edx_unused, int by)
             return;
     }
     control_redraw(self);
-    game_FUN_00478b50(self);
+    list_tell_sliders(self);
 }
 
 /* Add `anim` (which it takes a reference on) as a picture entry with `data`. */
@@ -5740,9 +5706,9 @@ BOOL __fastcall list_add_anim(BYTE* self, void* edx_unused, ui_anim* anim, DWORD
     list_set_data(self, NULL, list_count(self), data);
     list_count(self)++;
     FIELD(self, LIST_ROWS, int) = list_rows_fitting(self);
-    game_FUN_00478b50(self);
+    list_tell_sliders(self);
     if (FIELD(self, 0x21C, int))
-        game_FUN_00478890(self, NULL, 1);
+        list_sort(self, NULL, 1);
     return TRUE;
 }
 
@@ -5785,7 +5751,7 @@ BOOL __fastcall list_remove(BYTE* self, void* edx_unused, int index)
 
         list_select_virtual(self, previous > 0 ? previous : 0);
     }
-    game_FUN_00478b50(self);
+    list_tell_sliders(self);
     return TRUE;
 }
 
@@ -5979,7 +5945,7 @@ BOOL __fastcall list_add_file(BYTE* self, void* edx_unused, const char* name, DW
     FIELD(self, LIST_ROWS, int) = list_rows_fitting(self);
     list_tell_sliders(self);
     if (FIELD(self, 0x21C, int))
-        game_FUN_00478890(self, NULL, 1);
+        list_sort(self, NULL, 1);
     return TRUE;
 }
 
@@ -8873,7 +8839,7 @@ static BYTE* reader_button(dialog_reader* r)
         button_set_disabled(button, NULL, reader_find(r, r->text));
     keys_string(r, KEY(0x00571B04), r->more.sort_list, r->text);            /* SortLBName */
     if (!r->is_default)
-        button_set_popup(button, NULL, (void*) reader_find(r, r->text));
+        button_set_sort_list(button, NULL, (BYTE*) reader_find(r, r->text));
     return button;
 }
 

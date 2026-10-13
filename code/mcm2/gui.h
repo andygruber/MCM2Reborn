@@ -12,16 +12,50 @@ typedef struct gui_manager gui_manager;
 typedef struct gui_user gui_user;
 typedef struct tooltip tooltip;
 
-/* GUICursor, 96 bytes: a GameCursor that can follow a pointing device. */
+/* UIFrame, 36 bytes (a BaseObject). */
+typedef struct ui_frame {
+    void** vtable;
+    DWORD  unknown_04;
+    DWORD  is_sound;        /* 1: a .wav */
+    int    width;
+    int    height;
+    void*  sound;
+    BYTE*  picture;
+    DWORD  owns_sound;
+    DWORD  texture;         /* passed to the picture's constructor */
+} ui_frame;
+
+_Static_assert(sizeof(ui_frame) == 36, "UIFrame is 36 bytes");
+
+/* UIAnim, 248 bytes (a BaseObject). */
+typedef struct ui_anim {
+    void**    vtable;
+    DWORD     unknown_04;
+    int       frame;            /* the one showing */
+    DWORD     restart;          /* the next step starts it over */
+    int       count;
+    int       repeats;          /* FOREVER, or how many times it plays */
+    int       repeats_left;
+    int       delay;            /* milliseconds a frame shows */
+    DWORD     last_step;
+    DWORD     backwards;
+    ui_frame* frames[50];
+    DWORD     texture;
+    DWORD     unknown_f4;
+} ui_anim;
+
+_Static_assert(sizeof(ui_anim) == 248, "UIAnim is 248 bytes");
+
+/* GUICursor, 96 bytes: a GameCursor showing an animation. */
 typedef struct gui_cursor {
     BYTE  game_cursor[0x38];
-    DWORD position;                     /* GameCursor's: where it is drawn */
+    BYTE* picture;                      /* GameCursor's: the picture it draws */
     BYTE  unknown_3c[0x20];
-    void* follows;                      /* the device it follows, or NULL */
+    ui_anim* anim;                      /* the animation it shows, or NULL */
 } gui_cursor;
 
-LAYOUT(gui_cursor, position, 0x38);
-LAYOUT(gui_cursor, follows, 0x5C);
+LAYOUT(gui_cursor, picture, 0x38);
+LAYOUT(gui_cursor, anim, 0x5C);
 _Static_assert(sizeof(gui_cursor) == 96, "GUICursor is 96 bytes");
 
 /* GUIInputDevice, 196 bytes. */
@@ -116,7 +150,7 @@ struct gui_user {
     int            unknown_c4;
     char           cursor_image[0x80];
     char           wait_image[0x80];
-    BYTE*          own_device;          /* the cursor follows it when given no other */
+    ui_anim*       own_anim;            /* the cursor shows it when given no other */
     BYTE*          next_focus;          /* a dialog to take focus */
     BYTE*          next_capture;        /* a dialog to take focus and capture */
     BYTE*          capture;
@@ -178,8 +212,8 @@ void __fastcall game_FUN_0043f9a0(void* self, void* edx_unused, DWORD arg);
 void __fastcall game_FUN_0043fb00(void* self);
 int  __fastcall game_vf_15_43FCE0(void* self);
 
-/* The pointing device's position, read for the cursor that follows it. */
-DWORD __fastcall game_FUN_00473fe0(void* device);
+/* Step an animation, sounding its sound frames; the picture reached (ui.c). */
+BYTE* __fastcall anim_next_picture(ui_anim* self);
 
 /*
     BackgroundImage: the surface the menus are drawn on, with slots for the parts that change.
@@ -265,7 +299,7 @@ void __fastcall gui_user_make_cursor(gui_user* self, void* edx_unused, const cha
 void __fastcall gui_user_set_cursor(gui_user* self, void* edx_unused, const char* image,
                                     BOOL refresh);
 void __fastcall gui_user_drop_cursor(gui_user* self);
-void __fastcall gui_user_cursor_follow(gui_user* self, void* edx_unused, BYTE* device);
+void __fastcall gui_user_set_cursor_anim(gui_user* self, void* edx_unused, ui_anim* anim);
 int  __fastcall gui_user_release_capture(gui_user* self, void* edx_unused, BYTE** old);
 void __fastcall tooltip_set_text(tooltip* self, void* edx_unused, const char* text,
                                  const POINT* at, float delay);

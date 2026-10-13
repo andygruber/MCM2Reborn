@@ -33,7 +33,7 @@ gui_cursor* __fastcall gui_cursor_construct(gui_cursor* self, void* edx_unused, 
     (void) edx_unused;
     game_FUN_0043f9a0(self, NULL, arg);
     *(void***) self = GUICURSOR_VTABLE;
-    self->follows = NULL;
+    self->anim = NULL;
     return self;
 }
 
@@ -56,20 +56,20 @@ gui_cursor* __fastcall gui_cursor_delete(gui_cursor* self, void* edx_unused, BYT
 }
 
 PORT(0x004860E0)
-void __fastcall gui_cursor_follow(gui_cursor* self, void* edx_unused, void* device)
+void __fastcall gui_cursor_set_anim(gui_cursor* self, void* edx_unused, ui_anim* anim)
 {
     (void) edx_unused;
-    self->follows = device;
-    if (!device)
-        self->position = 0;
+    self->anim = anim;
+    if (!anim)
+        self->picture = NULL;
 }
 
-/* Vtable slot 15, once a frame: move to where the device points. */
+/* Vtable slot 15, once a frame: step the animation and draw the picture it reached. */
 PORT(0x00486100)
 void __fastcall gui_cursor_update(gui_cursor* self)
 {
-    if (self->follows)
-        self->position = game_FUN_00473fe0(self->follows);
+    if (self->anim)
+        self->picture = anim_next_picture(self->anim);
     game_vf_15_43FCE0(self);
 }
 
@@ -253,7 +253,7 @@ typedef int (__fastcall* dialog_open)(void* dialog, void* edx_unused, void* scre
 
 #define ARIAL ((const char*) 0x00572444)            /* "Arial" */
 
-void* __fastcall game_FUN_0046ace0(void* self, void* edx_unused, DWORD a, DWORD b);
+BYTE* __fastcall dialog_construct(BYTE* self, void* edx_unused, DWORD flag, const char* name);
 
 /* A walk over an object's descendants of one class, and what is done to each dialog found. */
 #define UIDIALOG ((const char*) 0x00572474)         /* "UIDialog" */
@@ -261,7 +261,7 @@ void  __fastcall game_FUN_0046a880(void* walk, void* edx_unused, void* root, DWO
                                    const char* class_name);
 BYTE* __fastcall game_FUN_0046a980(void* walk);
 void  __fastcall game_FUN_0046a970(void* walk);
-void  __fastcall game_FUN_00470f00(void* dialog, void* edx_unused, DWORD a);
+void __fastcall dialog_set_background(BYTE* self, void* edx_unused, BYTE* background);
 void  __fastcall game_FUN_004eda50(void* video);
 void  __fastcall game_FUN_004cfd00(void* video, void* edx_unused, DWORD palette);
 
@@ -351,7 +351,7 @@ void __fastcall gui_manager_drop_message(gui_manager* self)
 
 /* Make the manager's own message dialog, in 14-point Arial. FALSE when it cannot be made. */
 PORT(0x00486C10)
-BOOL __fastcall gui_manager_make_message(gui_manager* self, void* edx_unused, DWORD arg)
+BOOL __fastcall gui_manager_make_message(gui_manager* self, void* edx_unused, const char* name)
 {
     BYTE* dialog;
 
@@ -359,7 +359,7 @@ BOOL __fastcall gui_manager_make_message(gui_manager* self, void* edx_unused, DW
     gui_manager_drop_message(self);
     dialog = game_new(0x7F58, GUIMANAGER_CPP, 0x20B);
     if (dialog)
-        dialog = game_FUN_0046ace0(dialog, NULL, 0, arg);
+        dialog = dialog_construct(dialog, NULL, 0, name);
     self->message = dialog;
     if (!dialog)
         return FALSE;
@@ -441,7 +441,7 @@ void __fastcall gui_manager_drop_background(gui_manager* self)
     gui_manager_set_cursors(self, NULL, NULL, 0);
     game_FUN_0046a880(iterator, NULL, self, 1, UIDIALOG);
     for (dialog = game_FUN_0046a980(iterator); dialog; dialog = game_FUN_0046a980(iterator))
-        game_FUN_00470f00(dialog, NULL, 0);
+        dialog_set_background(dialog, NULL, 0);
     for (i = 0; i < self->user_count; i++)
         gui_user_make_tooltip(gui_manager_user(self, NULL, i), NULL, object_screen(self), self);
     game_FUN_0046a970(iterator);
@@ -813,7 +813,7 @@ gui_user* __fastcall gui_user_construct(gui_user* self)
     self->manager = NULL;
     self->tooltip = NULL;
     self->cursor = NULL;
-    self->own_device = NULL;
+    self->own_anim = NULL;
     self->cursor_image[0] = 0;
     self->wait_image[0] = 0;
     self->unknown_c4 = 0;
@@ -1343,27 +1343,27 @@ void __fastcall gui_user_make_cursor(gui_user* self, void* edx_unused, const cha
 }
 
 /*
-    Make the cursor follow `device`, or the user's own with NULL. A device the cursor
-    switches to first takes over the old one's place in the tree, when it comes later in it.
+    Show `anim` on the cursor, or the user's own animation with NULL. With 0xC4 set, an animation
+    long enough carries on from the frame the old one had reached.
 */
 PORT(0x00488F40)
-void __fastcall gui_user_cursor_follow(gui_user* self, void* edx_unused, BYTE* device)
+void __fastcall gui_user_set_cursor_anim(gui_user* self, void* edx_unused, ui_anim* anim)
 {
     gui_cursor* cursor = (gui_cursor*) self->cursor;
-    BYTE* old;
+    ui_anim* old;
 
     (void) edx_unused;
     if (!cursor)
         return;
-    if (!device && self->own_device)
-        device = self->own_device;
-    old = cursor->follows;
-    if (old && self->unknown_c4 && device != old && FIELD(device, 0x10, int) > FIELD(old, 8, int)) {
-        FIELD(device, 8, int) = FIELD(old, 8, int);
-        FIELD(device, 0xC, int) = FIELD(old, 0xC, int);
-        FIELD(device, 0x20, int) = FIELD(old, 0x20, int);
+    if (!anim && self->own_anim)
+        anim = self->own_anim;
+    old = cursor->anim;
+    if (old && self->unknown_c4 && anim != old && anim->count > old->frame) {
+        anim->frame = old->frame;
+        anim->restart = old->restart;
+        anim->last_step = old->last_step;
     }
-    gui_cursor_follow((gui_cursor*) self->cursor, NULL, device);
+    gui_cursor_set_anim((gui_cursor*) self->cursor, NULL, anim);
 }
 
 /* The cursor is left alone while bit 1 of the game's flags at 0x2D5 is set. */
@@ -1395,8 +1395,8 @@ void __fastcall gui_user_set_cursor(gui_user* self, void* edx_unused, const char
     if (FIELD(FIELD(game_main, 0x10, BYTE*), 0x28, int) == 8 && !self->manager->unknown_34)
         return;
     gui_user_make_cursor(self, NULL, image ? image : self->cursor_image, shown);
-    if (!image && self->own_device && self->cursor)
-        gui_cursor_follow((gui_cursor*) self->cursor, NULL, self->own_device);
+    if (!image && self->own_anim && self->cursor)
+        gui_cursor_set_anim((gui_cursor*) self->cursor, NULL, self->own_anim);
     if (refresh)
         gui_manager_refresh(self->manager);
 }
