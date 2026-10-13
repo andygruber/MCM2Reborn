@@ -4772,3 +4772,176 @@ int __fastcall slider_tick(BYTE* self, void* edx_unused, DWORD time)
     }
     return result;
 }
+
+/*
+    The slider's numbers. SLIDER_AT is the thumb's offset along the track, a float; the track is
+    the control's width (type 8) or height less the thumb's (SLIDER_THUMB). Reversed (0x21C), the
+    offset counts from the far end. The original works these in x87 doubles from unsigned
+    widths, and so do these.
+*/
+#define SLIDER_THUMB    0x1F4       /* int[2]: the thumb's width and height */
+#define SLIDER_FIRST    0x1FC       /* the first entry of a list it follows */
+#define SLIDER_REVERSED 0x21C
+#define slider_across(s) (FIELD(s, CTL_TYPE, int) == 8)
+#define list_last(l)     game_FUN_00479d00(l)
+
+int __fastcall game_FUN_00479d00(BYTE* list);
+
+/* The track's length: the control's size along it, less the thumb's. */
+static int slider_track(BYTE* self)
+{
+    if (slider_across(self))
+        return VIRTUAL(self, 0xF4, method_0)(self) - FIELD(self, SLIDER_THUMB, int);
+    return VIRTUAL(self, 0xF8, method_0)(self) - FIELD(self, SLIDER_THUMB + 4, int);
+}
+
+/* Less as the x87 compare tests it (C0 set): unordered counts too. */
+static BOOL x87_less(double a, double b)
+{
+    return !(a >= b);
+}
+
+/* `at` along `track`, or the track's end when `at` reaches it. */
+static float slider_clamp(double at, double track)
+{
+    float rounded = (float) at;
+
+    return x87_less(at, track) ? rounded : (float) track;
+}
+
+/* The thumb's size: its picture for `state`, scaled as the dialog is. */
+PORT(0x00476100)
+void __fastcall slider_measure_thumb(BYTE* self, void* edx_unused, int state)
+{
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+
+    (void) edx_unused;
+    FIELD(self, SLIDER_THUMB, int) = (int) (FIELD(FIELD(FIELD(self, 0x16C + 4 * state, BYTE*), 0x28,
+                                                        BYTE*), 0xC, int)
+                                            * (double) FIELD(dialog, 0x9C4, float));
+    FIELD(self, SLIDER_THUMB + 4, int) = (int) (FIELD(FIELD(FIELD(self, 0x16C + 4 * state, BYTE*),
+                                                            0x28, BYTE*), 0x10, int)
+                                                * (double) FIELD(dialog, 0x9C8, float));
+}
+
+PORT(0x00476160)
+int __fastcall slider_set_range(BYTE* self, void* edx_unused, int range)
+{
+    (void) edx_unused;
+    FIELD(self, SLIDER_RANGE, int) = range;
+    return control_redraw(self);
+}
+
+/* How many entries `list` scrolls through. */
+PORT(0x00476180)
+int __fastcall slider_list_span(BYTE* self, void* edx_unused, BYTE* list)
+{
+    (void) self;
+    (void) edx_unused;
+    return FIELD(list, 0x1EC, int) - FIELD(list, 0x204, int);
+}
+
+/* Put the thumb where `list` has scrolled to. FALSE when the list does not scroll. */
+PORT(0x004761A0)
+BOOL __fastcall slider_follow(BYTE* self, void* edx_unused, BYTE* list)
+{
+    int track, span;
+    double length;
+
+    (void) edx_unused;
+    control_redraw(self);
+    if (FIELD(self, SLIDER_REVERSED, int))
+        FIELD(self, SLIDER_FIRST, int) = FIELD(list, 0x1EC, int) - list_last(list);
+    else
+        FIELD(self, SLIDER_FIRST, int) = list_last(list);
+    if (slider_list_span(self, NULL, list) == FIELD(self, SLIDER_FIRST, int))
+        return TRUE;
+
+    track = slider_track(self);
+    span = FIELD(list, 0x1EC, int) - FIELD(list, 0x204, int);
+    if (!span)
+        return FALSE;
+    length = (double) (unsigned) track;
+    FIELD(self, SLIDER_AT, float) = slider_clamp(FIELD(self, SLIDER_FIRST, int) * length / span,
+                                                 length);
+    return TRUE;
+}
+
+/* The value, out of `range`, that the thumb is at; rounded down. */
+PORT(0x004762A0)
+int __fastcall slider_value_at(BYTE* self, void* edx_unused, int range)
+{
+    int width = VIRTUAL(self, 0xF4, method_0)(self);
+    int height = VIRTUAL(self, 0xF8, method_0)(self);
+    int offset, track;
+
+    (void) edx_unused;
+    if (!FIELD(self, SLIDER_REVERSED, int))
+        offset = (int) FIELD(self, SLIDER_AT, float);
+    else
+        offset = (int) ((slider_across(self) ? width : height)
+                        - (double) FIELD(self, SLIDER_AT, float));
+    track = slider_across(self) ? width - FIELD(self, SLIDER_THUMB, int)
+                                : height - FIELD(self, SLIDER_THUMB + 4, int);
+    if (!track)
+        return (int) 0.0;
+    return (int) ((double) (unsigned) (offset * range) / track);
+}
+
+/* Put the thumb at `value` out of `range` (the offset itself when `range` is 0). */
+PORT(0x00476360)
+BOOL __fastcall slider_set_value(BYTE* self, void* edx_unused, int value, unsigned range)
+{
+    unsigned at = FIELD(self, SLIDER_REVERSED, int) ? range - value : (unsigned) value;
+    unsigned track;
+
+    (void) edx_unused;
+    control_redraw(self);
+    if (!slider_steps(self) && (unsigned) slider_value_at(self, NULL, range) == at)
+        return TRUE;
+    if (!range) {
+        FIELD(self, SLIDER_AT, float) = (float) (double) at;
+        return TRUE;
+    }
+    track = (unsigned) slider_track(self);
+    FIELD(self, SLIDER_AT, float) = slider_clamp((double) (track * at) / (double) range,
+                                                 (double) track);
+    return TRUE;
+}
+
+/* Step through `count` values, or by pixels when `count` is 0. */
+PORT(0x00476470)
+int __fastcall slider_set_steps(BYTE* self, void* edx_unused, int count)
+{
+    (void) edx_unused;
+    FIELD(self, SLIDER_STEPS, int) = count > 0 ? count - 1 : 0;
+    return control_redraw(self);
+}
+
+/*
+    The value, out of SLIDER_RANGE when it has one: the offset rounded up (not reversed) or down
+    (reversed), scaled to the track.
+*/
+PORT(0x004764A0)
+int __fastcall slider_get_value(BYTE* self)
+{
+    unsigned width = (unsigned) VIRTUAL(self, 0xF4, method_0)(self);
+    unsigned height = (unsigned) VIRTUAL(self, 0xF8, method_0)(self);
+    unsigned offset;
+
+    if (!FIELD(self, SLIDER_REVERSED, int)) {
+        offset = (unsigned) (int) FIELD(self, SLIDER_AT, float);
+        if (x87_less((int) offset, FIELD(self, SLIDER_AT, float)))
+            offset++;
+    } else {
+        offset = (unsigned) (int) ((slider_across(self) ? (int) width : (int) height)
+                                   - (double) FIELD(self, SLIDER_AT, float));
+    }
+    if (!FIELD(self, SLIDER_RANGE, int) || !width)
+        return (int) offset;
+    if (slider_across(self))
+        return (int) (FIELD(self, SLIDER_RANGE, unsigned) * offset
+                      / (width - FIELD(self, SLIDER_THUMB, unsigned)));
+    return (int) (FIELD(self, SLIDER_RANGE, unsigned) * offset
+                  / (height - FIELD(self, SLIDER_THUMB + 4, unsigned)));
+}
