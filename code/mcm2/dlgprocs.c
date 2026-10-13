@@ -32,6 +32,9 @@ int         __fastcall list_select_text(BYTE* self, void* edx_unused, const char
 int         __fastcall list_set_208(BYTE* self, void* edx_unused, DWORD value);
 int         __fastcall list_set_text_colour(BYTE* self, void* edx_unused, COLORREF colour, int index);
 int         __fastcall list_set_colour_2(BYTE* self, void* edx_unused, COLORREF colour);
+DWORD       __fastcall list_data(BYTE* self, void* edx_unused, int index);
+
+#define COMBO_LIST 0x1FC     /* a combo box's list */
 
 /* The game's: atoi, a string from its language module, and the profile it saves to. */
 int  __cdecl    game_FUN_0053b6c7(const char* text);
@@ -42,6 +45,7 @@ int  __cdecl    game_FUN_0053a11f(char* to, const char* format, ...);      /* sp
 char* __cdecl   game__strncpy(char* to, const char* from, size_t count);
 #define game_profile ((char*) game_main + 0x578)    /* char[16]: the player's profile */
 #define game_language FIELD(game_main, 0x420, HINSTANCE)
+#define game_session FIELD(game_main, 0x56C, BYTE*)       /* the menus' session */
 
 /* The directory lister (dirlist.cpp) at game_main + 0x3338, and its calls. */
 #define game_files FIELD(game_main, 0x3338, BYTE*)
@@ -469,7 +473,6 @@ BYTE* __fastcall loading_baja_construct(BYTE* self, void* edx_unused, DWORD flag
 #define GHOST_PATHS  0x7F60
 #define GHOST_COUNT  0x7F64
 
-void __fastcall game_FUN_0044fb30(BYTE* self, void* edx_unused, const char* path);  /* add one */
 
 /*
     The chosen record and the listed records' paths, freed. The ghost and replay screens share
@@ -498,6 +501,83 @@ void __fastcall ghosts_free(BYTE* self)
     records_free(self, 0x77A);
 }
 
+/*
+    A ghost file is the 0xEB0-byte record of a race: the rider (0x8), the time (0x28, float),
+    and the track it was run on, by kind (0x60) and name (0x62). The session's tracks are
+    0x54 bytes each from its 0x60: the kind at 0x4, the name at 0x14.
+*/
+#define RECORD_SIZE     0xEB0
+#define RECORD_RIDER    0x8
+#define RECORD_TIME     0x28
+#define RECORD_KIND     0x60
+#define RECORD_TRACK    0x62
+#define LIST_TEXT_BOX   NAME(0x0056FA10)    /* "DDLTextBox": the track chosen */
+#define LIST_GHOSTS     NAME(0x0056F9CC)    /* "DDLGhostRaces" */
+#define GHOST_LABEL     NAME(0x0056FB7C)    /* "%s: %s" */
+
+void*  __cdecl game_FUN_0053a35b(const char* path, const char* mode);              /* fopen */
+size_t __cdecl game_FUN_0053a5d5(void* to, size_t size, size_t count, void* file); /* fread */
+int    __cdecl game_FUN_0053a2ad(void* file);                                      /* fclose */
+void*  __cdecl ui_realloc(void* block, size_t size);
+
+/*
+    Read the ghost at `path`; one of a lap on the track chosen in DDLTextBox, with a time, is
+    kept with its path and listed in DDLGhostRaces. TRUE when it was. (The original first runs
+    the record's member constructors, which the read then overwrites.)
+*/
+/* Out of line, as the original calls it: its 4 KB frame must not join a caller's. */
+__declspec(noinline) BOOL __fastcall ghost_add(BYTE* self, void* edx_unused, const char* path);
+
+PORT(0x0044FB30)
+BOOL __fastcall ghost_add(BYTE* self, void* edx_unused, const char* path)
+{
+    char what[0x80];
+    char label[0x80];
+    BYTE record[RECORD_SIZE];
+    BOOL added = FALSE;
+    void* file;
+
+    (void) edx_unused;
+    file = game_FUN_0053a35b(path, NAME(0x0056C66C));                          /* "rb" */
+    if (!file)
+        return FALSE;
+    if (game_FUN_0053a5d5(record, RECORD_SIZE, 1, file)) {
+        BYTE* chosen = FIELD(dialog_find_control(self, NULL, LIST_TEXT_BOX, 6), COMBO_LIST, BYTE*);
+        int track = (int) list_data(chosen, NULL, -1) * 0x54;
+
+        if (!game_FUN_0053b6e0((const char*) record + RECORD_TRACK,
+                               FIELD(game_session, 0x60, char*) + track + 0x14)
+            && FIELD(record, RECORD_TIME, float) > 0.0f
+            && FIELD(FIELD(game_session, 0x60, BYTE*) + track, 0x4, DWORD)
+               == FIELD(record, RECORD_KIND, BYTE)) {
+            int count = FIELD(self, 0x7F5C, int);
+            char** paths;
+
+            FIELD(self, 0x7F58, BYTE*) = ui_realloc(FIELD(self, 0x7F58, BYTE*),
+                                                    (count + 1) * RECORD_SIZE);
+            __movsd((unsigned long*) (FIELD(self, 0x7F58, BYTE*) + count * RECORD_SIZE),
+                    (const unsigned long*) record, RECORD_SIZE / 4);
+            FIELD(self, 0x7F5C, int)++;
+
+            paths = ui_realloc(FIELD(self, GHOST_PATHS, char**),
+                               (FIELD(self, GHOST_COUNT, int) + 1) * sizeof(char*));
+            FIELD(self, GHOST_PATHS, char**) = paths;
+            paths[FIELD(self, GHOST_COUNT, int)] = game_FUN_004a4410(text_length(path) + 1,
+                                                                    DLGPROCS_CPP, 0x763);
+            text_copy(paths[FIELD(self, GHOST_COUNT, int)], path);
+            FIELD(self, GHOST_COUNT, int)++;
+
+            chosen = FIELD(dialog_find_control(self, NULL, LIST_GHOSTS, 6), COMBO_LIST, BYTE*);
+            game_FUN_00526fc0(game_main, NULL, 0x14C8, what, sizeof what);
+            game_FUN_0053a11f(label, GHOST_LABEL, what, (const char*) record + RECORD_RIDER);
+            list_add_text(chosen, NULL, label, FIELD(self, 0x7F5C, int) - 1, 0);
+            added = TRUE;
+        }
+    }
+    game_FUN_0053a2ad(file);
+    return added;
+}
+
 /* DDLGhostRaces: "none" (string 5319), then each Record\*.gho there is. */
 PORT(0x0044FA20)
 void __fastcall ghosts_fill(BYTE* self)
@@ -519,7 +599,7 @@ void __fastcall ghosts_fill(BYTE* self)
         return;
     do {
         game_FUN_0053a11f(path, NAME(0x0056C7DC), NAME(0x0056FB64), found.cFileName);  /* %s\%s */
-        game_FUN_0044fb30(self, NULL, path);
+        ghost_add(self, NULL, path);
     } while (FindNextFileA(search, &found));
     FindClose(search);
 }
@@ -967,7 +1047,6 @@ void __cdecl result_go(int code, ui_event* event)
 
 /* ---- Intro ---- */
 
-#define game_session    FIELD(game_main, 0x56C, BYTE*)
 #define session_gui     FIELD(game_session, 0x2C, gui_manager*)
 #define cursors_locked  (FIELD(game_main, 0x2D5, BYTE) & 2)
 
@@ -1108,13 +1187,11 @@ void __fastcall credits_handle(BYTE* self, void* edx_unused, ui_event* event)
 /* ---- Previews ---- */
 
 int   __fastcall dialog_draw_over(BYTE* self);
-DWORD __fastcall list_data(BYTE* self, void* edx_unused, int index);
 void  __fastcall game_FUN_00445c10(BYTE* model, void* edx_unused, DWORD a, BYTE* look,
                                    BYTE* display);
 
 #define session_players FIELD(game_session, 0x48, BYTE*)    /* 200 bytes each */
 #define player_model(player) FIELD(FIELD(player, 0xC0, BYTE*), 0x1A0, BYTE*)
-#define COMBO_LIST      0x1FC
 
 /*
     Vtable slot 13: draw. A bike or rider picked from DDLBikes or DDLRiders since the last draw
