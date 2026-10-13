@@ -1348,6 +1348,59 @@ void __fastcall replay_records_fill(BYTE* self)
     records_list(self, NAME(0x0056F848), game_FUN_00456040);                 /* Record\*.vcr */
 }
 
+/*
+    The record screens' filter panel over (20, 35)-(620, 395): the ghost filter (0x7F58) for
+    kind 0, the replay filter (0x7F5C) for kind 1. The other kind's panel is closed first.
+*/
+enum { FILTER_GHOSTS, FILTER_REPLAYS };
+
+static BYTE* filter_open(int line, const char* name, void* vtable)
+{
+    BYTE* panel = game_new(0x7F88, DLGPROCS_CPP, line);
+
+    if (panel) {
+        dialog_construct(panel, NULL, 1, name);
+        *(void**) panel = vtable;
+    }
+    return panel;
+}
+
+static void filter_close(BYTE* self, int offset)
+{
+    BYTE* panel = FIELD(self, offset, BYTE*);
+
+    VIRTUAL(panel, 8, method_0)(panel);
+    FIELD(self, offset, BYTE*) = NULL;
+}
+
+PORT(0x00454E90)
+void __fastcall records_filter_show(BYTE* self, void* edx_unused, int kind)
+{
+    RECT area = { 20, 35, 620, 395 };
+    BYTE* panel;
+
+    (void) edx_unused;
+    if (FIELD(self, 0x7F58, BYTE*) && kind != FILTER_GHOSTS)
+        filter_close(self, 0x7F58);
+    if (FIELD(self, 0x7F5C, BYTE*) && kind != FILTER_REPLAYS)
+        filter_close(self, 0x7F5C);
+
+    if (kind == FILTER_GHOSTS) {
+        if (FIELD(self, 0x7F58, BYTE*))
+            return;
+        panel = filter_open(0x1126, NAME(0x00570060), (void*) 0x00557420);     /* GhostFil.dtm */
+        FIELD(self, 0x7F58, BYTE*) = panel;
+    } else if (kind == FILTER_REPLAYS) {
+        if (FIELD(self, 0x7F5C, BYTE*))
+            return;
+        panel = filter_open(0x112C, NAME(0x00570070), (void*) 0x005574A4);     /* ReplyFil.dtm */
+        FIELD(self, 0x7F5C, BYTE*) = panel;
+    } else {
+        return;
+    }
+    gui_manager_open(session_gui, NULL, panel, 0, 1, (DWORD) &area, self, 0, 0, 1);
+}
+
 /* ---- Replays ---- */
 
 void __fastcall game_FUN_0045ddd0(BYTE* events, void* edx_unused, DWORD a);
