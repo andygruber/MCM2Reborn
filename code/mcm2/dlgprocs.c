@@ -79,6 +79,18 @@ static BYTE* event_dialog(const ui_event* event)
     return (BYTE*) event->sender;
 }
 
+/* A dialog of `size` bytes read from `name`, given its kind's vtable (NULL when out of memory). */
+static BYTE* dialog_new(size_t size, int line, const char* name, void* vtable)
+{
+    BYTE* dialog = game_new(size, DLGPROCS_CPP, line);
+
+    if (dialog) {
+        dialog_construct(dialog, NULL, 1, name);
+        *(void**) dialog = vtable;
+    }
+    return dialog;
+}
+
 /* ---- Sorting ---- */
 
 /* List sort orders by number: entries' texts as integers, rising and falling. */
@@ -1067,13 +1079,8 @@ void __fastcall game_FUN_00469760(BYTE* game);
 /* The intro's next screen, opened as this one closes. */
 static void open_next(size_t size, int line, const char* name, void* vtable)
 {
-    BYTE* dialog = game_new(size, DLGPROCS_CPP, line);
-
-    if (dialog) {
-        dialog_construct(dialog, NULL, 1, name);
-        *(void**) dialog = vtable;
-    }
-    gui_manager_open(session_gui, NULL, dialog, 0, 2, 0, NULL, 0, 0, 0);
+    gui_manager_open(session_gui, NULL, dialog_new(size, line, name, vtable), 0, 2, 0, NULL, 0,
+                     0, 0);
 }
 
 /*
@@ -1742,17 +1749,6 @@ void __fastcall replay_records_fill(BYTE* self)
 */
 enum { FILTER_GHOSTS, FILTER_REPLAYS };
 
-static BYTE* filter_open(int line, const char* name, void* vtable)
-{
-    BYTE* panel = game_new(0x7F88, DLGPROCS_CPP, line);
-
-    if (panel) {
-        dialog_construct(panel, NULL, 1, name);
-        *(void**) panel = vtable;
-    }
-    return panel;
-}
-
 static void filter_close(BYTE* self, int offset)
 {
     BYTE* panel = FIELD(self, offset, BYTE*);
@@ -1776,12 +1772,12 @@ void __fastcall records_filter_show(BYTE* self, void* edx_unused, int kind)
     if (kind == FILTER_GHOSTS) {
         if (FIELD(self, 0x7F58, BYTE*))
             return;
-        panel = filter_open(0x1126, NAME(0x00570060), (void*) 0x00557420);     /* GhostFil.dtm */
+        panel = dialog_new(0x7F88, 0x1126, NAME(0x00570060), (void*) 0x00557420); /* GhostFil.dtm */
         FIELD(self, 0x7F58, BYTE*) = panel;
     } else if (kind == FILTER_REPLAYS) {
         if (FIELD(self, 0x7F5C, BYTE*))
             return;
-        panel = filter_open(0x112C, NAME(0x00570070), (void*) 0x005574A4);     /* ReplyFil.dtm */
+        panel = dialog_new(0x7F88, 0x112C, NAME(0x00570070), (void*) 0x005574A4); /* ReplyFil.dtm */
         FIELD(self, 0x7F5C, BYTE*) = panel;
     } else {
         return;
@@ -2642,12 +2638,8 @@ static void sp_pages_store(BYTE* self, int count)
 /* OptBase.dtm over `parent`, on its page `page` (0 the options, 1 the joystick, 2 the bike). */
 static void options_open(BYTE* self, BYTE* parent, int line, DWORD page)
 {
-    BYTE* options = game_new(0x7F70, DLGPROCS_CPP, line);
+    BYTE* options = dialog_new(0x7F70, line, NAME(0x0056F690), (void*) 0x00556BD0); /* OptBase */
 
-    if (options) {
-        dialog_construct(options, NULL, 1, NAME(0x0056F690));             /* OptBase.dtm */
-        *(void**) options = (void*) 0x00556BD0;
-    }
     gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, options, 0, 2, 0, parent, page, 0, 1);
 }
 
@@ -2689,12 +2681,9 @@ void __fastcall sp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
             event->e = 1;
         } else if (clicked(event, START)) {
             if (FIELD(game_main, 0x614, int)) {
-                BYTE* box = game_new(0x7F58, DLGPROCS_CPP, 0x4E1);
+                BYTE* box = dialog_new(0x7F58, 0x4E1, NAME(0x0056F734),       /* messbox2.dtm */
+                                       (void*) 0x00556CE4);
 
-                if (box) {
-                    dialog_construct(box, NULL, 1, NAME(0x0056F734));          /* messbox2.dtm */
-                    *(void**) box = (void*) 0x00556CE4;
-                }
                 gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, box, 0, 4, 0, self, 0, 0,
                                  1);
                 return;
@@ -3043,12 +3032,9 @@ void __cdecl profile_create(ui_event* event)
     if (!name[0])
         return;
     if (game_FUN_0044b8b0(game_files, NULL, name)) {
-        BYTE* prompt = game_new(0x7F58, DLGPROCS_CPP, 0xCF9);
+        BYTE* prompt = dialog_new(0x7F58, 0xCF9, NAME(0x0056F734),            /* messbox2.dtm */
+                                  PROFILE_PROMPT_VTABLE);
 
-        if (prompt) {
-            dialog_construct(prompt, NULL, 1, NAME(0x0056F734));              /* messbox2.dtm */
-            *(void**) prompt = PROFILE_PROMPT_VTABLE;
-        }
         gui_manager_open(session_gui, NULL, prompt, 0, 4, 0, event_dialog(event), (DWORD) name,
                          0, 1);
         return;
@@ -3185,8 +3171,10 @@ void __fastcall profile_name_handle(BYTE* self, void* edx_unused, ui_event* even
 #define confirmed_f98   ((unsigned long*) 0x0068E8D8)  /* 0xB dwords to game + 0xF98 */
 #define confirmed_mode  (*(DWORD*) 0x0068E918)         /* then 7 dwords to game + 0xFC4 */
 #define serial_settings ((void*) 0x0068E7F8)     /* the cable's COM port, baud and so on */
+#define PROVIDER_IPX    (*(const GUID*) 0x0055BA60)    /* DPSPGUID_IPX */
 #define PROVIDER_TCPIP  (*(const GUID*) 0x0055BA70)    /* DPSPGUID_TCPIP */
 #define PROVIDER_SERIAL (*(const GUID*) 0x0055BA80)    /* DPSPGUID_SERIAL */
+#define PROVIDER_MODEM  (*(const GUID*) 0x0055BA90)    /* DPSPGUID_MODEM */
 #define game_net        FIELD(game_main, 0x8, BYTE*)
 
 void __cdecl    game_FUN_004b2ae0(const void* from, DWORD* to);
@@ -3367,11 +3355,7 @@ static void record_ask_delete(BYTE* self, int line)
 
     game_FUN_0053a11f(text, TRACK_AND_DESC, list_text(list, NULL, -1),
                       (const char*) record + RECORD_DESC);
-    prompt = game_new(0x7F58, DLGPROCS_CPP, line);
-    if (prompt) {
-        dialog_construct(prompt, NULL, 1, NAME(0x0056F734));                   /* messbox2.dtm */
-        *(void**) prompt = (void*) 0x005575AC;
-    }
+    prompt = dialog_new(0x7F58, line, NAME(0x0056F734), (void*) 0x005575AC);  /* messbox2.dtm */
     gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, prompt, 0, 4, 0, self, 0, 0, 1);
     prompt_setup_ids(prompt, NULL, NULL, 0x143C, text, 0, NULL, 0x143E, NULL, 0, NULL, 0x143D);
 }
@@ -3384,11 +3368,7 @@ static void record_ask_description(BYTE* self, int line)
 
     text_copy_most(description, list_text(dialog_find_control(self, NULL, LIST_DESC, 3), NULL, -1),
                    DESCRIPTION_LENGTH);
-    entry = game_new(0x7F60, DLGPROCS_CPP, line);
-    if (entry) {
-        dialog_construct(entry, NULL, 1, NAME(0x005700BC));                    /* messbox1.dtm */
-        *(void**) entry = (void*) 0x00557528;
-    }
+    entry = dialog_new(0x7F60, line, NAME(0x005700BC), (void*) 0x00557528);   /* messbox1.dtm */
     gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, entry, 0, 4, 0, self, 0, 0, 1);
     text_entry_setup_ids(entry, NULL, NULL, 0x143F, NULL, 0, description, 0x20);
 }
@@ -3473,6 +3453,456 @@ void __fastcall replay_filter_handle(BYTE* self, void* edx_unused, ui_event* eve
 {
     (void) edx_unused;
     record_filter_handle(self, event, &replay_filter);
+}
+
+/* ---- The main menu ---- */
+
+/*
+    The main menu (vtable 0x0055A070, its slot 10 movie_screen_tick). Three panels drop down from
+    it - single player (0x7F60), multiplayer (0x7F64) and the profiles (0x7F68), open at 0x7F6C,
+    0x7F70 and 0x7F74 - one at a time, over ui\events.avi playing in a loop (0x7F58).
+*/
+#define MENU_MOVIE          0x7F58
+#define MENU_SINGLE         0x7F60
+#define MENU_MULTI          0x7F64
+#define MENU_USER           0x7F68
+#define MENU_SINGLE_OPEN    0x7F6C
+#define MENU_MULTI_OPEN     0x7F70
+#define MENU_USER_OPEN      0x7F74
+#define MENU_MOVIE_READY    0x7F78
+#define MENU_MOVIE_WAITED   0x7F7C
+
+#define SINGLE_ANIMATION    NAME(0x0056F790)    /* "MenuSingleAnimation" */
+#define MULTI_ANIMATION     NAME(0x0056F77C)    /* "MenuMultiAnimation" */
+#define USER_ANIMATION      NAME(0x0056F768)    /* "MenuUserAnimation" */
+#define MESSAGE_BOX         NAME(0x0056F734)    /* "messbox2.dtm" */
+#define SP_BASE             NAME(0x0056F660)    /* "SPBase.dtm" */
+#define BUT_IPX             NAME(0x0056F6F4)    /* "ButIPX" */
+#define BUT_TCP             NAME(0x0056F6EC)    /* "ButTCP" */
+#define BUT_ZONE            NAME(0x0056F6E4)    /* "ButZone" */
+#define BUT_CABLE           NAME(0x0056F6D8)    /* "ButCable" */
+#define BUT_MODEM           NAME(0x0056F6CC)    /* "ButModem" */
+#define MOVIE_LOOP          0x0044C190          /* what the movie calls when it ends: start again */
+
+#define session_connecting  FIELD(game_session, 0x4B0, DWORD)
+#define profile_removing    (*(int*) 0x005A0F0C)    /* LstProfiles' index of the one to remove */
+
+/* The connections the network lists (Net.cpp): the provider at 0x108, its address at 0x11C. */
+#define CONNECTION_SIZE      0x120
+#define CONNECTION_COUNT     5
+#define CONNECTION_SERVICE   0x108
+#define CONNECTION_ADDRESS   0x11C
+#define CONNECTION_CONSTRUCT 0x004B23E0
+#define CONNECTION_DESTRUCT  0x005292D0
+
+typedef HRESULT (__stdcall* dplay_initialize_connection)(void* dplay, void* connection,
+                                                         DWORD flags);
+
+void  __fastcall control_set_link(BYTE* self, void* edx_unused, BYTE* next, DWORD b);
+
+/* Out of line: the original calls these. */
+__declspec(noinline) BOOL __cdecl profile_choose(ui_event* event);
+__declspec(noinline) void __fastcall profiles_fill(BYTE* self);
+__declspec(noinline) void __fastcall profile_show(BYTE* self);
+
+void __fastcall game_FUN_004d8140(BYTE* object);                    /* frees what it holds */
+void __fastcall game_FUN_004a3f30(void* video);                     /* stop the movie */
+int  __cdecl    game_FUN_004b3670(void);                            /* the network, made if need be */
+void __stdcall  game_FUN_0053b88e(void* array, size_t size, int count, DWORD construct,
+                                  DWORD destruct);                  /* construct an array */
+void __stdcall  game_FUN_0053b7b0(void* array, size_t size, int count, DWORD destruct);
+int  __fastcall game_FUN_004b2420(BYTE* net, void* edx_unused, BYTE* connections, int* count);
+void __fastcall game_FUN_0049b420(BYTE* session);                   /* close the game's window */
+BOOL __fastcall game_FUN_0044b900(BYTE* files, void* edx_unused, const char* folder);  /* delete */
+
+static BOOL service_is(const BYTE* connection, const GUID* service)
+{
+    const DWORD* id = (const DWORD*) (connection + CONNECTION_SERVICE);
+    const DWORD* wanted = (const DWORD*) service;
+
+    return id[0] == wanted[0] && id[1] == wanted[1] && id[2] == wanted[2] && id[3] == wanted[3];
+}
+
+static void control_enable(BYTE* control, DWORD enabled)
+{
+    VIRTUAL(control, 0xC4, method_1)(control, NULL, enabled);
+}
+
+/* The movie's video (0x1EC), its slot 0x40: paused, it seems (the tick plays it with 0). */
+static void menu_movie_pause(BYTE* self, DWORD paused)
+{
+    void* video = FIELD(FIELD(self, MENU_MOVIE, BYTE*), 0x1EC, void*);
+
+    VIRTUAL(video, 0x40, method_1)(video, NULL, paused);
+}
+
+static void panel_close(BYTE* self, int panel, int open)
+{
+    control_show(FIELD(self, panel, BYTE*), NULL, FALSE, TRUE);
+    FIELD(self, open, int) = 0;
+}
+
+static void multi_close(BYTE* self)
+{
+    panel_close(self, MENU_MULTI, MENU_MULTI_OPEN);
+    game_FUN_004b3610();
+    session_connecting = 0;
+}
+
+static void panel_toggle(BYTE* self, int panel, int open)
+{
+    FIELD(self, open, int) = !FIELD(self, open, int);
+    control_show(FIELD(self, panel, BYTE*), NULL, FIELD(self, open, int), TRUE);
+}
+
+static void profiles_focus(BYTE* self)
+{
+    dialog_queue_focus(self, NULL, dialog_find_control(self, NULL, LIST_PROFILES, 3), NULL, FALSE);
+}
+
+static void menu_open(BYTE* self, const ui_event* event)
+{
+    RECT area = { 355, 113, 499, 217 };
+    BYTE* old;
+    BYTE* movie;
+
+    FIELD(self, MENU_SINGLE, BYTE*) = dialog_find_control(self, NULL, SINGLE_ANIMATION, 5);
+    FIELD(self, MENU_MULTI, BYTE*) = dialog_find_control(self, NULL, MULTI_ANIMATION, 5);
+    FIELD(self, MENU_USER, BYTE*) = dialog_find_control(self, NULL, USER_ANIMATION, 5);
+    control_show(FIELD(self, MENU_SINGLE, BYTE*), NULL, FALSE, FALSE);
+    control_show(FIELD(self, MENU_MULTI, BYTE*), NULL, FALSE, FALSE);
+    control_show(FIELD(self, MENU_USER, BYTE*), NULL, FALSE, FALSE);
+    FIELD(self, MENU_SINGLE_OPEN, int) = 0;
+    FIELD(self, MENU_MULTI_OPEN, int) = 0;
+    FIELD(self, MENU_USER_OPEN, int) = 0;
+    FIELD(self, MENU_MOVIE_WAITED, DWORD) = 0;
+    session_connecting = 0;
+    series_started = 0;
+    profiles_fill(self);
+    profile_show(self);
+
+    if (FIELD(game_files, 0x4, int) < 1 || !FIELD(game_session, 0x48C, DWORD)) {
+        go_to(0xBBA);
+    } else if (event->param == 99) {
+        gui_manager_open(session_gui, NULL,
+                         dialog_new(0x7F58, 0xAD, MESSAGE_BOX, (void*) 0x00556C54), 0x1FA, 0xC,
+                         0, self, 0, 0, 1);
+    }
+    old = FIELD(game_main, 0x3440, BYTE*);
+    if (old) {
+        game_FUN_004d8140(old);
+        game_delete(old);
+        FIELD(game_main, 0x3440, BYTE*) = NULL;
+    }
+
+    movie = game_new(0x200, DLGPROCS_CPP, 0xBA);
+    if (movie)
+        movie = movie_construct(movie, NULL, 0, &area, self);
+    FIELD(self, MENU_MOVIE, BYTE*) = movie;
+    dialog_add(self, NULL, movie, 0, 1);
+    object_unlink(FIELD(self, MENU_MOVIE, BYTE*));
+    object_move_before(FIELD(self, MENU_MOVIE, BYTE*), NULL,
+                       dialog_find_control(self, NULL, NAME(0x0056F724), 0), -1); /* ScreenOverCtl */
+    control_set_link(FIELD(self, MENU_MOVIE, BYTE*), NULL,
+                     dialog_find_control(self, NULL, SINGLE_ANIMATION, 0), 0);
+    movie_open(FIELD(self, MENU_MOVIE, BYTE*), NULL, NAME(0x0056F714), FALSE, MOVIE_LOOP,
+               (DWORD) self);                                                 /* ui\events.avi */
+    FIELD(self, MENU_MOVIE_READY, DWORD) = 1;
+    menu_movie_pause(self, 1);
+}
+
+/* Multiplayer: only the Zone, and the services the network offers, can be chosen. */
+static void multi_open(BYTE* self)
+{
+    gui_manager* manager = FIELD(self, 0x30, gui_manager*);
+    BYTE connections[CONNECTION_COUNT][CONNECTION_SIZE];
+    int count;
+    int i;
+
+    gui_manager_set_cursors(manager, NULL, manager->wait_image, 1);
+    control_enable(dialog_find_control(self, NULL, BUT_IPX, 1), FALSE);
+    control_enable(dialog_find_control(self, NULL, BUT_TCP, 1), FALSE);
+    control_enable(dialog_find_control(self, NULL, BUT_ZONE, 1), TRUE);
+    control_enable(dialog_find_control(self, NULL, BUT_CABLE, 1), FALSE);
+    control_enable(dialog_find_control(self, NULL, BUT_MODEM, 1), FALSE);
+    FIELD(game_main, 0x3170, DWORD) = 0;
+    if (game_FUN_004b3670()) {
+        game_FUN_0053b88e(connections, CONNECTION_SIZE, CONNECTION_COUNT, CONNECTION_CONSTRUCT,
+                          CONNECTION_DESTRUCT);
+        game_FUN_004b2420(game_net, NULL, connections[0], &count);
+        for (i = 0; i < count; i++) {
+            const char* button;
+
+            if (service_is(connections[i], &PROVIDER_IPX))
+                button = BUT_IPX;
+            else if (service_is(connections[i], &PROVIDER_TCPIP))
+                button = BUT_TCP;
+            else if (service_is(connections[i], &PROVIDER_SERIAL))
+                button = BUT_CABLE;
+            else if (service_is(connections[i], &PROVIDER_MODEM))
+                button = BUT_MODEM;
+            else
+                continue;
+            control_enable(dialog_find_control(self, NULL, button, 1), TRUE);
+        }
+        game_FUN_0053b7b0(connections, CONNECTION_SIZE, CONNECTION_COUNT, CONNECTION_DESTRUCT);
+    }
+    manager = FIELD(self, 0x30, gui_manager*);
+    gui_manager_set_cursors(manager, NULL, manager->cursor_image, 0);
+}
+
+/* A network address for `service` given to the network as `kind`; the sessions' screen next. */
+static void connect_by(GUID service, DWORD kind, int line)
+{
+    void* address;
+    DWORD size;
+
+    if (game_FUN_004b0600(game_net, NULL, service, NO_TEXT, NO_TEXT, NULL, &address, &size)
+        && game_FUN_004b04e0(game_net, NULL, address, size, kind)) {
+        game_FUN_004a4450(address, DLGPROCS_CPP, line);
+        go_to(0x85C);
+    }
+}
+
+static void connect_modem(void)
+{
+    BYTE connections[CONNECTION_COUNT][CONNECTION_SIZE];
+    int count;
+    int i;
+
+    game_FUN_0053b88e(connections, CONNECTION_SIZE, CONNECTION_COUNT, CONNECTION_CONSTRUCT,
+                      CONNECTION_DESTRUCT);
+    game_FUN_004b2420(game_net, NULL, connections[0], &count);
+    for (i = 0; i < count; i++) {
+        if (service_is(connections[i], &PROVIDER_MODEM)) {
+            void* dplay = FIELD(game_net, 0x4, void*);
+
+            VIRTUAL(dplay, 0x98, dplay_initialize_connection)(
+                dplay, FIELD(connections[i], CONNECTION_ADDRESS, void*), 0);
+            go_to(0xFC);
+            break;
+        }
+    }
+    game_FUN_0053b7b0(connections, CONNECTION_SIZE, CONNECTION_COUNT, CONNECTION_DESTRUCT);
+}
+
+/* A race of `kind` from `folder`, its screen in place of the menu. */
+static void event_screen_open(BYTE* self, ui_event* event, int kind, const char* folder, int line)
+{
+    game_FUN_004a3f30(FIELD(FIELD(self, MENU_MOVIE, BYTE*), 0x1EC, void*));
+    FIELD(game_main, 0x2F60, int) = kind;
+    FIELD(game_main, 0x2F64, int) = kind;
+    FIELD(game_main, 0xC18, const char*) = folder;
+    gui_manager_open(session_gui, NULL, dialog_new(0x7F64, line, SP_BASE, (void*) 0x00556B4C), 0,
+                     2, 0, NULL, 0, 0, 1);
+    dialog_end(event_dialog(event), NULL, 0);
+    event->e = 1;
+}
+
+/* A screen opened from the menu, which then closes. */
+static void screen_open(BYTE* self, size_t size, int line, const char* name, void* vtable,
+                        DWORD a)
+{
+    gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, dialog_new(size, line, name, vtable),
+                     a, 2, 0, NULL, 0, 0, 1);
+    dialog_end(self, NULL, 0);
+}
+
+/* A dialog over the menu: `a` and `arg` are its own. */
+static void box_open(BYTE* self, BYTE* box, DWORD a, DWORD flags, DWORD arg)
+{
+    gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, box, a, flags, 0, self, arg, 0, 1);
+}
+
+/* The profile picked is removed once a prompt asks; the player's own cannot be. */
+static void profile_remove_ask(BYTE* self)
+{
+    BYTE* list = dialog_find_control(self, NULL, LIST_PROFILES, 0);
+    short index = (short) list_selected(list);
+
+    if (!game_FUN_0053b6e0(list_text(list, NULL, -1), game_profile)) {
+        box_open(self, dialog_new(0x7F58, 0x198, MESSAGE_BOX, (void*) 0x00556A44), 0, 4, 0);
+    } else if (index != -1) {
+        BYTE* prompt;
+
+        profile_removing = index;
+        prompt = dialog_new(0x7F58, 0x19B, MESSAGE_BOX, (void*) 0x005569C0);
+        box_open(self, prompt, 0x12F, 4, (DWORD) list_text(list, NULL, -1));
+    }
+    dialog_queue_focus(self, NULL, list, NULL, FALSE);
+    profiles_fill(self);
+}
+
+static void user_panel_after_profile(BYTE* self)
+{
+    profile_show(self);
+    FIELD(self, MENU_USER_OPEN, int) = 0;
+    control_show(FIELD(self, MENU_USER, BYTE*), NULL, FALSE, TRUE);
+}
+
+static void menu_click(BYTE* self, ui_event* event)
+{
+    if (clicked(event, NAME(0x0056F708))) {                                 /* "MenuSingle" */
+        panel_toggle(self, MENU_SINGLE, MENU_SINGLE_OPEN);
+        FIELD(self, MENU_MOVIE_READY, DWORD) = 1;
+        if (FIELD(self, MENU_SINGLE_OPEN, int))
+            FIELD(self, MENU_MOVIE_WAITED, DWORD) = 0;
+        menu_movie_pause(self, 1);
+        control_show(FIELD(self, MENU_MOVIE, BYTE*), NULL, FALSE, TRUE);
+        if (FIELD(self, MENU_MULTI_OPEN, int))
+            multi_close(self);
+        if (FIELD(self, MENU_USER_OPEN, int))
+            panel_close(self, MENU_USER, MENU_USER_OPEN);
+    } else if (clicked(event, NAME(0x0056F6FC))) {                          /* "MenuMulti" */
+        panel_toggle(self, MENU_MULTI, MENU_MULTI_OPEN);
+        if (FIELD(self, MENU_SINGLE_OPEN, int))
+            panel_close(self, MENU_SINGLE, MENU_SINGLE_OPEN);
+        if (FIELD(self, MENU_USER_OPEN, int))
+            panel_close(self, MENU_USER, MENU_USER_OPEN);
+        if (FIELD(self, MENU_MULTI_OPEN, int)) {
+            multi_open(self);
+        } else {
+            game_FUN_004b3610();
+            session_connecting = 0;
+        }
+    } else if (clicked(event, NAME(0x0056F6BC))                             /* "MenuUserProfile" */
+               || clicked(event, NAME(0x0056F6A8))) {                       /* "ButCancelProfile" */
+        panel_toggle(self, MENU_USER, MENU_USER_OPEN);
+        if (FIELD(self, MENU_MULTI_OPEN, int))
+            multi_close(self);
+        if (FIELD(self, MENU_USER_OPEN, int))
+            profiles_focus(self);
+        if (FIELD(self, MENU_SINGLE_OPEN, int))
+            panel_close(self, MENU_SINGLE, MENU_SINGLE_OPEN);
+    } else if (clicked(event, NAME(0x0056F69C))) {                          /* "MenuOptions" */
+        box_open(self, dialog_new(0x7F70, 0x14A, NAME(0x0056F690), (void*) 0x00556BD0), 0, 2, 0);
+    } else if (clicked(event, NAME(0x0056F680))) {                          /* "ButStuntQuarry" */
+        event_screen_open(self, event, 0, NAME(0x0056F66C), 0x151);         /* Teraform\Quarries */
+    } else if (clicked(event, NAME(0x0056F658))) {                          /* "ButBaja" */
+        event_screen_open(self, event, 1, NAME(0x0056CB6C), 0x159);         /* Teraform\Baja */
+    } else if (clicked(event, NAME(0x0056F648))) {                          /* "ButSupercross" */
+        event_screen_open(self, event, 3, NAME(0x0056F63C), 0x161);         /* Teraform\SX */
+    } else if (clicked(event, NAME(0x0056F630))) {                          /* "ButEnduro" */
+        event_screen_open(self, event, 5, NAME(0x0056CB5C), 0x169);         /* Teraform\Enduro */
+    } else if (clicked(event, NAME(0x0056F620))) {                          /* "ButNationals" */
+        event_screen_open(self, event, 2, NAME(0x0056F60C), 0x171);         /* Teraform\National */
+    } else if (clicked(event, NAME(0x0056F5FC))) {                          /* "ButProCircuit" */
+        game_FUN_004a3f30(FIELD(FIELD(self, MENU_MOVIE, BYTE*), 0x1EC, void*));
+        gui_manager_open(session_gui, NULL,
+                         dialog_new(0x8074, 0x176, NAME(0x0056F5F0), (void*) 0x00556AC8),
+                         0, 2, 0, NULL, 0, 0, 1);                           /* PCStart.dtm */
+        dialog_end(event_dialog(event), NULL, 0);
+        event->e = 1;
+    } else if (clicked(event, NAME(0x0056F5E0))) {                          /* "ButLoadProfile" */
+        game_FUN_00528bb0(game_profile);
+        if (profile_choose(event))
+            game_FUN_00527080(game_main);
+        profiles_focus(self);
+        user_panel_after_profile(self);
+    } else if (clicked(event, NAME(0x0056F5D0))) {                          /* "ButNewProfile" */
+        game_FUN_00528bb0(game_profile);
+        go_to(0xBB9);
+        profiles_focus(self);
+        profiles_fill(self);
+        user_panel_after_profile(self);
+    } else if (clicked(event, NAME(0x0056F5BC))) {                          /* "ButRemoveProfile" */
+        profile_remove_ask(self);
+    } else if (clicked(event, BUT_IPX)) {
+        session_connecting = 1;
+        connect_by(PROVIDER_IPX, 1, 0x1AC);
+    } else if (clicked(event, BUT_TCP)) {
+        session_connecting = 1;
+        box_open(self, dialog_new(0x7F58, 0x1B6, MESSAGE_BOX, (void*) 0x0055693C), 0, 4, 0);
+    } else if (clicked(event, BUT_ZONE)) {
+        FIELD(game_main, 0x343C, DWORD) = 1;
+        dialog_end(event_dialog(event), NULL, 0);
+        event->e = 1;
+        game_FUN_0049b420(game_session);
+    } else if (clicked(event, BUT_CABLE)) {
+        session_connecting = 1;
+        go_to(0xD8);
+    } else if (clicked(event, BUT_MODEM)) {
+        session_connecting = 1;
+        connect_modem();
+    } else if (clicked(event, NAME(0x0056F5B0))) {                          /* "MenuReplay" */
+        screen_open(self, 0x7F60, 0x1D8, NAME(0x0056F5A4), (void*) 0x005568B8, 0);   /* GRBase */
+    } else if (clicked(event, NAME(0x0056F594))) {                          /* "MenuHighScore" */
+        screen_open(self, 0x7F68, 0x1DD, NAME(0x0056F584), (void*) 0x00556834, 0x911);
+    } else if (clicked(event, NAME(0x0056F578))) {                          /* "MenuCredits" */
+        screen_open(self, 0x7F5C, 0x1E6, NAME(0x0056DC98), (void*) 0x005567B0, 0);   /* credits */
+    } else if (clicked(event, NAME(0x0056F56C))) {                          /* "MenuHelp" */
+        game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
+    } else if (clicked(event, NAME(0x0056F554))) {                          /* "MenuExit" */
+        game_FUN_0049b420(game_session);
+    }
+}
+
+/* The profile asked about (profile_removing): its folder deleted, and it is unlisted. */
+static void profile_remove(BYTE* list)
+{
+    char name[PROFILE_LENGTH + 1];
+    char path[0x104];
+
+    text_copy_most(name, list_text(list, NULL, profile_removing), PROFILE_LENGTH);
+    game_FUN_0053a11f(path, NAME(0x0056C7DC), PROFILE_FOLDER, name);        /* %s\%s */
+    if (game_FUN_0044b900(game_files, NULL, path)) {
+        VIRTUAL(game_files, 4, method_0)(game_files);
+        list_remove(list, NULL, profile_removing);
+    }
+}
+
+static void menu_child_ended(BYTE* self, ui_event* event)
+{
+    if (event->a == 0x1E || event->a == 0x32) {
+        BYTE* list = dialog_find_control(self, NULL, LIST_PROFILES, 0);
+
+        if (event->a == 0x1E) {                 /* a profile made */
+            list_add_text(list, NULL, game_profile, 0, 0);
+            list_sort(list, NULL, TRUE);
+            list_select_text(list, NULL, game_profile);
+        } else if (event->a == 0x32) {          /* removing one agreed to */
+            profile_remove(list);
+        }
+        profiles_fill(self);
+        profile_show(self);
+        if (FIELD(self, MENU_USER_OPEN, int))
+            dialog_queue_focus(self, NULL, list, NULL, FALSE);
+    }
+    if (event->a == 0x1F)
+        profile_show(self);
+    if (event->a == 0x63) {
+        dialog_end(event_dialog(event), NULL, 0);
+        event->e = 1;
+    }
+    if (event->a == 0x3D)
+        go_to(0x85D);
+    if (event->a == 0x3C)                       /* TCP/IP chosen */
+        connect_by(PROVIDER_TCPIP, 2, 0x240);
+}
+
+PORT(0x0044C1D0)
+void __fastcall main_menu_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    switch (event->type) {
+    case EVENT_CLICK:
+        menu_click(self, event);
+        break;
+    case EVENT_OPEN:
+        menu_open(self, event);
+        break;
+    case EVENT_CLOSE:
+        FIELD(self, MENU_USER_OPEN, DWORD) = 0;
+        FIELD(self, MENU_MULTI_OPEN, DWORD) = 0;
+        FIELD(self, MENU_SINGLE_OPEN, DWORD) = 0;
+        FIELD(self, MENU_USER, BYTE*) = NULL;
+        FIELD(self, MENU_MULTI, BYTE*) = NULL;
+        FIELD(self, MENU_SINGLE, BYTE*) = NULL;
+        break;
+    case EVENT_CHILD_ENDED:
+        menu_child_ended(self, event);
+        break;
+    }
 }
 
 /* ---- Numbers ---- */
