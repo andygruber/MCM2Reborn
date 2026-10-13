@@ -4121,3 +4121,421 @@ int __fastcall edit_render(BYTE* self)
     FIELD(self, 0x1C0, DWORD) = 1;
     return 1;
 }
+
+#define EDIT_CARET_POS  0x1EC       /* the caret's index into the text */
+#define EDIT_TYPE_SOUND 0x204       /* played on every key */
+#define EDIT_FULL_SOUND 0x208       /* played when a character does not fit */
+#define EDIT_LEAD       0x228       /* the last byte typed led a double-byte character */
+#define EDIT_LEAD_LOST  0x22C       /* ...which did not fit, so its trail byte is dropped */
+
+void* __cdecl game_FUN_0053c350(void* to, const void* from, size_t count);      /* memmove */
+int   __fastcall game_vf_32_47D940(BYTE* self, void* edx_unused, DWORD a);     /* slot 33's base */
+
+/* The screen's surface, whose DC text is measured on. */
+#define video_surface() FIELD(FIELD(game_main, 0x10, BYTE*), 0x48, void*)
+#define edit_font(c)    (FIELD(c, CTL_FONT, HFONT) ? FIELD(c, CTL_FONT, HFONT) \
+                                                   : FIELD(FIELD(c, CTL_DIALOG, BYTE*), 0xD8, HFONT))
+
+/* Tell the dialog: `type` 10 when editing ends, 19 when the text changed. The dialog's `e`. */
+static DWORD edit_event(BYTE* self, DWORD type)
+{
+    BYTE* dialog;
+    ui_event event;
+
+    event.e = 0;
+    event.type = type;
+    event.a = FIELD(self, 0x74, DWORD);
+    event.b = (DWORD) control_get_name(self);
+    event.manager = FIELD(self, CTL_MANAGER, gui_manager*);
+    dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    event.sender = dialog;
+    event.c = (DWORD) self;
+    VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, &event);
+    return event.e;
+}
+
+/*
+    After an edit: end the text, and measure it whole (CTL_EXTENT's width) and up to the caret, on
+    the dialog's screen. A screen without a DC leaves both as they were.
+*/
+static void edit_measure(BYTE* self)
+{
+    void* surface;
+    HDC dc;
+
+    FIELD(self, CTL_TEXT, char*)[FIELD(self, CTL_LENGTH, int)] = 0;
+    surface = FIELD(object_screen(FIELD(self, CTL_DIALOG, BYTE*)), 0x48, void*);
+    if (!VIRTUAL(surface, 0x44, surface_get_dc)(surface, &dc)) {
+        HGDIOBJ old = SelectObject(dc, edit_font(self));
+        SIZE size;
+
+        GetTextExtentPoint32A(dc, FIELD(self, CTL_TEXT, char*), FIELD(self, CTL_LENGTH, int), &size);
+        FIELD(self, CTL_EXTENT + 4, LONG) = size.cx;
+        GetTextExtentPoint32A(dc, FIELD(self, CTL_TEXT, char*), FIELD(self, EDIT_CARET_POS, int),
+                              &size);
+        FIELD(self, EDIT_CARET_X, LONG) = size.cx;
+        SelectObject(dc, old);
+        surface = FIELD(object_screen(FIELD(self, CTL_DIALOG, BYTE*)), 0x48, void*);
+        VIRTUAL(surface, 0x68, surface_release_dc)(surface, dc);
+    }
+    control_redraw(self);
+}
+
+/*
+    Hold up to `length` characters (1 to 999). The text is kept as far as it fits, but its
+    length is left at 0, as the original leaves it. Text over 1000 bytes would overrun the
+    original's copy, and this one's.
+*/
+PORT(0x00474C10)
+int __fastcall edit_set_capacity(BYTE* self, void* edx_unused, int length)
+{
+    char kept[EDIT_MAX];
+    char* text = FIELD(self, CTL_TEXT, char*);
+    BOOL had = FALSE;
+    int capacity;
+
+    (void) edx_unused;
+    if (text) {
+        text_copy(kept, text);
+        game_FUN_004a4450(text, GAMEUI_CPP, 0x169A);
+        had = TRUE;
+    }
+    capacity = length + 1;
+    if (capacity >= EDIT_MAX)
+        capacity = EDIT_MAX;
+    else if (capacity < 1)
+        capacity = 1;
+    FIELD(self, EDIT_CAPACITY, int) = capacity;
+    FIELD(self, EDIT_SCROLL, int) = 0;
+    FIELD(self, EDIT_CARET_POS, int) = 0;
+    FIELD(self, EDIT_CARET_X, int) = 0;
+    FIELD(self, CTL_LENGTH, int) = 0;
+    text = game_FUN_004a4410(capacity, GAMEUI_CPP, 0x16A3);
+    FIELD(self, CTL_TEXT, char*) = text;
+    if (had) {
+        int count = (int) text_length(kept);
+
+        if (count >= capacity - 1)
+            count = capacity - 1;
+        game__strncpy(text, kept, count);
+        FIELD(self, CTL_TEXT, char*)[count] = 0;
+    }
+    return control_redraw(self);
+}
+
+PORT(0x00474D20)
+void __fastcall edit_set_type_sound(BYTE* self, void* edx_unused, void* sound)
+{
+    (void) edx_unused;
+    FIELD(self, EDIT_TYPE_SOUND, void*) = sound;
+}
+
+PORT(0x00474D30)
+void __fastcall edit_set_full_sound(BYTE* self, void* edx_unused, void* sound)
+{
+    (void) edx_unused;
+    FIELD(self, EDIT_FULL_SOUND, void*) = sound;
+}
+
+/* Set the text (NULL for none), cut to fit, with the caret at its end. */
+PORT(0x00474D40)
+int __fastcall edit_set_text(BYTE* self, void* edx_unused, const char* text)
+{
+    void* surface;
+    int count;
+    HDC dc;
+
+    (void) edx_unused;
+    if (!text)
+        text = EMPTY_TEXT;
+    if (!FIELD(self, CTL_TEXT, char*))
+        FIELD(self, CTL_TEXT, char*) = game_FUN_004a4410(FIELD(self, EDIT_CAPACITY, int),
+                                                         GAMEUI_CPP, 0x16C0);
+    count = (int) text_length(text);
+    if (count >= FIELD(self, EDIT_CAPACITY, int) - 1)
+        count = FIELD(self, EDIT_CAPACITY, int) - 1;
+    game__strncpy(FIELD(self, CTL_TEXT, char*), text, count);
+    FIELD(self, CTL_TEXT, char*)[count] = 0;
+    FIELD(self, EDIT_CARET_POS, int) = count;
+    FIELD(self, CTL_LENGTH, int) = count;
+
+    surface = video_surface();
+    if (VIRTUAL(surface, 0x44, surface_get_dc)(surface, &dc)) {
+        FIELD(self, CTL_EXTENT + 4, LONG) = 0;
+        FIELD(self, EDIT_CARET_X, LONG) = 0;
+        return control_redraw(self);
+    }
+    {
+        BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+        HFONT font = FIELD(self, CTL_FONT, HFONT);
+        HGDIOBJ old;
+        SIZE size;
+
+        if (!font)
+            font = dialog ? FIELD(dialog, 0xD8, HFONT) : NULL;
+        old = SelectObject(dc, font);
+        GetTextExtentPoint32A(dc, FIELD(self, CTL_TEXT, char*), FIELD(self, CTL_LENGTH, int),
+                              &size);
+        SelectObject(dc, old);
+        surface = video_surface();
+        VIRTUAL(surface, 0x68, surface_release_dc)(surface, dc);
+        FIELD(self, CTL_EXTENT + 4, LONG) = size.cx;
+        FIELD(self, EDIT_CARET_X, LONG) = size.cx;
+    }
+    return control_redraw(self);
+}
+
+/* Copy the text into `buffer` of `size` bytes. */
+PORT(0x00474E90)
+char* __fastcall edit_get_text(BYTE* self, void* edx_unused, char* buffer, int size)
+{
+    int count = FIELD(self, CTL_LENGTH, int) + 1;
+
+    (void) edx_unused;
+    if (count < size)
+        size = count;
+    game__strncpy(buffer, FIELD(self, CTL_TEXT, char*), size);
+    buffer[size - 1] = 0;
+    return buffer;
+}
+
+/* Take only the characters in `allowed`, or (NULL) any. The original drops an earlier set. */
+PORT(0x00474ED0)
+void __fastcall edit_set_allowed(BYTE* self, void* edx_unused, const char* allowed)
+{
+    (void) edx_unused;
+    if (!allowed) {
+        if (FIELD(self, EDIT_ALLOWED, char*))
+            game_FUN_004a4450(FIELD(self, EDIT_ALLOWED, char*), GAMEUI_CPP, 0x16FB);
+        FIELD(self, EDIT_ALLOWED, char*) = NULL;
+        return;
+    }
+    FIELD(self, EDIT_ALLOWED, char*) = game_FUN_004a4410(text_length(allowed) + 1, GAMEUI_CPP,
+                                                         0x16F7);
+    if (FIELD(self, EDIT_ALLOWED, char*))
+        text_copy(FIELD(self, EDIT_ALLOWED, char*), allowed);
+}
+
+/* `c` if it is allowed, else the other case of a letter if that is, else 0. */
+PORT(0x00474F60)
+char __fastcall edit_filter(BYTE* self, void* edx_unused, char c)
+{
+    const char* allowed = FIELD(self, EDIT_ALLOWED, const char*);
+    char other;
+
+    (void) edx_unused;
+    if (!allowed)
+        return c;
+    if (c >= 'A' && c <= 'Z')
+        other = c + 0x20;
+    else if (c >= 'a' && c <= 'z')
+        other = c - 0x20;
+    else
+        return game_FUN_0053b580(allowed, c) ? c : 0;
+    if (game_FUN_0053b580(allowed, c))
+        return c;
+    return game_FUN_0053b580(FIELD(self, EDIT_ALLOWED, const char*), other) ? other : 0;
+}
+
+/* The caret in `colour`, or white when it is 0. */
+PORT(0x00475000)
+int __fastcall edit_set_caret_colour(BYTE* self, void* edx_unused, COLORREF colour)
+{
+    (void) edx_unused;
+    if (FIELD(self, EDIT_CARET_PEN, HBRUSH))
+        DeleteObject(FIELD(self, EDIT_CARET_PEN, HBRUSH));
+    FIELD(self, EDIT_CARET_PEN, HBRUSH) = colour ? CreateSolidBrush(colour) : NULL;
+    return control_redraw(self);
+}
+
+/* Vtable slot 33: losing capture ends the editing (event 10). */
+PORT(0x00475050)
+int __fastcall edit_lose_capture(BYTE* self, void* edx_unused, DWORD to)
+{
+    (void) edx_unused;
+    edit_event(self, 10);
+    control_redraw(self);
+    return game_vf_32_47D940(self, NULL, to);
+}
+
+/* Vtable slot 55: not pressed while it has capture. */
+PORT(0x004750C0)
+int __fastcall edit_pressed(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    if (control_user(self)->capture == self)
+        return 0;
+    return control_pressed(self, NULL, button, b);
+}
+
+/* Room for `bytes` more, keeping the terminator. */
+#define edit_room(self, bytes) \
+    (FIELD(self, CTL_LENGTH, int) < FIELD(self, EDIT_CAPACITY, int) - (bytes))
+
+/*
+    Vtable slot 20: a character typed while it has capture. Backspace deletes before the caret,
+    Enter ends the editing unless the dialog takes it, Tab and Escape do nothing, and anything
+    else goes in at the caret, filtered by the allowed characters. A double-byte character comes
+    as two calls, the lead byte first. Every key plays the type sound, and one that does not fit
+    the full sound. The dialog hears of every change (event 19).
+*/
+PORT(0x004750F0)
+int __fastcall edit_char(BYTE* self, void* edx_unused, DWORD key)
+{
+    char c = (char) key;
+    char* text;
+    int caret;
+
+    (void) edx_unused;
+    if (control_clicked(self, NULL, key) || control_user(self)->capture != self)
+        return 0;
+    if (FIELD(self, EDIT_TYPE_SOUND, void*))
+        play_sound(self, FIELD(self, EDIT_TYPE_SOUND, void*));
+
+    text = FIELD(self, CTL_TEXT, char*);
+    caret = FIELD(self, EDIT_CARET_POS, int);
+    switch (c) {
+    case '\b':
+        if (FIELD(self, CTL_LENGTH, int) && caret > 0) {
+            char* previous = CharPrevA(text, text + caret);
+
+            if (previous) {
+                int width = IsDBCSLeadByte((BYTE) *previous) ? 2 : 1;
+
+                game_FUN_0053c350(previous, text + caret, FIELD(self, CTL_LENGTH, int) - caret + 1);
+                FIELD(self, CTL_LENGTH, int) -= width;
+                FIELD(self, EDIT_CARET_POS, int) -= width;
+            }
+        }
+        break;
+    case '\t':
+    case 0x1B:
+        break;
+    case '\r':
+        if (edit_event(self, 10))
+            return 1;
+        break;
+    default: {
+        BOOL lead = !FIELD(self, EDIT_LEAD, int) && IsDBCSLeadByte((BYTE) c);
+        BOOL fits;
+
+        if (!FIELD(self, EDIT_LEAD, int) && !lead) {
+            c = edit_filter(self, NULL, c);
+            if (!c)
+                break;
+        }
+        FIELD(self, EDIT_LEAD, int) = 0;
+        if (lead) {
+            FIELD(self, EDIT_LEAD, int) = 1;
+            fits = edit_room(self, 2);
+            FIELD(self, EDIT_LEAD_LOST, int) = !fits;
+        } else if (FIELD(self, EDIT_LEAD_LOST, int)) {
+            FIELD(self, EDIT_LEAD_LOST, int) = 0;
+            fits = FALSE;
+        } else {
+            fits = edit_room(self, 1);
+        }
+        if (fits) {
+            caret = FIELD(self, EDIT_CARET_POS, int);
+            text = FIELD(self, CTL_TEXT, char*);
+            game_FUN_0053c350(text + caret + 1, text + caret, FIELD(self, CTL_LENGTH, int) - caret + 1);
+            FIELD(self, CTL_TEXT, char*)[FIELD(self, EDIT_CARET_POS, int)] = c;
+            FIELD(self, EDIT_CARET_POS, int)++;
+            FIELD(self, CTL_LENGTH, int)++;
+        } else if (FIELD(self, EDIT_FULL_SOUND, void*)) {
+            play_sound(self, FIELD(self, EDIT_FULL_SOUND, void*));
+        }
+        break;
+    }
+    }
+
+    edit_measure(self);
+    FIELD(self, 0x1BC, int)++;
+    edit_event(self, 19);
+    return 1;
+}
+
+/*
+    Vtable slot 21: a key pressed while it has capture: End, Home, Left and Right move the caret
+    (over double-byte characters whole), Delete deletes after it.
+*/
+PORT(0x00475510)
+int __fastcall edit_key(BYTE* self, void* edx_unused, DWORD key)
+{
+    char* text;
+    int caret, length;
+
+    (void) edx_unused;
+    if (control_unclicked(self, NULL, key) || control_user(self)->capture != self)
+        return 0;
+    if (FIELD(self, EDIT_TYPE_SOUND, void*))
+        play_sound(self, FIELD(self, EDIT_TYPE_SOUND, void*));
+
+    text = FIELD(self, CTL_TEXT, char*);
+    caret = FIELD(self, EDIT_CARET_POS, int);
+    length = FIELD(self, CTL_LENGTH, int);
+    switch (key) {
+    case VK_END:
+        FIELD(self, EDIT_CARET_POS, int) = length;
+        break;
+    case VK_HOME:
+        FIELD(self, EDIT_CARET_POS, int) = 0;
+        FIELD(self, EDIT_CARET_X, int) = 0;
+        break;
+    case VK_LEFT:
+        if (caret > 0)
+            FIELD(self, EDIT_CARET_POS, int) -=
+                text_on_double_byte(FIELD(self, CTL_DIALOG, BYTE*), NULL, text, text + caret - 1,
+                                    (int) text_length(text)) ? 2 : 1;
+        break;
+    case VK_RIGHT:
+        if (caret < length)
+            FIELD(self, EDIT_CARET_POS, int) += IsDBCSLeadByte((BYTE) text[caret]) ? 2 : 1;
+        break;
+    case VK_DELETE:
+        if (caret < length) {
+            if (IsDBCSLeadByte((BYTE) text[caret])) {
+                game_FUN_0053c350(text + caret, text + caret + 2, length - caret - 1);
+                FIELD(self, CTL_LENGTH, int) -= 2;
+            } else {
+                game_FUN_0053c350(text + caret, text + caret + 1, length - caret);
+                FIELD(self, CTL_LENGTH, int)--;
+            }
+        }
+        break;
+    }
+    edit_measure(self);
+    return 1;
+}
+
+/* ---- A UIButton of a given type ------------------------------------------------------------ */
+
+#define UIKINDBUTTON_VTABLE ((void**) 0x00557FA8)
+
+PORT(0x004757C0)
+BYTE* __fastcall kind_button_construct(BYTE* self, void* edx_unused, int type, DWORD a,
+                                       const RECT* area, BYTE* dialog)
+{
+    (void) edx_unused;
+    button_construct(self, NULL, a, area, dialog);
+    *(void***) self = UIKINDBUTTON_VTABLE;
+    FIELD(self, CTL_TYPE, int) = type;
+    return self;
+}
+
+PORT(0x00475810)
+void __fastcall kind_button_destruct(BYTE* self)
+{
+    *(void***) self = UIKINDBUTTON_VTABLE;
+    button_destruct(self);
+}
+
+PORT(0x004757F0)
+BYTE* __fastcall kind_button_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    kind_button_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
