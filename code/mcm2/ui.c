@@ -5689,3 +5689,157 @@ int __fastcall list_set_text(BYTE* self, void* edx_unused, int index, const char
     }
     return control_redraw(self);
 }
+
+#define LIST_WRAP 0x244             /* stepping past either end comes round */
+
+/* Vtable slot 66: after a one-row list steps, whether that is all (`done`). */
+typedef void (__fastcall* list_stepped_slot)(void* list, void* edx_unused, int* done);
+
+/* Step the first entry showing by `by`. A one-row list selects it; slot 66 may end it there. */
+PORT(0x004786C0)
+void __fastcall list_step(BYTE* self, void* edx_unused, int by)
+{
+    int count = list_count(self);
+    int done = 0;
+
+    (void) edx_unused;
+    if (!count)
+        return;
+    FIELD(self, LIST_FIRST, int) += by;
+    if (FIELD(self, LIST_WRAP, int)) {
+        int first;
+
+        if (FIELD(self, LIST_FIRST, int) < 0)
+            FIELD(self, LIST_FIRST, int) += count;
+        first = FIELD(self, LIST_FIRST, int) % count;
+        FIELD(self, LIST_FIRST, int) = first < 0 ? -first : first;
+    } else {
+        int first = FIELD(self, LIST_FIRST, int);
+        int last = count - FIELD(self, LIST_ROWS, int);
+
+        if (last < first)
+            first = last;
+        FIELD(self, LIST_FIRST, int) = first < 0 ? 0 : first;
+    }
+    if (FIELD(self, LIST_ROWS, int) == 1) {
+        list_select_virtual(self, FIELD(self, LIST_FIRST, int));
+        VIRTUAL(self, 0x108, list_stepped_slot)(self, NULL, &done);
+        if (done)
+            return;
+    }
+    control_redraw(self);
+    game_FUN_00478b50(self);
+}
+
+/* Add `anim` (which it takes a reference on) as a picture entry with `data`. */
+PORT(0x00478330)
+BOOL __fastcall list_add_anim(BYTE* self, void* edx_unused, ui_anim* anim, DWORD data, DWORD b)
+{
+    list_entry entry;
+
+    (void) edx_unused;
+    if (list_count(self) >= FIELD(self, LIST_CAPACITY, int)
+        && !list_reserve(self, NULL, list_count(self) + 1))
+        return FALSE;
+    entry.kind = 2;
+    entry.text = NULL;
+    entry.anim = anim;
+    VIRTUAL(anim, 4, method_0)(anim);
+    entry.b = b;
+    entry.length = anim->frames[0]->width;
+    entry.height = anim->frames[0]->height;
+    entry.text_2 = NULL;
+    entry.runs = NULL;
+    entry.unknown_30 = 0;
+    list_entries(self)[list_count(self)] = entry;
+    list_set_data(self, NULL, list_count(self), data);
+    list_count(self)++;
+    FIELD(self, LIST_ROWS, int) = list_rows_fitting(self);
+    game_FUN_00478b50(self);
+    if (FIELD(self, 0x21C, int))
+        game_FUN_00478890(self, NULL, 1);
+    return TRUE;
+}
+
+/*
+    Remove an entry, the later ones moving up. The original copies one entry past the last into
+    place, and keeps a brush any entry has, which is always the removed one's own, so it never
+    deletes it; this does the same.
+*/
+PORT(0x00478420)
+BOOL __fastcall list_remove(BYTE* self, void* edx_unused, int index)
+{
+    HBRUSH brush;
+    int i;
+
+    (void) edx_unused;
+    if (index >= list_count(self) || index < 0)
+        return FALSE;
+    game_FUN_004a4450(list_entries(self)[index].text, GAMEUI_CPP, 0x1E80);
+    game_FUN_004a4450(list_entries(self)[index].runs, GAMEUI_CPP, 0x1E81);
+    game_FUN_004a4450(list_entries(self)[index].text_2, GAMEUI_CPP, 0x1E82);
+    brush = list_entries(self)[index].brush;
+    if (brush) {
+        for (i = 0; i < list_count(self); i++) {
+            if (list_entries(self)[i].brush == brush)
+                break;
+        }
+        if (i == list_count(self))
+            DeleteObject(brush);
+    }
+    if (index < list_count(self) - 1 && index < list_count(self)) {
+        for (i = index; i < list_count(self); i++)
+            list_entries(self)[i] = list_entries(self)[i + 1];
+    }
+    __stosd((unsigned long*) &list_entries(self)[list_count(self) - 1], 0,
+            sizeof(list_entry) / 4);
+    list_count(self) = list_count(self) - 1 > 0 ? list_count(self) - 1 : 0;
+    if (FIELD(self, LIST_SELECTED, int) == index
+        && FIELD(self, LIST_SELECTED, int) == list_count(self)) {
+        int previous = FIELD(self, LIST_SELECTED, int) - 1;
+
+        list_select_virtual(self, previous > 0 ? previous : 0);
+    }
+    game_FUN_00478b50(self);
+    return TRUE;
+}
+
+/* How its entries sort: a qsort compare, given two entries. */
+PORT(0x00478780)
+void __fastcall list_set_compare(BYTE* self, void* edx_unused, void* compare)
+{
+    (void) edx_unused;
+    FIELD(self, 0x24C, void*) = compare;
+}
+
+/* The default sort: by text, in any case; entries without text last. */
+PORT(0x00478AF0)
+int __cdecl list_compare_text(const list_entry* a, const list_entry* b)
+{
+    if (!a->text)
+        return 1;
+    if (!b->text)
+        return -1;
+    return game_FUN_0053b6e0(a->text, b->text);
+}
+
+PORT(0x00478B20)
+void __fastcall list_set_21c(BYTE* self, void* edx_unused, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0x21C, DWORD) = value;
+}
+
+PORT(0x00478B30)
+void __fastcall list_set_228(BYTE* self, void* edx_unused, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0x228, DWORD) = value;
+}
+
+PORT(0x00478B40)
+void __fastcall list_set_224(BYTE* self, void* edx_unused, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0x224, DWORD) = value;
+}
