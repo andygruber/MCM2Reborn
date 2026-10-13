@@ -212,6 +212,23 @@ typedef int (__fastcall* picture_fill)(void* picture, void* edx_unused, BYTE* pi
 
 #define video_mode() FIELD(FIELD(game_main, 0x10, BYTE*), 0x28, int)
 
+/* The bytes per pixel of a video mode. */
+int   __cdecl game_FUN_00517050(int mode);
+
+/* DirectDraw surface calls, by vtable offset: GetDC, ReleaseDC, Lock and Unlock. */
+typedef HRESULT (__stdcall* surface_get_dc)(void* surface, HDC* dc);
+typedef HRESULT (__stdcall* surface_release_dc)(void* surface, HDC dc);
+typedef HRESULT (__stdcall* surface_lock)(void* surface, RECT* area, void* desc, DWORD flags,
+                                          HANDLE event);
+typedef HRESULT (__stdcall* surface_unlock)(void* surface, RECT* area);
+
+/* What DDSURFACEDESC2 fields the ports read, by offset; the whole is 0x7C bytes. */
+#define DESC_SIZE    0x7C
+#define DESC_HEIGHT  0x08
+#define DESC_WIDTH   0x0C
+#define DESC_PITCH   0x10
+#define DESC_PIXELS  0x24
+
 /* A dialog (ui.c): shown or hidden, and its controls. */
 int  __fastcall dialog_show(void* dialog, void* edx_unused, DWORD shown);
 int  __fastcall dialog_find(void* dialog, void* edx_unused, const char* name);

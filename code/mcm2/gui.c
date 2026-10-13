@@ -1543,28 +1543,12 @@ int __cdecl hires_meter_init(void)
 
 /* ---- Pictures: the screen behind the menus, and the tooltip's box ------------------------- */
 
-/* The bytes per pixel of a video mode. */
-int   __cdecl game_FUN_00517050(int mode);
-
 /* Hide, and show again, every object of a class under the game's scene (0x34). */
 void __fastcall game_FUN_00469cb0(void* scene, void* edx_unused, const char* class_name);
 void __fastcall game_FUN_00469df0(void* scene, void* edx_unused, const char* class_name);
 #define GUICURSOR_CLASS ((const char*) 0x00572488)  /* "GUICursor" */
 #define TOOLTIP_CLASS   ((const char*) 0x00572480)  /* "ToolTip" */
 
-/* DirectDraw surface calls, by vtable offset: GetDC, ReleaseDC, Lock and Unlock. */
-typedef HRESULT (__stdcall* surface_get_dc)(void* surface, HDC* dc);
-typedef HRESULT (__stdcall* surface_release_dc)(void* surface, HDC dc);
-typedef HRESULT (__stdcall* surface_lock)(void* surface, RECT* area, void* desc, DWORD flags,
-                                          HANDLE event);
-typedef HRESULT (__stdcall* surface_unlock)(void* surface, RECT* area);
-
-/* What DDSURFACEDESC2 fields the capture reads, by offset; the whole is 0x7C bytes. */
-#define DESC_SIZE    0x7C
-#define DESC_HEIGHT  0x08
-#define DESC_WIDTH   0x0C
-#define DESC_PITCH   0x10
-#define DESC_PIXELS  0x24
 #define LOCK_FLAGS   0x811          /* DDLOCK_WAIT | DDLOCK_READONLY | DDLOCK_NOSYSLOCK */
 
 /*

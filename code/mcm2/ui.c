@@ -3450,12 +3450,12 @@ typedef struct ui_anim {
     void**    vtable;
     DWORD     unknown_04;
     int       frame;            /* the one showing */
-    DWORD     playing;
+    DWORD     restart;          /* the next step starts it over */
     int       count;
-    DWORD     period;           /* both set by anim_set_period */
-    DWORD     period_left;
-    DWORD     looping;
-    DWORD     elapsed;
+    int       repeats;          /* FOREVER, or how many times it plays */
+    int       repeats_left;
+    int       delay;            /* milliseconds a frame shows */
+    DWORD     last_step;
     DWORD     backwards;
     ui_frame* frames[50];
     DWORD     texture;
@@ -3475,11 +3475,11 @@ ui_anim* __fastcall anim_construct(ui_anim* self, void* edx_unused, DWORD textur
     self->vtable = UIANIM_VTABLE;
     self->frame = 0;
     self->count = 0;
-    self->period = 0;
-    self->period_left = 0;
-    self->elapsed = 0;
-    self->playing = 1;
-    self->looping = 0;
+    self->repeats = 0;
+    self->repeats_left = 0;
+    self->last_step = 0;
+    self->restart = 1;
+    self->delay = 0;
     self->backwards = 0;
     self->unknown_f4 = b;
     __stosd((unsigned long*) self->frames, 0, 50);
@@ -3512,19 +3512,19 @@ ui_anim* __fastcall anim_delete(ui_anim* self, void* edx_unused, BYTE flags)
 void __fastcall anim_restart(ui_anim* self);
 
 PORT(0x00473E50)
-void __fastcall anim_set_period(ui_anim* self, void* edx_unused, DWORD period)
+void __fastcall anim_set_repeats(ui_anim* self, void* edx_unused, int repeats)
 {
     (void) edx_unused;
-    self->period = period;
-    self->period_left = period;
+    self->repeats = repeats;
+    self->repeats_left = repeats;
     anim_restart(self);
 }
 
 PORT(0x00473E70)
-void __fastcall anim_set_looping(ui_anim* self, void* edx_unused, DWORD looping)
+void __fastcall anim_set_delay(ui_anim* self, void* edx_unused, int delay)
 {
     (void) edx_unused;
-    self->looping = looping;
+    self->delay = delay;
 }
 
 /* Back to the first frame, or the last when it plays backwards. */
@@ -3532,13 +3532,13 @@ PORT(0x00473E80)
 void __fastcall anim_restart(ui_anim* self)
 {
     if (self->backwards) {
-        self->elapsed = 0;
-        self->playing = 1;
+        self->last_step = 0;
+        self->restart = 1;
         self->frame = self->count - 1;
     } else {
         self->frame = 0;
-        self->elapsed = 0;
-        self->playing = 1;
+        self->last_step = 0;
+        self->restart = 1;
     }
 }
 
@@ -3555,4 +3555,304 @@ BYTE* __fastcall anim_picture(ui_anim* self)
     ui_frame* frame = self->frames[self->frame];
 
     return frame->is_sound == 1 ? NULL : frame->picture;
+}
+
+/* Add `frame` at the end. FALSE, and not added, once there are 49. */
+PORT(0x00473EE0)
+BOOL __fastcall anim_add(ui_anim* self, void* edx_unused, ui_frame* frame)
+{
+    (void) edx_unused;
+    if (self->count >= 49)
+        return FALSE;
+    self->frames[self->count] = frame;
+    self->count++;
+    return TRUE;
+}
+
+/* The time of the last step of any animation, from timeGetTime. */
+DWORD __cdecl game_FUN_004c41d0(void);
+#define anim_clock (*(DWORD*) 0x00661710)
+
+#define FOREVER 0x7FFF      /* repeats */
+
+/* Wrapped round to the start: whether it goes on, using up a repeat. */
+static BOOL anim_repeat(ui_anim* self)
+{
+    self->restart = 0;
+    if (self->repeats == FOREVER)
+        return TRUE;
+    return self->repeats && --self->repeats_left > 0;
+}
+
+/*
+    The frame to show now: the next one once `delay` milliseconds have passed, or at once after a
+    sound. At the end it starts over while repeats are left, else it stays on the last. Played
+    backwards, the original starts over at `count`, one past the last frame, and so does this.
+*/
+PORT(0x00473F10)
+ui_frame* __fastcall anim_step(ui_anim* self)
+{
+    DWORD now = game_FUN_004c41d0();
+    int passed;
+
+    anim_clock = now;
+    passed = (int) (now - self->last_step);
+    if (passed < 0)
+        passed = -passed;
+    if (passed <= self->delay && self->frames[self->frame]->is_sound != 1)
+        return self->frames[self->frame];
+
+    self->last_step = now;
+    if (self->backwards) {
+        if (!self->restart && self->frame > 0)
+            return self->frames[--self->frame];
+        if (anim_repeat(self))
+            self->frame = self->count;
+    } else {
+        if (!self->restart && self->frame + 1 < self->count)
+            return self->frames[++self->frame];
+        if (anim_repeat(self))
+            self->frame = 0;
+    }
+    return self->frames[self->frame];
+}
+
+void __fastcall game_FUN_004c0e00(void* sound, void* edx_unused, DWORD a, DWORD b, DWORD c);
+
+/* Step, playing each sound frame met on the way; the picture reached. */
+PORT(0x00473FE0)
+BYTE* __fastcall anim_next_picture(ui_anim* self)
+{
+    ui_frame* frame = anim_step(self);
+
+    while (frame->is_sound == 1) {
+        game_FUN_004c0e00(frame->sound, NULL, 1, 0, 0);
+        frame = anim_step(self);
+    }
+    return frame->picture;
+}
+
+/* Add a frame from the file `name`. */
+PORT(0x00474010)
+BOOL __fastcall anim_add_file(ui_anim* self, void* edx_unused, const char* name, BYTE* owner)
+{
+    ui_frame* frame = game_new(sizeof(ui_frame), GAMEUI_CPP, 0x14D1);
+
+    (void) edx_unused;
+    if (frame)
+        frame = frame_construct(frame, NULL, name, self->texture, 0, 0, owner);
+    return anim_add(self, NULL, frame);
+}
+
+/* Add a frame from the resource `name`, or the sound of that name in `sound_bank`. */
+PORT(0x00474090)
+BOOL __fastcall anim_add_resource(ui_anim* self, void* edx_unused, const char* name,
+                                  void* resources, DWORD sound_bank, BYTE* owner)
+{
+    ui_frame* frame = game_new(sizeof(ui_frame), GAMEUI_CPP, 0x14E6);
+
+    (void) edx_unused;
+    if (frame)
+        frame = frame_construct_resource(frame, NULL, name, resources, self->texture, sound_bank,
+                                         0, 0, owner);
+    return anim_add(self, NULL, frame);
+}
+
+/* ---- UIButton: a control drawn from a picture per state --------------------------------------- */
+
+/*
+    A UIControl of type 1 with a picture for each state (0x16C on, as control_set_picture keeps
+    them) and a popup (0x1EC) it opens when released. It is hit only where its picture is not the
+    colour key.
+*/
+#define UIBUTTON_VTABLE ((void**) 0x00557D98)
+#define BTN_POPUP       0x1EC
+
+void __fastcall game_FUN_00478890(void* popup, void* edx_unused, DWORD a);   /* open it */
+
+/* Pictures for the states: normal, under the pointer (also kept for 3), pressed and disabled. */
+PORT(0x00474200)
+int __fastcall button_set_pictures(BYTE* self, void* edx_unused, DWORD normal, DWORD over,
+                                   DWORD pressed, DWORD disabled)
+{
+    (void) edx_unused;
+    FIELD(self, 0x16C, DWORD) = normal;
+    FIELD(self, 0x170, DWORD) = over;
+    FIELD(self, 0x174, DWORD) = pressed;
+    FIELD(self, 0x178, DWORD) = over;
+    FIELD(self, 0x17C, DWORD) = disabled;
+    return control_redraw(self);
+}
+
+PORT(0x00474240)
+int __fastcall button_set_normal(BYTE* self, void* edx_unused, DWORD picture)
+{
+    (void) edx_unused;
+    FIELD(self, 0x16C, DWORD) = picture;
+    return control_redraw(self);
+}
+
+PORT(0x00474260)
+int __fastcall button_set_over(BYTE* self, void* edx_unused, DWORD picture)
+{
+    (void) edx_unused;
+    FIELD(self, 0x170, DWORD) = picture;
+    FIELD(self, 0x178, DWORD) = picture;
+    return control_redraw(self);
+}
+
+PORT(0x00474280)
+int __fastcall button_set_pressed(BYTE* self, void* edx_unused, DWORD picture)
+{
+    (void) edx_unused;
+    FIELD(self, 0x174, DWORD) = picture;
+    return control_redraw(self);
+}
+
+PORT(0x004742A0)
+int __fastcall button_set_disabled(BYTE* self, void* edx_unused, DWORD picture)
+{
+    (void) edx_unused;
+    FIELD(self, 0x17C, DWORD) = picture;
+    return control_redraw(self);
+}
+
+PORT(0x004742C0)
+void __fastcall button_set_popup(BYTE* self, void* edx_unused, void* popup)
+{
+    (void) edx_unused;
+    FIELD(self, BTN_POPUP, void*) = popup;
+}
+
+PORT(0x00474120)
+BYTE* __fastcall button_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                  BYTE* dialog)
+{
+    int i;
+
+    (void) edx_unused;
+    control_construct(self, NULL, 1, a, area, dialog);
+    *(void***) self = UIBUTTON_VTABLE;
+    FIELD(self, BTN_POPUP, void*) = NULL;
+    button_set_pictures(self, NULL, 0, 0, 0, 0);
+    for (i = 0; i < 5; i++)
+        control_set_194(self, NULL, i, 0);
+    return self;
+}
+
+PORT(0x004741F0)
+void __fastcall button_destruct(BYTE* self)
+{
+    *(void***) self = UIBUTTON_VTABLE;
+    control_destruct(self);
+}
+
+PORT(0x004741D0)
+BYTE* __fastcall button_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    button_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Vtable slot 49: control_enable, but enabled again it shows state 0, not the one it had. */
+PORT(0x004742D0)
+void __fastcall button_enable(BYTE* self, void* edx_unused, BOOL enabled)
+{
+    (void) edx_unused;
+    if (FIELD(self, 0x6C, BOOL) == enabled)
+        return;
+    FIELD(self, 0x6C, BOOL) = enabled;
+    if (enabled) {
+        VIRTUAL(self, 0x74, method_1)(self, NULL, 0);
+        control_set_colour(self, NULL, FIELD(self, 0xCC, COLORREF));
+        return;
+    }
+    if (FIELD(self, 0x17C, int)) {
+        FIELD(self, CTL_STATE, DWORD) = FIELD(self, 0x60, DWORD);
+        VIRTUAL(self, 0x74, method_1)(self, NULL, 4);
+    }
+    FIELD(self, 0xCC, COLORREF) = FIELD(self, CTL_COLOUR, COLORREF);
+    control_set_colour(self, NULL, RGB(0x99, 0x99, 0x99));
+}
+
+/*
+    Vtable slot 56: released. Let go of with the first button while pressed, it opens its popup
+    and tells the dialog (event 1); the base class hears unless the dialog took it (`e`). The
+    original leaves the event's `param` and `d` unset, and so does this.
+*/
+PORT(0x00474340)
+int __fastcall button_released(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && !button && FIELD(self, 0x60, int) == 2) {
+        BYTE* dialog;
+        ui_event event;
+
+        event.e = 0;
+        if (FIELD(self, BTN_POPUP, void*))
+            game_FUN_00478890(FIELD(self, BTN_POPUP, void*), NULL, 1);
+        event.a = FIELD(self, 0x74, DWORD);
+        event.type = 1;
+        event.b = (DWORD) control_get_name(self);
+        dialog = FIELD(self, CTL_DIALOG, BYTE*);
+        event.sender = dialog;
+        event.manager = FIELD(self, CTL_MANAGER, gui_manager*);
+        event.c = (DWORD) self;
+        VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, &event);
+        if (event.e)
+            return 1;
+    }
+    return control_released(self, NULL, button, b);
+}
+
+/* Vtable slot 48: the picture for `state`, or for the one showing when it is -1. */
+typedef BYTE* (__fastcall* control_state_picture)(void* control, void* edx_unused, int state);
+
+#define DESC_SOURCE_KEY 0x40        /* ddckCKSrcBlt's low value */
+#define LOCK_WAIT       1           /* DDLOCK_WAIT */
+
+/*
+    Vtable slot 28: whether (x, y) is on the picture showing, scaled from the dialog's size to
+    the picture's (0x9C4, 0x9C8): in its rectangle, and not the colour key. 8-bit pictures are
+    read a byte a pixel, every other depth as 16 bits. FALSE when it cannot be locked.
+*/
+PORT(0x004743F0)
+BOOL __fastcall button_contains(BYTE* self, void* edx_unused, LONG x, LONG y, DWORD unused)
+{
+    int mode = video_mode();
+    RECT area = FIELD(self, CTL_RECT, RECT);
+    BYTE desc[DESC_SIZE];
+    BOOL solid = FALSE;
+    BYTE* dialog;
+    BYTE* picture;
+    void* surface;
+    POINT at;
+    int column, row, pixel;
+
+    (void) edx_unused;
+    (void) unused;
+    at.x = x;
+    at.y = y;
+    if (!PtInRect(&area, at))
+        return FALSE;
+
+    dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    column = (int) ((x - area.left) / (double) FIELD(dialog, 0x9C4, float));
+    row = (int) ((y - area.top) / (double) FIELD(dialog, 0x9C8, float));
+    FIELD(desc, 0, DWORD) = DESC_SIZE;
+    picture = VIRTUAL(self, 0xC0, control_state_picture)(self, NULL, -1);
+    surface = FIELD(picture, 0x70, void*);
+    if (VIRTUAL(surface, 0x64, surface_lock)(surface, NULL, desc, LOCK_WAIT, NULL))
+        return solid;
+
+    pixel = FIELD(desc, DESC_PITCH, int) * row / game_FUN_00517050(mode) + column;
+    if (mode == 8)
+        solid = FIELD(desc, DESC_PIXELS, BYTE*)[pixel] != FIELD(desc, DESC_SOURCE_KEY, BYTE);
+    else
+        solid = FIELD(desc, DESC_PIXELS, WORD*)[pixel] != FIELD(desc, DESC_SOURCE_KEY, WORD);
+    VIRTUAL(surface, 0x80, surface_unlock)(surface, NULL);
+    return solid;
 }
