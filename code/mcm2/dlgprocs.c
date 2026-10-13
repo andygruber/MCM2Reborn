@@ -3979,11 +3979,19 @@ void __cdecl init_timer_b(void)
     game_FUN_004cfdc0((void*) 0x005A1018, NULL, 5000);
 }
 
-/*
-    The runtime's table calls these, which only jump on. The entries for 0x00454B20 and
-    0x00454B70 read as text to the exporter, so the table keeps the originals; they jump to the
-    ports above all the same.
-*/
+/* The runtime's initializer table calls these, which only jump on. */
+PORT(0x00454B20)
+void __cdecl init_vector_zero_entry(void)
+{
+    init_vector_zero();
+}
+
+PORT(0x00454B70)
+void __cdecl init_vector_x_entry(void)
+{
+    init_vector_x();
+}
+
 PORT(0x00454BC0)
 void __cdecl init_vector_y_entry(void)
 {

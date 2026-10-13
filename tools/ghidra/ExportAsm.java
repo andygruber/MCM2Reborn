@@ -1758,6 +1758,32 @@ public class ExportAsm extends GhidraScript {
         return a + 4 <= objEnd && plausibleDataAddr(readDword(a));
     }
 
+    /** Exactly the entry of a function Ghidra found. */
+    boolean isFunctionEntry(long v) {
+        return v >= 0x400000L
+                && currentProgram.getFunctionManager().getFunctionAt(toAddr(v)) != null;
+    }
+
+    /**
+     * An entry of a table of code pointers: it and a neighbour are each exactly a function's
+     * entry.
+     *
+     * The runtime's initializer table (__xc_a, 0x0056C000 on) lists hundreds of functions in
+     * link order, so consecutive entries are often far apart and pointerTableRun's 4 KB step
+     * breaks the run. Where an entry's bytes also read as text - 0x00454B20 is " KE", 0x00454B70
+     * "pKE" - the text rule then won, and the entry stayed a retail address that never reaches
+     * the port. Text whose four bytes land exactly on a function entry, next to more text that
+     * does too, is not something a string table produces.
+     */
+    boolean inCodePointerTable(long a, long start, long initEnd) throws Exception {
+        if (!isFunctionEntry(readDword(a))) {
+            return false;
+        }
+        boolean before = a - 4 >= start && isFunctionEntry(readDword(a - 4));
+        boolean after = a + 8 <= initEnd && isFunctionEntry(readDword(a + 4));
+        return before || after;
+    }
+
     /** A real recovered name, as opposed to one Ghidra invented. */
     boolean isLinkableOrNamed(String name) {
         if (name == null) {
@@ -2145,7 +2171,8 @@ public class ExportAsm extends GhidraScript {
                 // Text gets the strict rule; everything else may reach across one gap.
                 boolean textish = insideString(a) || looksLikeStringData(a);
                 int runLength = pointerTableRun(a, start, initEnd, !textish);
-                boolean inTable = runLength >= (textish ? 8 : 4) || inNamedPointerObject(a);
+                boolean inTable = runLength >= (textish ? 8 : 4) || inNamedPointerObject(a)
+                        || inCodePointerTable(a, start, initEnd);
 
                 // A printf conversion vetoes everything, including the table rule.
                 //
