@@ -5198,7 +5198,7 @@ typedef struct list_entry {
     DWORD     b;
     int       length;           /* of the text */
     int       height;           /* 0x0C: its row's */
-    DWORD     unknown_10;
+    int       order;            /* 0x10: its place before a sort */
     char*     text;             /* 0x14, on the game's heap */
     char*     text_2;           /* 0x18, on the game's heap */
     DWORD     data;             /* 0x1C: the caller's */
@@ -5996,4 +5996,104 @@ BOOL __fastcall list_add_file(BYTE* self, void* edx_unused, const char* name, DW
     if (FIELD(self, 0x21C, int))
         game_FUN_00478890(self, NULL, 1);
     return TRUE;
+}
+
+/*
+    Sorting. The list being sorted is kept on its dialog (0x9BC), and that dialog in a global,
+    for the compare to find; lists of the same group with as many entries are sorted the same
+    way, entries tying in one being ordered by the next.
+*/
+#define sort_dialog    (*(BYTE**) 0x00661750)
+#define sort_list()    FIELD(FIELD(sort_dialog, 0x9BC, BYTE*), 0x218, BYTE*)
+#define LIST_SORTING   0x220
+
+typedef int (__cdecl* list_compare)(const list_entry* a, const list_entry* b);
+#define list_compare_of(l) FIELD(l, 0x24C, list_compare)
+
+void __cdecl game_FUN_00539a96(void* base, size_t count, size_t size,
+                               int (__cdecl* compare)(const void*, const void*));    /* qsort */
+
+/* qsort's compare: the list's own, then each like list's in turn on the entries' first places. */
+PORT(0x00478790)
+int __cdecl list_sort_compare(const list_entry* a, const list_entry* b)
+{
+    int first_a, first_b, result;
+    BYTE* walk;
+    BYTE* other;
+
+    if (!FIELD(sort_dialog, 0x9BC, BYTE*))
+        return 0;
+    result = list_compare_of(sort_list())(a, b);
+    if (result)
+        return result;
+    first_a = a->order;
+    first_b = b->order;
+    walk = control_walk_of(sort_list());
+    while ((other = control_next_alike(sort_list(), NULL, walk)) != NULL) {
+        if (list_count(other) != list_count(sort_list())) {
+            result = -1;
+            break;
+        }
+        result = list_compare_of(other)(&list_entries(other)[first_a], &list_entries(other)[first_b]);
+        if (result)
+            break;
+    }
+    control_walk_end(sort_list(), NULL, walk);
+    return result;
+}
+
+/*
+    Sort the entries, and with them every list of its group with as many, keeping the selection
+    on the same entry. A nested sort (`outer` FALSE) leaves the dialog's sorting list as it is.
+*/
+PORT(0x00478890)
+void __fastcall list_sort(BYTE* self, void* edx_unused, BOOL outer)
+{
+    int selected, i;
+
+    (void) edx_unused;
+    if (outer || !FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x9BC, BYTE*) || !sort_dialog) {
+        FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x9BC, BYTE*) = self;
+        sort_dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    }
+    if (!list_count(self))
+        return;
+    FIELD(self, LIST_SORTING, DWORD) = 1;
+    for (i = 0; i < list_count(self); i++)
+        list_entries(self)[i].order = i;
+    selected = FIELD(self, LIST_SELECTED, int);
+    game_FUN_00539a96(list_entries(self), list_count(self), sizeof(list_entry),
+                      (int (__cdecl*)(const void*, const void*)) list_sort_compare);
+    control_redraw(self);
+
+    if (FIELD(self, 0x7C, int) > 0) {
+        BYTE walk[0x94];
+        BYTE* other;
+
+        walk_begin(walk, NULL, FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_CONTAINER, void*), 1,
+                   UICONTROL_CLASS);
+        for (other = walk_next(walk); other; other = walk_next(walk)) {
+            list_entry* sorted;
+
+            if (FIELD(other, 0x7C, int) != FIELD(self, 0x7C, int) || FIELD(other, CTL_TYPE, int) != 3
+                || other == self || list_count(other) != list_count(self))
+                continue;
+            sorted = game_FUN_004a4410(FIELD(other, LIST_CAPACITY, int) * sizeof(list_entry),
+                                       GAMEUI_CPP, 0x1F87);
+            for (i = 0; i < list_count(self); i++)
+                sorted[i] = list_entries(other)[list_entries(self)[i].order];
+            game_FUN_004a4450(list_entries(other), GAMEUI_CPP, 0x1F8E);
+            list_entries(other) = sorted;
+            control_redraw(other);
+        }
+        walk_end(walk);
+    }
+
+    for (i = 0; i < list_count(self); i++) {
+        if (list_entries(self)[i].order == selected) {
+            list_select_all(self, NULL, i);
+            break;
+        }
+    }
+    FIELD(self, LIST_SORTING, DWORD) = 0;
 }
