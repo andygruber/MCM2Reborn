@@ -5189,3 +5189,363 @@ void __fastcall slider_drag(BYTE* self, void* edx_unused, DWORD button, const PO
         control_walk_end(self, NULL, walk);
     }
 }
+
+/* ---- UIList: a scrolling list of entries ------------------------------------------------------- */
+
+/* A list entry, 56 bytes: text (kind 1) or a picture, with a value and a background brush. */
+typedef struct list_entry {
+    int      kind;
+    DWORD    unknown_04;
+    DWORD    unknown_08;
+    DWORD    value;             /* 0x0C */
+    DWORD    unknown_10;
+    char*    text;              /* 0x14, on the game's heap */
+    char*    text_2;            /* 0x18, on the game's heap */
+    DWORD    data;              /* 0x1C: the caller's */
+    ui_anim* anim;              /* 0x20 */
+    char*    text_3;            /* 0x24, on the game's heap */
+    DWORD    unknown_28;
+    DWORD    unknown_2c;
+    DWORD    unknown_30;
+    HBRUSH   brush;             /* 0x34, possibly shared with other entries */
+} list_entry;
+
+_Static_assert(sizeof(list_entry) == 0x38, "a list entry is 56 bytes");
+
+#define UILIST_VTABLE   ((void**) 0x005581B8)
+#define LIST_COUNT      0x1EC
+#define LIST_FIRST      0x1F0       /* the first entry showing */
+#define LIST_SELECTED   0x1F4
+#define LIST_CAPACITY   0x1FC
+#define LIST_ROWS       0x200       /* the entries that show at once */
+#define LIST_HIGHLIGHT  0x20C       /* HBRUSH behind the selection, or none */
+#define LIST_BRUSH_2    0x210
+#define LIST_ENTRIES    0x214       /* list_entry[LIST_CAPACITY], on the game's heap */
+#define NO_COLOUR       0xFF000000
+
+#define list_entries(l) FIELD(l, LIST_ENTRIES, list_entry*)
+#define list_count(l)   FIELD(l, LIST_COUNT, int)
+
+/* Vtable slot 65: select an entry. */
+typedef int (__fastcall* list_select_slot)(void* list, void* edx_unused, int index);
+#define list_select_virtual(l, i) VIRTUAL(l, 0x104, list_select_slot)(l, NULL, i)
+
+void __fastcall game_FUN_00478b50(BYTE* self);                    /* tell its sliders */
+int  __cdecl    game_FUN_00478af0(const void* a, const void* b);  /* how its entries sort */
+
+PORT(0x00476C00)
+BYTE* __fastcall list_construct(BYTE* self, void* edx_unused, DWORD a, int capacity,
+                                const RECT* area, BYTE* dialog)
+{
+    LONG height;
+
+    (void) edx_unused;
+    control_construct(self, NULL, 3, a, area, dialog);
+    *(void***) self = UILIST_VTABLE;
+    FIELD(self, LIST_BRUSH_2, HBRUSH) = NULL;
+    FIELD(self, LIST_HIGHLIGHT, HBRUSH) = NULL;
+    FIELD(self, LIST_SELECTED, int) = 0;
+    FIELD(self, LIST_CAPACITY, int) = capacity;
+    FIELD(self, 0x208, COLORREF) = RGB(0xFF, 0xFF, 0xFF);
+    list_entries(self) = game_FUN_004a4410(capacity * sizeof(list_entry), GAMEUI_CPP, 0x1B50);
+    FIELD(self, 0x24C, void*) = (void*) game_FUN_00478af0;
+    FIELD(self, 0x218, BYTE*) = self;
+    FIELD(self, 0x21C, DWORD) = 0;
+    FIELD(self, 0x220, DWORD) = 0;
+    FIELD(self, 0x224, DWORD) = 1;
+    FIELD(self, 0x228, DWORD) = 1;
+    FIELD(self, 0x234, DWORD) = 0;
+    FIELD(self, 0x230, DWORD) = 0;
+    FIELD(self, 0x22C, DWORD) = 0;
+    FIELD(self, 0x23C, DWORD) = 0;
+    FIELD(self, 0x240, DWORD) = 0;
+    list_count(self) = 0;
+    FIELD(self, LIST_FIRST, int) = 0;
+    FIELD(self, 0x204, DWORD) = 0;
+    __stosb((BYTE*) list_entries(self), 0, FIELD(self, LIST_CAPACITY, int) * sizeof(list_entry));
+    FIELD(self, 0x244, DWORD) = 1;
+
+    /* As many rows as its text's height (or the dialog's) fits, at least one. */
+    height = FIELD(self, 0x160, LONG);
+    if (!height && (!dialog || !FIELD(dialog, 0xDC, LONG))) {
+        FIELD(self, LIST_ROWS, int) = 1;
+    } else {
+        int rows;
+
+        if (!height)
+            height = FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0xDC, LONG);
+        rows = (FIELD(self, CTL_RECT, RECT).bottom - FIELD(self, CTL_RECT, RECT).top) / height;
+        FIELD(self, LIST_ROWS, int) = rows < 1 ? 1 : rows;
+    }
+    return self;
+}
+
+void __fastcall list_commit(BYTE* self, void* edx_unused, BOOL out);
+
+/* Entries share brushes; one is deleted once, and cleared from every entry that has it. */
+PORT(0x00476DB0)
+void __fastcall list_destruct(BYTE* self)
+{
+    int i;
+
+    *(void***) self = UILIST_VTABLE;
+    if (FIELD(self, EDIT_BOUND, int*))
+        list_commit(self, NULL, TRUE);
+    if (FIELD(self, LIST_HIGHLIGHT, HBRUSH))
+        DeleteObject(FIELD(self, LIST_HIGHLIGHT, HBRUSH));
+    if (FIELD(self, LIST_BRUSH_2, HBRUSH))
+        DeleteObject(FIELD(self, LIST_BRUSH_2, HBRUSH));
+    for (i = 0; i < list_count(self); i++) {
+        list_entry* entry = &list_entries(self)[i];
+
+        game_FUN_004a4450(entry->text, GAMEUI_CPP, 0x1B79);
+        game_FUN_004a4450(list_entries(self)[i].text_2, GAMEUI_CPP, 0x1B7A);
+        game_FUN_004a4450(list_entries(self)[i].text_3, GAMEUI_CPP, 0x1B7B);
+        entry = &list_entries(self)[i];
+        if (entry->anim && !entry->anim->unknown_f4)
+            object_destroy(entry->anim);
+        if (list_entries(self)[i].brush) {
+            HBRUSH brush = list_entries(self)[i].brush;
+            int j;
+
+            DeleteObject(brush);
+            for (j = 0; j < list_count(self); j++) {
+                if (list_entries(self)[j].brush == list_entries(self)[i].brush)
+                    list_entries(self)[j].brush = NULL;
+            }
+        }
+    }
+    game_FUN_004a4450(list_entries(self), GAMEUI_CPP, 0x1B88);
+    control_destruct(self);
+}
+
+PORT(0x00476D90)
+BYTE* __fastcall list_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    list_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Vtable slot 27: step every entry's animation. */
+PORT(0x00476F30)
+void __fastcall list_animate(BYTE* self)
+{
+    int i;
+
+    for (i = 0; i < list_count(self); i++) {
+        if (list_entries(self)[i].anim)
+            anim_step(list_entries(self)[i].anim);
+    }
+}
+
+/* Show entries from `first`, as far as the list fills; with one row that selects it too. */
+PORT(0x004777F0)
+BOOL __fastcall list_scroll(BYTE* self, void* edx_unused, int first, BOOL tell)
+{
+    int last = list_count(self) - FIELD(self, LIST_ROWS, int);
+
+    (void) edx_unused;
+    if (first < last)
+        last = first;
+    FIELD(self, LIST_FIRST, int) = last < 0 ? 0 : last;
+    if (FIELD(self, LIST_ROWS, int) == 1)
+        list_select_virtual(self, FIELD(self, LIST_FIRST, int));
+    control_redraw(self);
+    if (tell)
+        game_FUN_00478b50(self);
+    return TRUE;
+}
+
+/* An entry's data: the selection's when `index` is -1; 0 with nothing selected. */
+PORT(0x00477860)
+DWORD __fastcall list_data(BYTE* self, void* edx_unused, int index)
+{
+    (void) edx_unused;
+    if (index == -1) {
+        index = FIELD(self, LIST_SELECTED, int);
+        if (index == -1)
+            return 0;
+    }
+    return list_entries(self)[index].data;
+}
+
+/* The entry with `data`, or -1. */
+PORT(0x00477890)
+int __fastcall list_find_data(BYTE* self, void* edx_unused, DWORD data)
+{
+    int i;
+
+    (void) edx_unused;
+    for (i = 0; i < list_count(self); i++) {
+        if (list_entries(self)[i].data == data)
+            return i;
+    }
+    return -1;
+}
+
+PORT(0x004778C0)
+void __fastcall list_set_data(BYTE* self, void* edx_unused, int index, DWORD data)
+{
+    (void) edx_unused;
+    list_entries(self)[index].data = data;
+}
+
+/* The selected entry, or -1 when the list is empty. */
+PORT(0x004778E0)
+int __fastcall list_selected(BYTE* self)
+{
+    return list_count(self) > 0 ? FIELD(self, LIST_SELECTED, int) : -1;
+}
+
+PORT(0x00477900)
+int __fastcall list_kind(BYTE* self, void* edx_unused, int index)
+{
+    (void) edx_unused;
+    if (list_count(self) && index > -1 && index < list_count(self))
+        return list_entries(self)[index].kind;
+    return 0;
+}
+
+PORT(0x00477930)
+DWORD __fastcall list_value(BYTE* self, void* edx_unused, int index)
+{
+    (void) edx_unused;
+    if (list_count(self) && index > -1 && index < list_count(self))
+        return list_entries(self)[index].value;
+    return 0;
+}
+
+/*
+    Vtable slot 65: select `index` (only 0 in an empty list), scrolling as little as shows it.
+*/
+PORT(0x00477970)
+int __fastcall list_select(BYTE* self, void* edx_unused, int index)
+{
+    int count = list_count(self);
+    int first = FIELD(self, LIST_FIRST, int);
+
+    (void) edx_unused;
+    if (!(count && index < count && index >= 0) && (count || index))
+        return 1;
+    FIELD(self, LIST_SELECTED, int) = index;
+    if (index >= first) {
+        int last = FIELD(self, LIST_ROWS, int) + first - 1;
+
+        if (last < 0)
+            last = 0;
+        if (index > last) {
+            first = index - FIELD(self, LIST_ROWS, int) + 1;
+            FIELD(self, LIST_FIRST, int) = first < 0 ? 0 : first;
+        }
+    } else {
+        FIELD(self, LIST_FIRST, int) = index;
+    }
+    control_redraw(self);
+    return 1;
+}
+
+/* Select `index` here and in every list like it on the dialog, and tell its sliders. */
+PORT(0x004779F0)
+int __fastcall list_select_all(BYTE* self, void* edx_unused, int index)
+{
+    int result = list_select_virtual(self, index);
+
+    (void) edx_unused;
+    game_FUN_00478b50(self);
+    if (FIELD(self, CTL_DIALOG, BYTE*)) {
+        BYTE* walk = control_walk_of(self);
+        BYTE* other;
+
+        while ((other = control_next_alike(self, NULL, walk)) != NULL)
+            list_select_virtual(other, index);
+        control_walk_end(self, NULL, walk);
+    }
+    return result;
+}
+
+/* Select the text entry reading `text` (in any case). FALSE when there is none. */
+PORT(0x00477A60)
+int __fastcall list_select_text(BYTE* self, void* edx_unused, const char* text)
+{
+    int i;
+
+    (void) edx_unused;
+    for (i = 0; i < list_count(self); i++) {
+        list_entry* entry = &list_entries(self)[i];
+
+        if (entry->kind == 1 && !game_FUN_0053b6e0(text, entry->text))
+            return list_select_all(self, NULL, i);
+    }
+    return 0;
+}
+
+/* Select the entry with `data`. FALSE when there is none. */
+PORT(0x00477AC0)
+int __fastcall list_select_data(BYTE* self, void* edx_unused, DWORD data)
+{
+    int i;
+
+    (void) edx_unused;
+    for (i = 0; i < list_count(self); i++) {
+        if (list_data(self, NULL, i) == data)
+            return list_select_all(self, NULL, i);
+    }
+    return 0;
+}
+
+/* Vtable slot 59: copy the selection out to the bound int, or (`out` FALSE) select from it. */
+PORT(0x00476F70)
+void __fastcall list_commit(BYTE* self, void* edx_unused, BOOL out)
+{
+    (void) edx_unused;
+    if (out) {
+        *FIELD(self, EDIT_BOUND, int*) = list_selected(self);
+        return;
+    }
+    FIELD(self, 0x23C, DWORD) = 0;
+    list_select_all(self, NULL, *FIELD(self, EDIT_BOUND, int*));
+}
+
+PORT(0x00477B10)
+int __fastcall list_set_208(BYTE* self, void* edx_unused, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0x208, DWORD) = value;
+    return control_redraw(self);
+}
+
+/*
+    A background colour: behind the selection (`index` -1) or behind one entry; NO_COLOUR for
+    none. An entry's old brush is kept when any entry has it, and the entry itself always does,
+    so the original never deletes it; nor does this.
+*/
+PORT(0x00477B30)
+int __fastcall list_set_colour(BYTE* self, void* edx_unused, COLORREF colour, int index)
+{
+    (void) edx_unused;
+    if (index == -1) {
+        if (FIELD(self, LIST_HIGHLIGHT, HBRUSH))
+            DeleteObject(FIELD(self, LIST_HIGHLIGHT, HBRUSH));
+        FIELD(self, LIST_HIGHLIGHT, HBRUSH) = colour != NO_COLOUR ? CreateSolidBrush(colour) : NULL;
+        return control_redraw(self);
+    }
+    if (index < list_count(self)) {
+        HBRUSH old = list_entries(self)[index].brush;
+
+        if (old) {
+            int i;
+
+            for (i = 0; i < list_count(self); i++) {
+                if (list_entries(self)[i].brush == old)
+                    break;
+            }
+            if (i == list_count(self))
+                DeleteObject(old);
+        }
+        list_entries(self)[index].brush = colour == NO_COLOUR ? NULL : CreateSolidBrush(colour);
+    }
+    return control_redraw(self);
+}
