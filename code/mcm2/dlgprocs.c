@@ -1516,7 +1516,7 @@ void __fastcall track_choose_set(BYTE* self)
 */
 typedef BOOL (__fastcall* record_add)(BYTE* self, void* edx_unused, const char* path);
 
-BOOL __fastcall game_FUN_00455640(BYTE* self, void* edx_unused, const char* path);  /* a ghost */
+BOOL __fastcall ghost_record_add(BYTE* self, void* edx_unused, const char* path);
 BOOL __fastcall game_FUN_00456040(BYTE* self, void* edx_unused, const char* path);  /* a replay */
 
 #define LIST_RIDER  NAME(0x00570120)    /* "LstRider" */
@@ -1524,6 +1524,95 @@ BOOL __fastcall game_FUN_00456040(BYTE* self, void* edx_unused, const char* path
 #define LIST_LENGTH NAME(0x00570114)    /* "LstLength" */
 #define LIST_DESC   NAME(0x005700CC)    /* "LstDesc" */
 #define START       NAME(0x0056F8C4)    /* "Start" */
+
+/*
+    The record screens' rows read the race record's description (0x10), time (0x30, float),
+    track (0x3C, and its file name at 0x6A) and rider (0x229). The track's own name comes from
+    its scn file through the game's resources (0x574).
+*/
+#define RECORD_DESC         0x10
+#define RECORD_RUN_TIME     0x30
+#define RECORD_TRACK_ID     0x3C
+#define RECORD_TRACK_FILE   0x6A
+#define RECORD_RIDER_NAME   0x229
+#define NO_NAME             NAME(0x0057012C)    /* "no name": a track the scn file leaves unnamed */
+
+void __fastcall game_FUN_00529090(char* profile, void* edx_unused, DWORD folder, const char* file,
+                                  const char* kind, char* path);   /* a track file's path */
+void __fastcall game_FUN_004ee910(BYTE* resources, void* edx_unused, const char* path);
+void __fastcall game_FUN_004eeda0(BYTE* resources, void* edx_unused, char* text, const char* file,
+                                  DWORD a, const char* kind, DWORD b, DWORD c);
+void __cdecl    game_FUN_00489b60(char* text, float seconds);       /* a time, as text */
+
+/* Read the ghost at `path`; one with a time is kept and listed. TRUE when it was. */
+PORT(0x00455640)
+BOOL __fastcall ghost_record_add(BYTE* self, void* edx_unused, const char* path)
+{
+    char text[0x80];
+    char scene_name[0x40];
+    char env_path[0x104];
+    BYTE record[RECORD_SIZE];
+    BOOL added = FALSE;
+    void* file;
+
+    (void) edx_unused;
+    file = game_FUN_0053a35b(path, NAME(0x0056C66C));                          /* "rb" */
+    if (!file)
+        return FALSE;
+    if (game_FUN_0053a5d5(record, RECORD_SIZE, 1, file)
+        && FIELD(record, RECORD_RUN_TIME, float) > 0.0f) {
+        int count = FIELD(self, 0x7F5C, int);
+        BYTE* tracks;
+        BYTE* riders;
+        BYTE* lengths;
+        BYTE* descriptions;
+        char** paths;
+        size_t length;
+
+        FIELD(self, 0x7F58, BYTE*) = ui_realloc(FIELD(self, 0x7F58, BYTE*),
+                                                (count + 1) * RECORD_SIZE);
+        __movsd((unsigned long*) (FIELD(self, 0x7F58, BYTE*) + count * RECORD_SIZE),
+                (const unsigned long*) record, RECORD_SIZE / 4);
+        FIELD(self, 0x7F5C, int)++;
+
+        paths = ui_realloc(FIELD(self, GHOST_PATHS, char**),
+                           (FIELD(self, GHOST_COUNT, int) + 1) * sizeof(char*));
+        FIELD(self, GHOST_PATHS, char**) = paths;
+        paths[FIELD(self, GHOST_COUNT, int)] = game_FUN_004a4410(text_length(path) + 1,
+                                                                DLGPROCS_CPP, 0x11C5);
+        text_copy(paths[FIELD(self, GHOST_COUNT, int)], path);
+        FIELD(self, GHOST_COUNT, int)++;
+
+        tracks = dialog_find_control(self, NULL, LIST_TRACK, 3);
+        riders = dialog_find_control(self, NULL, LIST_RIDER, 3);
+        lengths = dialog_find_control(self, NULL, LIST_LENGTH, 3);
+        descriptions = dialog_find_control(self, NULL, LIST_DESC, 3);
+
+        game_FUN_00529730(game_profile, NULL, FIELD(record, RECORD_TRACK_ID, DWORD));
+        game_FUN_00529090(game_profile, NULL, FIELD(game_main, 0xC18, DWORD),
+                          (const char*) record + RECORD_TRACK_FILE, NAME(0x00570138), env_path);
+        game_FUN_004ee910(FIELD(game_main, 0x574, BYTE*), NULL, env_path);       /* "env" */
+        list_add_text(riders, NULL, (const char*) record + RECORD_RIDER_NAME, 0, 0);
+
+        game_FUN_004eeda0(FIELD(game_main, 0x574, BYTE*), NULL, scene_name,
+                          (const char*) record + RECORD_TRACK_FILE, 0, NAME(0x00570134), 0, 0);
+        length = text_length(scene_name);                                       /* "scn" */
+        if ((int) length > 0x7F)
+            length = 0x7F;
+        game__strncpy(text, scene_name, length);
+        text[length] = 0;
+        if (!game_FUN_0053b6e0(text, NO_NAME))
+            game_FUN_00526fc0(game_main, NULL, 0x143B, text, sizeof text);
+        list_add_text(tracks, NULL, text, FIELD(self, 0x7F5C, int) - 1, 0);
+
+        game_FUN_00489b60(text, FIELD(record, RECORD_RUN_TIME, float));
+        list_add_text(lengths, NULL, text, 0, 0);
+        list_add_text(descriptions, NULL, (const char*) record + RECORD_DESC, 0, 0);
+        added = TRUE;
+    }
+    game_FUN_0053a2ad(file);
+    return added;
+}
 
 static void records_list(BYTE* self, const char* pattern, record_add add)
 {
@@ -1557,7 +1646,7 @@ void __fastcall ghost_records_fill(BYTE* self)
     list_clear_named(self, LIST_RIDER);
     list_clear_named(self, LIST_LENGTH);
     list_clear_named(self, LIST_DESC);
-    records_list(self, NAME(0x0056FB6C), game_FUN_00455640);                 /* Record\*.gho */
+    records_list(self, NAME(0x0056FB6C), ghost_record_add);                  /* Record\*.gho */
 }
 
 PORT(0x00455E60)

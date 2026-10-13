@@ -110,7 +110,9 @@ def game_symbols():
 
 # Compiler helpers the compiled code calls, bound to the game's own copies. The game's __ftol is
 # MSVC 6's: the value in ST0, the result in EDX:EAX, ST0 popped, which is what __ftol2 is too.
-COMPILER_HELPERS = {"__ftol2": "__ftol", "__ftol2_sse": "__ftol"}
+# 0x0053B540 is its _chkstk, unnamed in the export: the frame's size in EAX, each page probed,
+# ESP moved below them - the contract a frame over 4 KB calls __chkstk with.
+COMPILER_HELPERS = {"__ftol2": "__ftol", "__ftol2_sse": "__ftol", "__chkstk": "FUN_0053b540"}
 
 
 def ported_names():
