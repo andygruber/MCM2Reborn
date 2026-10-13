@@ -2639,8 +2639,8 @@ static void sp_pages_store(BYTE* self, int count)
     }
 }
 
-/* OptBase.dtm over the screen, on its page `page` (0 the options, 1 the joystick). */
-static void sp_open_options(BYTE* self, int line, DWORD page)
+/* OptBase.dtm over `parent`, on its page `page` (0 the options, 1 the joystick, 2 the bike). */
+static void options_open(BYTE* self, BYTE* parent, int line, DWORD page)
 {
     BYTE* options = game_new(0x7F70, DLGPROCS_CPP, line);
 
@@ -2648,7 +2648,7 @@ static void sp_open_options(BYTE* self, int line, DWORD page)
         dialog_construct(options, NULL, 1, NAME(0x0056F690));             /* OptBase.dtm */
         *(void**) options = (void*) 0x00556BD0;
     }
-    gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, options, 0, 2, 0, self, page, 0, 1);
+    gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, options, 0, 2, 0, parent, page, 0, 1);
 }
 
 /*
@@ -2719,9 +2719,9 @@ void __fastcall sp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
         } else if (clicked(event, SP_TAB_RACE_INFO)) {
             sp_show_page(self, NULL, 2);
         } else if (clicked(event, SP_OPTIONS)) {
-            sp_open_options(self, 0x518, 0);
+            options_open(self, self, 0x518, 0);
         } else if (clicked(event, SP_JOYSTICK)) {
-            sp_open_options(self, 0x51B, 1);
+            options_open(self, self, 0x51B, 1);
         } else if (clicked(event, HELP)) {
             game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
         }
@@ -3576,4 +3576,387 @@ PORT(0x00456B80)
 void __cdecl init_timer_b_entry(void)
 {
     init_timer_b();
+}
+
+/* ---- Single player: the bike and rider page ---- */
+
+/*
+    The bike and rider page (SPBikeR.dtm, vtable 0x00556DEC) shows the session's rider and bike
+    models (0x46C, 0x470) through its camera (0x468), circling the session's point (0x474).
+*/
+#define BR_POSITION      0x7F58     /* vector3: the camera */
+#define BR_TARGET        0x7F64     /* vector3: what it looks at */
+#define BR_DISTANCE      0x7F70     /* float: how far it circles */
+#define BR_SLOT          0x7F74     /* the page's background slot */
+#define BR_MANUAL        0x7F78     /* the mouse turns it (ChkAutoRotate off) */
+#define BR_HELD          0x7F7C     /* the mouse button is down (hold_release clears it) */
+#define BR_IDLING        0x7F80     /* the rider is playing WaitR */
+#define BR_BIKE_CHANGED  0x7F84
+#define BR_RIDER_CHANGED 0x7F88
+#define BR_VIEW          0x7F8C     /* RECT: where the models are drawn */
+
+#define session_camera FIELD(game_session, 0x468, BYTE*)
+#define session_rider  FIELD(game_session, 0x46C, BYTE*)
+#define session_bike   FIELD(game_session, 0x470, BYTE*)
+#define session_centre FIELD(game_session, 0x474, vector3)
+
+#define LIST_BIKES        NAME(0x0056FBCC)    /* "DDLBikes" */
+#define LIST_RIDERS       NAME(0x0056FBC0)    /* "DDLRiders" */
+#define LIST_ENGINE_SIZE  NAME(0x0056FC38)    /* "DDLEngineSize" */
+#define TEXT_ENGINE_SIZE  NAME(0x0056FC84)    /* "TxtEngineSize" */
+#define EDIT_PLATE        NAME(0x0056FBD8)    /* "EditPlateNumber" */
+#define CHECK_AUTO_ROTATE NAME(0x0056FC48)    /* "ChkAutoRotate" */
+
+#define engine_sizes    ((const int*) 0x00572BEC)   /* 125, 250, 400, 500, 600 */
+#define TURN_PER_PIXEL  0.015707964f                /* pi/200 */
+#define TURN_PER_SECOND 0.39269908f                 /* pi/8 */
+#define EVENT_EDIT_DONE 10
+
+int   __cdecl    game__rand(void);
+void  __cdecl    game_FUN_0053a27e(unsigned seed);                         /* srand */
+DWORD __cdecl    game_FUN_004c41d0(void);                                  /* the time */
+float __cdecl    game_FUN_00461ac0(float value);                           /* a fast square root */
+void* __stdcall  D3DRMVectorRotate(vector3* out, const vector3* v, const vector3* axis,
+                                   float angle);
+
+/* The session's camera: its place (each pointer may be NULL), where it looks, its viewport. */
+void __fastcall game_FUN_0042f8d0(BYTE* camera, void* edx_unused, const vector3* position,
+                                  const void* a, const void* b, const void* c, const float* fov);
+typedef int (__fastcall* camera_look_at)(void* camera, void* edx_unused, vector3 target);
+void __fastcall game_FUN_004300b0(BYTE* camera, void* edx_unused, int x, int y, int width,
+                                  int height);
+typedef int (__fastcall* model_step)(void* model, void* edx_unused, float seconds, DWORD a,
+                                     DWORD b);
+void __fastcall game_FUN_004aa170(BYTE* model, void* edx_unused, const char* animation);
+void __fastcall game_FUN_0049a9a0(BYTE* session, void* edx_unused, BYTE* dialog);  /* models in */
+void __fastcall game_FUN_004eda80(BYTE* screen, void* edx_unused, BYTE* camera);
+
+/* Equal as `test ah, 40h` tests it (C3 set): unordered counts too. */
+static BOOL x87_equal(double a, double b)
+{
+    return !(a < b) && !(a > b);
+}
+
+/* An engine size's class (0 to 4), as the game rounds it; 1 when it falls between. */
+static int engine_class(int cc)
+{
+    int i;
+
+    if (cc <= engine_sizes[0])
+        return 0;
+    if (cc >= engine_sizes[4])
+        return 4;
+    for (i = 1; i < 4; i++) {
+        if (cc > engine_sizes[i - 1] && cc < engine_sizes[i + 1])
+            return i;
+    }
+    return 1;
+}
+
+/* The class's handling, from the session (rider kinds 0-2) or the game's own table. */
+static void engine_class_apply(int size_class)
+{
+    int kind;
+    int i;
+
+    FIELD(game_main, 0x15A0, DWORD) = FIELD(game_session, 0x2FC + size_class * 4, DWORD);
+    FIELD(game_main, 0x15A4, DWORD) = FIELD(game_session, 0x310 + size_class * 4, DWORD);
+    FIELD(game_main, 0x15A8, DWORD) = FIELD(game_session, 0x414 + size_class * 4, DWORD);
+    FIELD(game_main, 0x1558, DWORD) = FIELD(game_session, 0x428 + size_class * 4, DWORD);
+    kind = FIELD(game_main, 0xF84 + size_class * 4, int);
+    for (i = 0; i < 11; i++) {
+        int index = (size_class * 3 + kind) * 11 + i;
+
+        FIELD(game_main, 0x1574 + i * 4, DWORD) = kind < 3
+            ? FIELD(game_session, 0x68 + index * 4, DWORD)
+            : FIELD(game_main, 0x15E4 + index * 4, DWORD);
+    }
+}
+
+/* A player's model: its virtual base (through the vbtable at +4) hides (slot 4) or shows (5). */
+static void model_show(BYTE* player, BOOL shown)
+{
+    BYTE* model = FIELD(player, 0xC0, BYTE*);
+    BYTE* base = model + 4 + FIELD(FIELD(model, 4, BYTE*), 4, int);
+
+    VIRTUAL(base, shown ? 0x14 : 0x10, method_0)(base);
+}
+
+static void engine_size_show(BYTE* self, BYTE* list, BOOL shown)
+{
+    control_show(list, NULL, shown, TRUE);
+    control_show(dialog_find_control(self, NULL, TEXT_ENGINE_SIZE, 0), NULL, shown, TRUE);
+    if (FIELD(self, 0x110, BYTE*))
+        background_invalidate(FIELD(self, 0x110, BYTE*));
+}
+
+/*
+    The bike picked in DDLBikes: only its maker's model shows, its engine size (chosen in
+    DDLEngineSize where the bike allows, 0x88) becomes the game's, a new class brings its
+    handling, and the plate number is shown again.
+*/
+__declspec(noinline) void __fastcall bike_choose(BYTE* self);
+
+PORT(0x00450F00)
+void __fastcall bike_choose(BYTE* self)
+{
+    BYTE* list = combo_list(self, LIST_BIKES);
+    BYTE* bike = FIELD(game_session, 0x50, BYTE*) + list_data(list, NULL, -1) * BIKE_SIZE;
+    BYTE* maker = session_players + FIELD(bike, 0, int) * RIDER_SIZE;
+    BYTE* engine;
+    char number[12];
+    int old_class;
+    int new_class;
+    int i;
+
+    for (i = 0; i < FIELD(game_session, 0x4C, int); i++)
+        model_show(session_players + i * RIDER_SIZE, FALSE);
+    model_show(maker, TRUE);
+    FIELD(self, BR_BIKE_CHANGED, int) = 1;
+
+    engine = dialog_find_control(self, NULL, LIST_ENGINE_SIZE, 0);
+    if (FIELD(bike, 0x88, DWORD)) {
+        if (!FIELD(engine, 0x70, DWORD))
+            engine_size_show(self, engine, TRUE);
+    } else if (FIELD(engine, 0x70, DWORD)) {
+        engine_size_show(self, engine, FALSE);
+    }
+
+    FIELD(game_main, 0x1FB0, DWORD) = list_data(list, NULL, -1);
+    if (FIELD(bike, 0x88, DWORD)) {
+        int size = (int) list_data(combo_list(self, LIST_ENGINE_SIZE), NULL, -1);
+
+        old_class = engine_class(FIELD(game_main, 0x1550, int));
+        FIELD(game_main, 0x1550, int) = engine_sizes[size];
+        FIELD(game_main, 0x1554, DWORD) = size == 2 || size == 4;       /* the 4-strokes */
+    } else {
+        bike = FIELD(game_session, 0x50, BYTE*) + list_data(list, NULL, -1) * BIKE_SIZE;
+        old_class = engine_class(FIELD(game_main, 0x1550, int));
+        FIELD(game_main, 0x1550, DWORD) = FIELD(bike, 0x8C, DWORD);
+        FIELD(game_main, 0x1554, DWORD) = FIELD(bike, 0x90, DWORD);
+    }
+    new_class = engine_class(FIELD(game_main, 0x1550, int));
+    if (new_class != old_class)
+        engine_class_apply(new_class);
+
+    list = dialog_find_control(self, NULL, EDIT_PLATE, 11);
+    game_FUN_0054aaa5(FIELD(game_main, 0x2144, int), number, 10);
+    edit_set_text(list, NULL, number);
+}
+
+static void bike_rider_open(BYTE* self)
+{
+    vector3* position = &FIELD(self, BR_POSITION, vector3);
+    vector3* target = &FIELD(self, BR_TARGET, vector3);
+    RECT* view = &FIELD(self, BR_VIEW, RECT);
+    float fov = 50.0f;
+    double dx, dy, dz;
+    float squared;
+    BYTE* list;
+    BYTE* camera;
+
+    FIELD(self, BR_MANUAL, int) = 0;
+    option_select(dialog_find_control(self, NULL, CHECK_AUTO_ROTATE, 2), NULL, 1);
+    FIELD(game_main, 0x614, DWORD) = 0;
+    FIELD(self, BR_RIDER_CHANGED, int) = 1;
+    FIELD(self, BR_BIKE_CHANGED, int) = 1;
+    choices_fill(self);
+
+    list = combo_list(self, LIST_ENGINE_SIZE);
+    list_clear(list);
+    list_add_text(list, NULL, NAME(0x0056FC28), engine_class(125), 0);     /* "125cc 2-stroke" */
+    list_add_text(list, NULL, NAME(0x0056FC18), engine_class(250), 0);     /* "250cc 2-stroke" */
+    list_add_text(list, NULL, NAME(0x0056FC08), engine_class(400), 0);     /* "400cc 4-stroke" */
+    list_add_text(list, NULL, NAME(0x0056FBF8), engine_class(500), 0);     /* "500cc 2-stroke" */
+    list_add_text(list, NULL, NAME(0x0056FBE8), engine_class(600), 0);     /* "600cc 4-stroke" */
+    list_select_data(list, NULL, engine_class(FIELD(game_main, 0x1550, int)));
+    edit_set_allowed(dialog_find_control(self, NULL, EDIT_PLATE, 11), NULL, DIGITS);
+    game_FUN_0049a9a0(game_session, NULL, self);
+
+    view->left = 91;
+    view->right = 543;
+    view->top = 108;
+    view->bottom = 328;
+    *position = vector_zero;
+    position->z = 15.0f;
+    position->y = 1.0f;
+    *target = session_centre;
+    target->y = target->y + 3.0f;
+    game_FUN_0042f8d0(session_camera, NULL, position, NULL, NULL, NULL, &fov);
+    camera = session_camera;
+    VIRTUAL(camera, 0x74, camera_look_at)(camera, NULL, *target);
+    game_FUN_004300b0(session_camera, NULL, view->left, view->top, view->right - view->left,
+                      view->bottom - view->top);
+
+    dx = (double) position->x - session_centre.x;
+    dy = (double) position->y - session_centre.y;
+    dz = (double) position->z - session_centre.z;
+    squared = (float) (dy * dy + dx * dx + dz * dz);
+    FIELD(self, BR_DISTANCE, float) = x87_equal(squared, 1.0f) ? 1.0f : game_FUN_00461ac0(squared);
+
+    game_FUN_004fdaf0(self);
+    bike_choose(self);
+    players_set(self, NULL, FIELD(game_main, 0x2144, DWORD));
+    game_FUN_0053a27e(game_FUN_004c41d0());
+    if (FIELD(self, 0x110, BYTE*))
+        FIELD(self, BR_SLOT, int) = background_new_slot(FIELD(self, 0x110, BYTE*), NULL, 1);
+}
+
+PORT(0x0044FE50)
+void __fastcall bike_rider_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    char number[12];
+    int plate;
+
+    (void) edx_unused;
+    switch (event->type) {
+    case EVENT_OPEN:
+        bike_rider_open(self);
+        break;
+    case EVENT_SELECT:
+        if (clicked(event, LIST_BIKES))
+            bike_choose(self);
+        else if (clicked(event, LIST_RIDERS))
+            game_FUN_004fdaf0(self);
+        else if (clicked(event, LIST_ENGINE_SIZE))
+            bike_choose(self);
+        break;
+    case EVENT_CLICK:
+        if (clicked(event, NAME(0x0056FBB4)))                                  /* "BikeLeft" */
+            combo_step(self, LIST_BIKES, TRUE);
+        else if (clicked(event, NAME(0x0056FBA8)))                             /* "BikeRight" */
+            combo_step(self, LIST_BIKES, FALSE);
+        else if (clicked(event, NAME(0x0056FB9C)))                             /* "RiderLeft" */
+            combo_step(self, LIST_RIDERS, TRUE);
+        else if (clicked(event, NAME(0x0056FB90)))                             /* "RiderRight" */
+            combo_step(self, LIST_RIDERS, FALSE);
+        else if (clicked(event, CHECK_AUTO_ROTATE))
+            FIELD(self, BR_MANUAL, int) =
+                !option_current_index(dialog_find_control(self, NULL, CHECK_AUTO_ROTATE, 2));
+        else if (clicked(event, NAME(0x0056FB84)))                             /* "ButWrench" */
+            options_open(self, FIELD(self, 0x2C, BYTE*), 0x7F8, 2);
+        break;
+    case EVENT_EDIT_DONE:
+        /* Plates run 101 to 999; under 100 gains 100 (so 100 itself becomes 101). */
+        if (!clicked(event, EDIT_PLATE))
+            break;
+        edit_get_text((BYTE*) event->c, NULL, number, 9);
+        plate = game_FUN_0053b6c7(number);
+        if (plate < 100)
+            plate += 100;
+        if (plate < 101)
+            plate = 101;
+        else if (plate > 999)
+            plate = 999;
+        FIELD(game_main, 0x2144, int) = plate;
+        game_FUN_0054aaa5(plate, number, 10);
+        edit_set_text((BYTE*) event->c, NULL, number);
+        players_set(self, NULL, plate);
+        break;
+    case EVENT_EDIT_CHANGED:
+        if (!clicked(event, EDIT_PLATE))
+            break;
+        edit_get_text((BYTE*) event->c, NULL, number, 9);
+        plate = game_FUN_0053b6c7(number);
+        if (plate >= 100 && plate <= 999) {
+            players_set(self, NULL, plate);
+            FIELD(game_main, 0x2144, int) = plate;
+        }
+        break;
+    case EVENT_CLOSE:
+        game_FUN_0049a9d0(game_session);
+        if (FIELD(self, 0x110, BYTE*))
+            background_free_slot(FIELD(self, 0x110, BYTE*), NULL, FIELD(self, BR_SLOT, int));
+        game_FUN_004eda80(object_screen(self), NULL, NULL);
+        break;
+    }
+}
+
+/* Turn the camera about the session's point by `angle`, keeping its distance; it looks on. */
+static void preview_orbit(BYTE* self, float angle)
+{
+    vector3* position = &FIELD(self, BR_POSITION, vector3);
+    float distance;
+    vector3 offset;
+    vector3 turned;
+    BYTE* camera;
+
+    offset.x = position->x - session_centre.x;
+    offset.y = position->y - session_centre.y;
+    offset.z = position->z - session_centre.z;
+    D3DRMVectorRotate(&turned, &offset, &vector_y, angle);
+    distance = FIELD(self, BR_DISTANCE, float);
+    turned.x = turned.x * distance;
+    turned.y = turned.y * distance;
+    turned.z = turned.z * distance;
+    position->x = turned.x + session_centre.x;
+    position->y = turned.y + session_centre.y;
+    position->z = turned.z + session_centre.z;
+    game_FUN_0042f8d0(session_camera, NULL, position, NULL, NULL, NULL, NULL);
+    camera = session_camera;
+    VIRTUAL(camera, 0x74, camera_look_at)(camera, NULL, FIELD(self, BR_TARGET, vector3));
+}
+
+/*
+    Vtable slot 10. Held down, the mouse turns the camera (across) and raises it (down, 1 to
+    10 high), which turns ChkAutoRotate off; otherwise it turns by itself at pi/8 a second.
+    Now and then the idling rider looks about or stretches.
+*/
+PORT(0x00450910)
+int __fastcall preview_tick(BYTE* self, void* edx_unused, float seconds)
+{
+    gui_user* user = FIELD(self, 0x34, gui_user*);
+    BYTE* model;
+
+    (void) edx_unused;
+    if (FIELD(self, 0x110, BYTE*))
+        background_invalidate(FIELD(self, 0x110, BYTE*));
+    if (user->input && FIELD(self, BR_MANUAL, int) && FIELD(self, BR_HELD, int)) {
+        int across = user->input->x - user->cursor_x;
+        int down = user->input->y - user->cursor_y;
+        double height = (double) down * 0.1f + FIELD(self, BR_POSITION + 4, float);
+
+        FIELD(self, BR_POSITION + 4, float) = (float) height;
+        if (!x87_less(height, 10.0))
+            height = 10.0;
+        else if (1.0 > height)
+            height = 1.0;
+        FIELD(self, BR_POSITION + 4, float) = (float) height;
+        preview_orbit(self, across * TURN_PER_PIXEL);
+        FIELD(self, BR_MANUAL, int) = 1;
+        option_select(dialog_find_control(self, NULL, CHECK_AUTO_ROTATE, 2), NULL, 0);
+    } else if (!FIELD(self, BR_MANUAL, int)) {
+        preview_orbit(self, seconds * TURN_PER_SECOND);
+    }
+
+    model = session_rider;
+    VIRTUAL(model, 0x1C, model_step)(model, NULL, seconds, 0, 0);
+    model = session_bike;
+    VIRTUAL(model, 0x1C, model_step)(model, NULL, seconds, 0, 0);
+
+    /* (The original reads DDLBikes' choice before each animation, and drops it.) */
+    if (FIELD(self, BR_IDLING, int) && game__rand() % 200 == 1) {
+        list_data(combo_list(self, LIST_BIKES), NULL, -1);
+        switch (game__rand() % 3) {
+        case 0:
+            game_FUN_004aa170(session_rider, NULL, NAME(0x0056FC60));          /* "LookLeftR" */
+            break;
+        case 1:
+            game_FUN_004aa170(session_rider, NULL, NAME(0x0056FC6C));          /* "LookRightR" */
+            break;
+        case 2:
+            game_FUN_004aa170(session_rider, NULL, NAME(0x0056FC78));          /* "StretchR" */
+            break;
+        }
+        FIELD(self, BR_IDLING, int) = 0;
+    }
+    if (!FIELD(self, BR_IDLING, int) && FIELD(session_rider, 0xC, int)) {
+        list_data(combo_list(self, LIST_BIKES), NULL, -1);
+        game_FUN_004aa170(session_rider, NULL, NAME(0x0056FC58));              /* "WaitR" */
+        FIELD(self, BR_IDLING, int) = 1;
+    }
+    if (FIELD(self, 0x110, BYTE*))
+        background_slot_redraw(FIELD(self, 0x110, BYTE*), NULL, FIELD(self, BR_SLOT, int),
+                               &FIELD(self, BR_VIEW, RECT));
+    return dialog_tick(self, NULL, seconds);
 }
