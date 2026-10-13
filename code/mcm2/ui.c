@@ -5206,7 +5206,7 @@ typedef struct list_entry {
     text_run* runs;             /* 0x24: the text's markup, on the game's heap */
     COLORREF  colour;           /* 0x28: its text's, or 0 for the list's */
     DWORD     unknown_2c;
-    DWORD     unknown_30;
+    DWORD     drawn;            /* 0x30: drawn since the list was last redrawn */
     HBRUSH    brush;            /* 0x34, possibly shared with other entries */
 } list_entry;
 
@@ -5657,7 +5657,7 @@ BOOL __fastcall list_add_text(BYTE* self, void* edx_unused, const char* text, DW
                                     FIELD(self, CTL_COLOUR, COLORREF), FIELD(self, CTL_FONT, HFONT),
                                     FIELD(self, CTL_TABS, const int*), NULL);
     list_set_data(self, NULL, list_count(self), data);
-    entry->unknown_30 = 0;
+    entry->drawn = 0;
     list_count(self)++;
     FIELD(self, LIST_ROWS, int) = list_rows_fitting(self);
     game_FUN_00478b50(self);
@@ -5750,7 +5750,7 @@ BOOL __fastcall list_add_anim(BYTE* self, void* edx_unused, ui_anim* anim, DWORD
     entry.height = anim->frames[0]->height;
     entry.text_2 = NULL;
     entry.runs = NULL;
-    entry.unknown_30 = 0;
+    entry.drawn = 0;
     list_entries(self)[list_count(self)] = entry;
     list_set_data(self, NULL, list_count(self), data);
     list_count(self)++;
@@ -5964,7 +5964,7 @@ BOOL __fastcall list_add_file(BYTE* self, void* edx_unused, const char* name, DW
         entry.b = b;
         entry.length = anim->frames[0]->width;
         entry.height = anim->frames[0]->height;
-        entry.unknown_30 = 0;
+        entry.drawn = 0;
         if (archive) {
             game_FUN_00461cd0(archive);
             game_delete(archive);
@@ -5979,7 +5979,7 @@ BOOL __fastcall list_add_file(BYTE* self, void* edx_unused, const char* name, DW
         entry.b = b;
         text_copy(entry.text_2, name);
         entry.runs = NULL;
-        entry.unknown_30 = 0;
+        entry.drawn = 0;
         image = game_FUN_005173e0(name, 0, game_resources);
         if (!image)
             return FALSE;
@@ -6096,4 +6096,219 @@ void __fastcall list_sort(BYTE* self, void* edx_unused, BOOL outer)
         }
     }
     FIELD(self, LIST_SORTING, DWORD) = 0;
+}
+
+#define LIST_CLICKABLE  0x224       /* a press selects the entry under it */
+#define LIST_DRAGGABLE  0x228       /* the first button drags it across */
+#define LIST_DRAG_FROM  0x22C       /* where a drag started */
+#define LIST_SHIFT      0x230       /* how far it has been dragged, drawn negative */
+#define LIST_DRAGGED    0x234       /* the drag under way */
+#define LIST_LAST_CLICK 0x238       /* the entry and time of the last selection, for double clicks */
+#define LIST_CLICK_TIME 0x23C
+#define ENTRY_FIXED     1           /* an entry's `b`: it cannot be selected */
+
+#define double_click_time (*(UINT*) 0x0066170C)
+#define double_click_read (*(BYTE*) 0x006616A4)
+#define click_clock       (*(DWORD*) 0x006616E4)
+
+/* Tell the dialog of the selection as the list's (manager 0x30 of the dialog). */
+static void list_tell(BYTE* self, ui_event* event, DWORD type)
+{
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+
+    event->a = FIELD(self, 0x74, DWORD);
+    event->b = (DWORD) control_get_name(self);
+    event->type = type;
+    event->sender = dialog;
+    event->c = (DWORD) self;
+    event->manager = FIELD(dialog, 0x30, gui_manager*);
+    VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, event);
+}
+
+/* Vtable slot 50: redraw; with a background each entry is drawn again too. */
+PORT(0x00478C70)
+void __fastcall list_redraw(BYTE* self)
+{
+    int i;
+
+    control_slot_50(self);
+    if (FIELD(self, CTL_DIALOG, BYTE*) && FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*)) {
+        for (i = 0; i < list_count(self); i++)
+            list_entries(self)[i].drawn = 0;
+    }
+}
+
+/*
+    Vtable slot 66: the selection moved. The dialog hears (event 2), and of a second selection of
+    the same entry within the double-click time (event 13); `done` says the dialog took either.
+*/
+PORT(0x00478CC0)
+void __fastcall list_selection_moved(BYTE* self, void* edx_unused, int* done)
+{
+    ui_event event;
+
+    (void) edx_unused;
+    event.e = 0;
+    list_tell(self, &event, 2);
+    if (done)
+        *done = 0;
+    if (event.e) {
+        if (done)
+            *done = 1;
+        return;
+    }
+    if (!(double_click_read & 1)) {
+        double_click_read |= 1;
+        double_click_time = GetDoubleClickTime();
+    }
+    click_clock = game_FUN_004c41d0();
+    if (FIELD(self, LIST_SELECTED, int) != FIELD(self, LIST_LAST_CLICK, int)
+        || click_clock - FIELD(self, LIST_CLICK_TIME, DWORD) > double_click_time) {
+        FIELD(self, LIST_CLICK_TIME, DWORD) = click_clock;
+        FIELD(self, LIST_LAST_CLICK, int) = FIELD(self, LIST_SELECTED, int);
+        return;
+    }
+    list_tell(self, &event, 13);
+    if (!event.e) {
+        FIELD(self, LIST_CLICK_TIME, DWORD) = 0;
+        return;
+    }
+    if (done)
+        *done = 1;
+}
+
+PORT(0x00478DF0)
+void __fastcall list_set_240(BYTE* self, void* edx_unused, DWORD value)
+{
+    (void) edx_unused;
+    FIELD(self, 0x240, DWORD) = value;
+    if (!FIELD(self, LIST_ROWS, int))
+        FIELD(self, LIST_ROWS, int) = 1;
+}
+
+/*
+    Vtable slot 55: pressed while it has focus. The first button selects the selectable entry
+    under the pointer, in a clickable list; the second starts dragging a draggable one.
+*/
+PORT(0x00478E20)
+int __fastcall list_pressed(BYTE* self, void* edx_unused, DWORD button, const POINT* at)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && at) {
+        if (!button) {
+            RECT row;
+            int done = 0;
+            int i;
+
+            if (!FIELD(self, LIST_CLICKABLE, int))
+                return control_pressed(self, NULL, 0, (DWORD) at);
+            row = FIELD(self, CTL_RECT, RECT);
+            for (i = FIELD(self, LIST_FIRST, int);
+                 i < FIELD(self, LIST_FIRST, int) + FIELD(self, LIST_ROWS, int); i++) {
+                row.bottom = list_height(self, NULL, i) + row.top;
+                if (PtInRect(&row, *at) && !(list_entries(self)[i].b & ENTRY_FIXED)) {
+                    list_select_all(self, NULL, i);
+                    VIRTUAL(self, 0x108, list_stepped_slot)(self, NULL, &done);
+                    break;
+                }
+                if (!done)
+                    row.top += list_height(self, NULL, i);
+            }
+            if (done)
+                return 1;
+        } else if (button == 1 && FIELD(self, LIST_DRAGGABLE, int)) {
+            FIELD(self, LIST_DRAG_FROM, LONG) = at->x;
+            return control_pressed(self, NULL, 1, (DWORD) at);
+        }
+    }
+    return control_pressed(self, NULL, button, (DWORD) at);
+}
+
+/* Vtable slot 56: letting go of a drag keeps how far it went. */
+PORT(0x00478F80)
+int __fastcall list_released(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && button == 1) {
+        int dragged = FIELD(self, LIST_DRAGGED, int);
+
+        FIELD(self, LIST_DRAGGED, int) = 0;
+        FIELD(self, LIST_SHIFT, int) += dragged;
+    }
+    return control_released(self, NULL, button, b);
+}
+
+/*
+    Vtable slot 21: a key while it has capture, in a clickable list: Page Up and Down move the
+    selection a page, Home and End to either end, and the arrows by one.
+*/
+PORT(0x00478FD0)
+int __fastcall list_key(BYTE* self, void* edx_unused, DWORD key)
+{
+    int done;
+    int to;
+
+    (void) edx_unused;
+    if (control_unclicked(self, NULL, key) || control_user(self)->capture != self
+        || !FIELD(self, LIST_CLICKABLE, int))
+        return 0;
+    switch (key) {
+    case VK_PRIOR:
+        to = list_selected(self) - FIELD(self, LIST_ROWS, int);
+        if (to < 0)
+            to = 0;
+        if (to == list_selected(self))
+            return 0;
+        break;
+    case VK_NEXT:
+        to = list_selected(self) + FIELD(self, LIST_ROWS, int);
+        if (list_count(self) - 1 < to)
+            to = list_count(self) - 1;
+        if (to == list_selected(self))
+            return 0;
+        break;
+    case VK_END:
+        to = list_count(self) - 1;
+        if (list_selected(self) >= to)
+            return 0;
+        break;
+    case VK_HOME:
+        if (list_selected(self) <= 0)
+            return 0;
+        to = 0;
+        break;
+    case VK_LEFT:
+    case VK_UP:
+        if (list_selected(self) <= 0)
+            return 0;
+        to = list_selected(self) - 1;
+        break;
+    case VK_RIGHT:
+    case VK_DOWN:
+        if (list_selected(self) >= list_count(self) - 1)
+            return 0;
+        to = list_selected(self) + 1;
+        break;
+    default:
+        return 0;
+    }
+    list_select_all(self, NULL, to);
+    VIRTUAL(self, 0x108, list_stepped_slot)(self, NULL, &done);
+    return 1;
+}
+
+/* Vtable slot 57: dragged with the second button, it slides across, no further than its start. */
+PORT(0x00479120)
+void __fastcall list_drag(BYTE* self, void* edx_unused, DWORD button, const POINT* at)
+{
+    (void) edx_unused;
+    if (button == 1 && at) {
+        int dragged = at->x - FIELD(self, LIST_DRAG_FROM, LONG);
+        int limit = -FIELD(self, LIST_SHIFT, int);
+
+        FIELD(self, LIST_DRAGGED, int) = dragged;
+        FIELD(self, LIST_DRAGGED, int) = dragged < limit ? dragged : limit;
+        control_redraw(self);
+    }
+    control_drag(self, NULL, button, at);
 }
