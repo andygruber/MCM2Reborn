@@ -537,3 +537,190 @@ int __fastcall hold_release(BYTE* self, void* edx_unused, const DWORD* key, DWOR
         FIELD(self, 0x7F7C, DWORD) = 0;
     return dialog_release(self, NULL, key, arg);
 }
+
+/* ---- Waiting screens ---- */
+
+/* Set when a key ends a wait screen; the race reads it. */
+#define wait_skipped (*(DWORD*) 0x005A0F50)
+
+BYTE* __fastcall game_FUN_0045e300(BYTE* events);   /* the race under way, or NULL */
+
+/* Vtable slot 23: any key ends the wait, and closes the screen. */
+PORT(0x00454220)
+int __fastcall wait_key_close(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg)
+{
+    (void) edx_unused;
+    (void) key;
+    (void) arg;
+    wait_skipped = 1;
+    dialog_end(self, NULL, 0);
+    return 1;
+}
+
+/* Vtable slot 23: any key ends the wait. */
+PORT(0x004543A0)
+int __fastcall wait_key(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg)
+{
+    (void) self;
+    (void) edx_unused;
+    (void) key;
+    (void) arg;
+    wait_skipped = 1;
+    return 1;
+}
+
+/* Vtable slot 23: a key ends the wait once the screen allows it (0x7F60, or 0x7F5C, set). */
+PORT(0x00454570)
+int __fastcall wait_key_when_ready(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg)
+{
+    (void) edx_unused;
+    (void) key;
+    (void) arg;
+    if (FIELD(self, 0x7F60, int) == 1)
+        wait_skipped = 1;
+    return 1;
+}
+
+PORT(0x004546D0)
+int __fastcall wait_key_when_shown(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg)
+{
+    (void) edx_unused;
+    (void) key;
+    (void) arg;
+    if (FIELD(self, 0x7F5C, int) == 1)
+        wait_skipped = 1;
+    return 1;
+}
+
+/* Vtable slot 23: a key closes the screen once the race under way has finished (0x18A). */
+PORT(0x00456AE0)
+int __fastcall race_over_key(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg)
+{
+    BYTE* race = game_FUN_0045e300(FIELD(game_main, 0x570, BYTE*));
+
+    (void) edx_unused;
+    (void) key;
+    (void) arg;
+    if (race && FIELD(race, 0x18A, BYTE))
+        dialog_end(self, NULL, 0);
+    return 1;
+}
+
+/* Vtable slot 10: the session's request to leave the menus (0x44) closes the screen. */
+PORT(0x00456B20)
+int __fastcall leave_request_tick(BYTE* self, void* edx_unused, float seconds)
+{
+    BYTE* session = FIELD(game_main, 0x56C, BYTE*);
+
+    (void) edx_unused;
+    if (FIELD(session, 0x44, int)) {
+        FIELD(session, 0x44, int) = 0;
+        dialog_end(self, NULL, 0);
+        return 0;
+    }
+    return dialog_tick(self, NULL, seconds);
+}
+
+/* ---- Numbers ---- */
+
+char* __cdecl game_FUN_0054aaa5(int value, char* text, int radix);   /* _itoa */
+
+PORT(0x00452190)
+char* __cdecl number_text(int value, char* text)
+{
+    return game_FUN_0054aaa5(value, text, 10);
+}
+
+/* ---- Startup ---- */
+
+/* The file's statics, set up by the runtime before main: unit vectors and two timers. */
+typedef struct vector3 {
+    float x, y, z;
+} vector3;
+
+#define vector_zero   (*(vector3*) 0x005A0F10)
+#define vector_x      (*(vector3*) 0x005A0F20)
+#define vector_y      (*(vector3*) 0x005A0F40)
+#define vector_z      (*(vector3*) 0x005A0F00)
+
+void __fastcall game_FUN_004cfdc0(void* timer, void* edx_unused, DWORD period);  /* start it */
+
+/* Out of line, so the entries below stay jumps to them as in the original. */
+__declspec(noinline) void __cdecl init_vector_zero(void);
+__declspec(noinline) void __cdecl init_vector_x(void);
+__declspec(noinline) void __cdecl init_vector_y(void);
+__declspec(noinline) void __cdecl init_vector_z(void);
+__declspec(noinline) void __cdecl init_timer_a(void);
+__declspec(noinline) void __cdecl init_timer_b(void);
+
+static void set_vector(vector3* v, float x, float y, float z)
+{
+    v->x = x;
+    v->y = y;
+    v->z = z;
+}
+
+PORT(0x00454B30)
+void __cdecl init_vector_zero(void)
+{
+    set_vector(&vector_zero, 0.0f, 0.0f, 0.0f);
+}
+
+PORT(0x00454B80)
+void __cdecl init_vector_x(void)
+{
+    set_vector(&vector_x, 1.0f, 0.0f, 0.0f);
+}
+
+PORT(0x00454BD0)
+void __cdecl init_vector_y(void)
+{
+    set_vector(&vector_y, 0.0f, 1.0f, 0.0f);
+}
+
+PORT(0x00454E50)
+void __cdecl init_vector_z(void)
+{
+    set_vector(&vector_z, 0.0f, 0.0f, 1.0f);
+}
+
+PORT(0x00456B70)
+void __cdecl init_timer_a(void)
+{
+    game_FUN_004cfdc0((void*) 0x005A1040, NULL, 5000);
+}
+
+PORT(0x00456B90)
+void __cdecl init_timer_b(void)
+{
+    game_FUN_004cfdc0((void*) 0x005A1018, NULL, 5000);
+}
+
+/*
+    The runtime's table calls these, which only jump on. The entries for 0x00454B20 and
+    0x00454B70 read as text to the exporter, so the table keeps the originals; they jump to the
+    ports above all the same.
+*/
+PORT(0x00454BC0)
+void __cdecl init_vector_y_entry(void)
+{
+    init_vector_y();
+}
+
+PORT(0x00454E40)
+void __cdecl init_vector_z_entry(void)
+{
+    init_vector_z();
+}
+
+PORT(0x00456B60)
+void __cdecl init_timer_a_entry(void)
+{
+    init_timer_a();
+}
+
+PORT(0x00456B80)
+void __cdecl init_timer_b_entry(void)
+{
+    init_timer_b();
+}
