@@ -17,6 +17,8 @@ const char* __fastcall list_text(BYTE* self, void* edx_unused, int index);
 BOOL        __fastcall list_add_text(BYTE* self, void* edx_unused, const char* text, DWORD data,
                                      DWORD b);
 void        __fastcall list_clear(BYTE* self);
+void        __fastcall control_show(BYTE* self, void* edx_unused, DWORD shown, BOOL animate);
+void        __fastcall dialog_end(BYTE* self, void* edx_unused, DWORD code);
 void        __fastcall list_sort(BYTE* self, void* edx_unused, BOOL outer);
 int         __fastcall list_select_text(BYTE* self, void* edx_unused, const char* text);
 int         __fastcall list_set_208(BYTE* self, void* edx_unused, DWORD value);
@@ -25,6 +27,7 @@ int         __fastcall list_set_colour_2(BYTE* self, void* edx_unused, COLORREF 
 
 /* The game's: atoi, a string from its language module, and the profile it saves to. */
 int  __cdecl    game_FUN_0053b6c7(const char* text);
+int  __cdecl    game_FUN_0053b6e0(const char* a, const char* b);           /* _stricmp */
 void __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* text, int size);
 void __fastcall game_FUN_00528820(char* profile);                         /* save it */
 int  __cdecl    game_FUN_0053a11f(char* to, const char* format, ...);      /* sprintf */
@@ -205,5 +208,110 @@ void __cdecl stats_add_row(ui_event* event, const char* first, const char* secon
         if (texts[i])
             list_add_text(dialog_find_control(event_dialog(event), NULL, stats_lists[i], 0), NULL,
                           texts[i], 0, 0);
+    }
+}
+
+/* ---- Prompts ---- */
+
+/*
+    Small dialogs of a prompt and buttons. Their handlers (vtable slot 29) word them when they
+    open (event 5) and end the dialog with a code for the screen behind when a button is
+    clicked (event 1, naming the button).
+*/
+#define BUTTON_LEFT   NAME(0x0056F888)      /* "ButLeft" */
+#define BUTTON_MIDDLE NAME(0x0056F87C)      /* "ButMiddle" */
+#define BUTTON_RIGHT  NAME(0x0056F870)      /* "ButRight" */
+#define TITLE_TEXT    NAME(0x0056F864)      /* "TitleText" */
+#define PROMPT_TEXT   NAME(0x0056F858)      /* "TxtPrompt" */
+#define KEY_RETURN    0x1C
+
+enum { EVENT_CLICK = 1, EVENT_OPEN = 5 };
+
+static void load_text(BYTE* self, const char* name, int type, UINT id)
+{
+    control_load_text(dialog_find_control(self, NULL, name, type), NULL, game_language, id);
+}
+
+/* The prompt's text, wrapped (0x1E8). */
+static void load_prompt(BYTE* self, UINT id)
+{
+    BYTE* prompt = dialog_find_control(self, NULL, PROMPT_TEXT, 12);
+
+    FIELD(prompt, 0x1E8, DWORD) = 1;
+    control_load_text(prompt, NULL, game_language, id);
+}
+
+/* One button, the middle, taking Return; the others hidden. */
+static void one_button(BYTE* self, UINT id)
+{
+    BYTE* button = dialog_find_control(self, NULL, BUTTON_LEFT, 1);
+
+    control_show(button, NULL, FALSE, TRUE);
+    FIELD(button, 0x1D8, DWORD) = 0;
+    control_show(dialog_find_control(self, NULL, BUTTON_RIGHT, 1), NULL, FALSE, TRUE);
+    button = dialog_find_control(self, NULL, BUTTON_MIDDLE, 1);
+    control_load_text(button, NULL, game_language, id);
+    FIELD(button, 0x1D8, DWORD) = KEY_RETURN;
+}
+
+static BOOL clicked(const ui_event* event, const char* button)
+{
+    return !game_FUN_0053b6e0(button, (const char*) event->b);
+}
+
+/* Three choices: left ends with 60, middle with 61, right with 0. */
+PORT(0x0044DBB0)
+void __fastcall choice_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, BUTTON_LEFT)) {
+            dialog_end(event_dialog(event), NULL, 60);
+            event->e = 1;
+        } else if (clicked(event, BUTTON_MIDDLE)) {
+            dialog_end(event_dialog(event), NULL, 61);
+            event->e = 1;
+        } else if (clicked(event, BUTTON_RIGHT)) {
+            dialog_end(event_dialog(event), NULL, 0);
+            event->e = 1;
+        }
+    } else if (event->type == EVENT_OPEN) {
+        load_text(self, BUTTON_LEFT, 1, 0x13E7);
+        load_text(self, BUTTON_MIDDLE, 1, 0x13E6);
+        load_text(self, BUTTON_RIGHT, 1, 0x13DC);
+        load_text(self, TITLE_TEXT, 12, 0x13E8);
+        load_prompt(self, 0x13FE);
+    }
+}
+
+/* A notice whose one button ends it with 51. */
+PORT(0x0044DD20)
+void __fastcall notice_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, BUTTON_MIDDLE)) {
+            dialog_end(event_dialog(event), NULL, 51);
+            event->e = 1;
+        }
+    } else if (event->type == EVENT_OPEN) {
+        one_button(self, 0x13E9);
+        load_text(self, TITLE_TEXT, 12, 0x13EA);
+        load_prompt(self, 0x1400);
+    }
+}
+
+/* A notice whose one button ends it with 0, leaving the event to others. */
+PORT(0x0044DE40)
+void __fastcall notice_close_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, BUTTON_MIDDLE))
+            dialog_end(event_dialog(event), NULL, 0);
+    } else if (event->type == EVENT_OPEN) {
+        one_button(self, 0x13E9);
+        load_text(self, TITLE_TEXT, 12, 0x146D);
+        load_prompt(self, 0x146E);
     }
 }
