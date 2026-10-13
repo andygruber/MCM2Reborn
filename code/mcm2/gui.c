@@ -116,7 +116,8 @@ gui_manager* __fastcall gui_manager_construct(gui_manager* self, void* edx_unuse
     self->swapped = 0;
     self->unknown_34c = 0;
     text_copy(self->font_name, NO_TEXT);
-    self->unknown_3d0[0] = self->unknown_3d0[1] = self->unknown_3d0[2] = 0;
+    self->font_grow = 0.0f;
+    self->font_bold = self->font_italic = 0;
     self->backdrop_drawn = 0;
     return self;
 }
@@ -1933,8 +1934,8 @@ void __fastcall gui_user_set_ime(gui_user* self, void* edx_unused, BOOL on)
 
             face = manager->name;
             font.lfHeight = manager->font_size;
-            font.lfWeight = FIELD(control, 0xBC, gui_manager*)->unknown_3d0[1] ? FW_BOLD : FW_MEDIUM;
-            font.lfItalic = (BYTE) FIELD(control, 0xBC, gui_manager*)->unknown_3d0[2];
+            font.lfWeight = FIELD(control, 0xBC, gui_manager*)->font_bold ? FW_BOLD : FW_MEDIUM;
+            font.lfItalic = (BYTE) FIELD(control, 0xBC, gui_manager*)->font_italic;
         }
     }
     text_copy(font.lfFaceName, face);

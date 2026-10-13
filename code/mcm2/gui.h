@@ -81,7 +81,9 @@ struct gui_manager {
     HMODULE     language;               /* uilang.dll */
     int         unknown_34c;
     char        font_name[0x80];
-    int         unknown_3d0[3];
+    float       font_grow;              /* added to every dialog's font height */
+    int         font_bold;              /* used with font_name */
+    int         font_italic;
     IUnknown*   palette;                /* released through COM */
 };
 

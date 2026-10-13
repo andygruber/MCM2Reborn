@@ -65,7 +65,7 @@ int __fastcall game_vf_2_46A5F0(void* self);
 
 /* The rest of UIDialog and UIControl, not ported yet. */
 void* __fastcall game_FUN_0046ac10(void* self, void* edx_unused, void* dialog);
-int   __fastcall game_FUN_0046b850(BYTE* self, void* edx_unused, void* data, DWORD size);
+int   __fastcall dialog_read(BYTE* self, void* edx_unused, void* data, DWORD size);
 void  __fastcall game_FUN_00470050(BYTE* self);
 void  __fastcall game_FUN_00470d70(BYTE* self, void* edx_unused, DWORD key);
 void  __fastcall game_FUN_00470ea0(BYTE* self, void* edx_unused, DWORD sound, DWORD kind);
@@ -378,7 +378,7 @@ int __fastcall dialog_load(BYTE* self, void* edx_unused, const char* name)
     (void) edx_unused;
     if (!entry)
         return 0;
-    return game_FUN_0046b850(self, NULL, FIELD(entry, 0x14, void*), FIELD(entry, 0x18, DWORD));
+    return dialog_read(self, NULL, FIELD(entry, 0x14, void*), FIELD(entry, 0x18, DWORD));
 }
 
 /* Hidden, or shown: vtable slot 4 or 5 of the object. */
@@ -750,7 +750,7 @@ BYTE* __fastcall dialog_open(BYTE* self, void* edx_unused, void* screen, const R
         if (data)
             data = game_FUN_00461c80(data, NULL, game_resources);
         if (game_FUN_00461ec0(data, NULL, path, READ_MODE, 0)) {
-            int loaded = game_FUN_0046b850(self, NULL, data, 0);
+            int loaded = dialog_read(self, NULL, data, 0);
 
             file_delete(data);
             if (!loaded) {
@@ -8342,5 +8342,1241 @@ int __fastcall option_render(BYTE* self)
     } while (more);
     if (kept >= 0)
         FIELD(self, 0x1BC, int) = kept;
+    return 1;
+}
+
+/* ---- UIDialog: reading a dialog file ---------------------------------------------------------- */
+
+/*
+    A dialog file is in Parameter.cpp's INI-style format: a section per anim, sound and control,
+    grouped under Set_Anim, Set_Sound and Set_Control headings, with Set_Info describing the
+    dialog and Set_Default sections giving the keys' defaults for the controls after them. The
+    sections are read in four passes: the dialog, its anims, its sounds, then its controls.
+*/
+
+/* Parameter.cpp's reader; its size is the room the original gives it. */
+typedef struct param_file {
+    BYTE opaque[0x6C4];
+} param_file;
+
+void __fastcall game_FUN_004bb880(param_file* self);
+void __fastcall game_FUN_004bb8e0(param_file* self);
+void __fastcall game_FUN_004bbef0(param_file* self, void* edx_unused, void* data, DWORD size,
+                                  BOOL scan);
+int  __fastcall game_FUN_004bc990(param_file* self, void* edx_unused, char* names, int size);
+BOOL __fastcall game_FUN_004bc040(param_file* self, void* edx_unused, const char* section);
+BOOL __fastcall game_FUN_004bc610(param_file* self, void* edx_unused, const char* key,
+                                  const char* fallback, char* value, int size);
+BOOL __fastcall game_FUN_004bc660(param_file* self, void* edx_unused, const char* key, int fallback,
+                                  int* value);
+BOOL __fastcall game_FUN_004bc690(param_file* self, void* edx_unused, const char* key,
+                                  float fallback, float* value);
+#define param_construct game_FUN_004bb880
+#define param_destruct  game_FUN_004bb8e0
+#define param_open      game_FUN_004bbef0
+#define param_sections  game_FUN_004bc990   /* the section names, each ended by "?" */
+#define param_select    game_FUN_004bc040
+
+/* A strtok that keeps its place in the object. */
+typedef struct text_tokens {
+    char* token;
+    char* rest;
+} text_tokens;
+
+void  __fastcall game_FUN_0051b440(text_tokens* self, void* edx_unused, char* text);
+char* __fastcall game_FUN_0051b470(text_tokens* self, void* edx_unused, const char* delimiters);
+#define tokens_begin game_FUN_0051b440
+#define tokens_next  game_FUN_0051b470
+
+int   __cdecl game_FUN_0054cd80(const char* a, const char* b, size_t count);  /* _strnicmp */
+int   __cdecl game_FUN_0053a97b(const char* text, const char* format, ...);  /* sscanf */
+void* __fastcall game_FUN_004bb350(void* self, void* edx_unused, const BYTE* data);  /* Palette8 */
+
+/* The file's words. */
+#define KEY(address) ((const char*) (address))
+#define SECTION_END     KEY(0x00571D24)     /* "?" */
+#define FILE_SEPARATOR  KEY(0x00570574)     /* "," */
+#define NUMBERED_KEY    KEY(0x00571C64)     /* "%s%d" */
+#define TIP_FAILED      KEY(0x0057180C)     /* "Resource string '%d' load fail\n" */
+#define BACKDROP_NAME   KEY(0x00571BE8)     /* "FRMBIStatic" */
+#define XY_FORMAT       KEY(0x00571BA0)     /* "%d%*[,.] %d" */
+#define XYXY_FORMAT     KEY(0x00571B78)     /* "%d%*[,.] %d%*[,.] %d%*[,.] %d" */
+#define WORD_TOP        KEY(0x00571CA4)
+#define WORD_BOTTOM     KEY(0x00571C9C)
+#define WORD_LEFT       KEY(0x00571C78)
+#define WORD_RIGHT      KEY(0x00571C80)
+#define WORD_CENTER     KEY(0x00571C94)
+#define WORD_MIDDLE     KEY(0x00571CB4)
+#define WORD_STATE      KEY(0x00571ADC)     /* "State" */
+#define WORD_STATE_TEXT KEY(0x00571AD0)     /* "StateText" */
+#define WORD_ITEM       KEY(0x00571A60)     /* "Item" */
+#define WORD_TEXT_COLOR KEY(0x00571C6C)     /* "TextColor" */
+
+/* The entry table: each section's name, what it made, and what it is. */
+#define ENTRY_SIZE      0x3C
+#define ENTRY_VALUE     0x34
+#define ENTRY_KIND      0x38
+#define DLG_ANIM_LIMIT  500
+#define DLG_SOUNDS      0x960       /* void*[DLG_SOUND_LIMIT] */
+#define DLG_SOUND_COUNT 0x9B4
+#define DLG_SOUND_LIMIT 20
+#define DLG_SCALED      0x158       /* scaled from its design size (Set_Info's NoScale off) */
+#define DLG_POPUP       0x15C       /* placed on the screen by DLG_ALIGN */
+#define DLG_AREA        0x160       /* RECT */
+#define DLG_ALIGN       0x170       /* 1 left, 2 centre, 4 right; 8 top, 0x10 middle, 0x20 bottom */
+#define DLG_DESIGN_W    0x174       /* the screen size it was designed for */
+#define DLG_DESIGN_H    0x178
+#define CTL_TOOLTIP     0xF0        /* char*, on the game's heap */
+#define CTL_FONT_HEIGHT 0x160
+
+enum { KIND_INFO, KIND_ANIM, KIND_SOUND, KIND_DEFAULT, KIND_CONTROL };
+
+#define STATE_LIMIT 50              /* the MULTISTATE states and list items that have defaults */
+
+#define WEIGHT(bold) ((bold) ? FW_BOLD : FW_MEDIUM)
+
+/*
+    A control's keys, as Set_Default leaves them for the controls after it or as one control
+    reads them (falling back on the defaults).
+*/
+typedef struct control_keys {
+    int  group;                     /* GroupId */
+    char type[0x80];
+    char font_name[0x80];
+    int  font_height;
+    char anchor[0x80];
+    int  rel_anchor;
+    int  moveable;
+    char text_align[0x80];
+    char text_align_v[0x80];
+    int  fx_delay;
+    char fx[0x80];
+    char fx_sound[0x80];
+    char fx_anim_in[0x80];
+    char fx_sound_in[0x80];
+    char fx_anim_out[0x80];
+    char fx_sound_out[0x80];
+    char mouse_anim[0x80];
+    char sound_norm[0x80];
+    char sound_focus[0x80];
+    char sound_push[0x80];
+    char sound_click[0x80];
+    char text[0x80];
+    int  attach_id;
+    int  colour;
+    int  drop_colour;
+    int  key_bind;
+    int  italic;
+    int  bold;
+    int  text_drop;
+    int  source_blit;
+    int  enable;
+    int  show;
+    int  pre_3d;
+    int  permanent;
+    int  shape_bounds;
+} control_keys;
+
+/* Defaults of the per-type keys: a control reads these into the shared text, or as numbers. */
+typedef struct type_defaults {
+    char anim_norm[0x80];
+    char anim_focus[0x80];
+    char anim_push[0x80];
+    char anim_disable[0x80];
+    char sort_list[0x80];
+    char anim_off[0x80];
+    char anim_on[0x80];
+    char anim_thumb[0x80];
+    char anim_text_back[0x80];
+    char anim_list_back[0x80];
+    char anim_scroll_back[0x80];
+    char sound_end[0x80];
+    char states[STATE_LIMIT][0x80];
+    char state_texts[STATE_LIMIT][0x80];
+    char items[STATE_LIMIT][0x80];
+    int  num_states;
+    int  value;                     /* Default */
+    int  auto_sort;
+    int  max_items;                 /* kept, but MaxItems falls back on 100 */
+    int  select_colour;
+    int  selectable;
+    int  allow_scroll;
+    int  select_box_colour;
+    int  item_box_colour;
+    int  tick_num;
+    int  scale;
+    int  max_length;
+    int  list_height;
+} type_defaults;
+
+static const COLORREF default_text_colours[10] = {
+    0x000000, 0x008800, 0x0066FF, 0xFF6600, 0x00FFFF,
+    0xFFFFFF, 0xBBBBBB, 0xBB55CC, 0x880000, 0x999999,
+};
+
+/* The reader's state across the sections. */
+typedef struct dialog_reader {
+    BYTE*         dialog;
+    param_file    file;
+    int           video_mode;
+    BOOL          is_default;       /* reading Set_Default rather than a control */
+    RECT          area;             /* Xy, Xywh or Xyxy */
+    control_keys  defaults;
+    control_keys  keys;
+    type_defaults more;
+    char          background_image[0x80];
+    char          tooltip[0x80];
+    char          state[0x80];      /* a MULTISTATE state's anim and text */
+    char          state_text[0x80];
+    char          text[0x2800];     /* the value just read */
+} dialog_reader;
+
+static BOOL reader_string(dialog_reader* r, const char* key, const char* fallback, char* value)
+{
+    return game_FUN_004bc610(&r->file, NULL, key, fallback, value, -1);
+}
+
+static BOOL reader_int(dialog_reader* r, const char* key, int fallback, int* value)
+{
+    return game_FUN_004bc660(&r->file, NULL, key, fallback, value);
+}
+
+/* String `key`: into its default in Set_Default, else into `value` (missing, the default). */
+static BOOL keys_string(dialog_reader* r, const char* key, char* fallback, char* value)
+{
+    return reader_string(r, key, fallback, r->is_default ? fallback : value);
+}
+
+static BOOL keys_int(dialog_reader* r, const char* key, int* fallback, int* value)
+{
+    return reader_int(r, key, *fallback, r->is_default ? fallback : value);
+}
+
+/* Key "<name><n>", whose default (and Set_Default's place) is defaults[n] below STATE_LIMIT. */
+static BOOL keys_numbered(dialog_reader* r, const char* name, int n, char defaults[][0x80],
+                          char* value)
+{
+    char key[0x80];
+
+    game_FUN_0053a11f(key, NUMBERED_KEY, name, n);
+    return reader_string(r, key, n < STATE_LIMIT ? defaults[n] : NO_TEXT,
+                         r->is_default ? defaults[n] : value);
+}
+
+/* The anim, sound or control a name stands for, or 0. */
+static DWORD reader_find(dialog_reader* r, const char* name)
+{
+    return (DWORD) dialog_find(r->dialog, NULL, name);
+}
+
+static BOOL is_type(dialog_reader* r, const char* type)
+{
+    return !game_FUN_0053b6e0(r->keys.type, type);
+}
+
+/* Picture key `key` for the normal, over and pressed states of `control`, and state `last`. */
+static void reader_pictures(dialog_reader* r, BYTE* control, const char* key, char* fallback,
+                            int last)
+{
+    keys_string(r, key, fallback, r->text);
+    if (r->is_default)
+        return;
+    control_set_picture(control, NULL, 0, reader_find(r, r->text));
+    control_set_picture(control, NULL, 1, reader_find(r, r->text));
+    control_set_picture(control, NULL, 2, reader_find(r, r->text));
+    control_set_picture(control, NULL, last, reader_find(r, r->text));
+}
+
+/* Items "Item1" on, while there are any, each to `add` (Set_Default keeps the first 50). */
+static void reader_items(dialog_reader* r, BYTE* list, BOOL anims)
+{
+    int n = 1;
+
+    if (!keys_numbered(r, WORD_ITEM, n, r->more.items, r->text))
+        return;
+    do {
+        if (!r->is_default) {
+            if (anims && r->text[0] == '@')
+                list_add_anim(list, NULL, (ui_anim*) reader_find(r, r->text + 1), 0, 0);
+            else
+                list_add_text(list, NULL, r->text, 0, 0);
+        }
+        n++;
+        if (r->is_default && n >= STATE_LIMIT)
+            return;
+    } while (keys_numbered(r, WORD_ITEM, n, r->more.items, r->text));
+}
+
+/* ---- Set_Info, anims and sounds ---- */
+
+/* Set_Info: the dialog's design size and scale, placing, colours, cursor, backdrop and font. */
+static void reader_info(dialog_reader* r)
+{
+    BYTE* self = r->dialog;
+    BYTE* screen = FIELD(game_main, 0x10, BYTE*);
+    gui_manager* manager = FIELD(self, DLG_MANAGER, gui_manager*);
+    char face[0x80];
+    float size;
+    int height, bold, italic, i;
+
+    reader_int(r, KEY(0x00571CDC), FIELD(screen, 0xC, int), &FIELD(self, DLG_DESIGN_W, int));
+    reader_int(r, KEY(0x00571CCC), FIELD(screen, 0x10, int), &FIELD(self, DLG_DESIGN_H, int));
+    reader_int(r, KEY(0x00571CC4), 0, &FIELD(self, DLG_SCALED, int));       /* NoScale */
+    FIELD(self, DLG_SCALED, int) = !FIELD(self, DLG_SCALED, int);
+    reader_int(r, KEY(0x00571CBC), 1, &FIELD(self, DLG_POPUP, int));        /* Popup */
+    if (FIELD(self, DLG_SCALED, int)) {
+        FIELD(self, 0x9C4, float) = (float) ((double) FIELD(object_screen(self), 0xC, int)
+                                             / FIELD(self, DLG_DESIGN_W, int));
+        FIELD(self, 0x9C8, float) = (float) ((double) FIELD(object_screen(self), 0x10, int)
+                                             / FIELD(self, DLG_DESIGN_H, int));
+    } else if (FIELD(self, DLG_DESIGN_W, int) * 2 > FIELD(object_screen(self), 0xC, int)
+               || FIELD(self, DLG_DESIGN_H, int) * 2 > FIELD(object_screen(self), 0x10, int)) {
+        FIELD(self, 0x9C8, float) = 1.0f;
+        FIELD(self, 0x9C4, float) = 1.0f;
+    }
+
+    if (FIELD(self, DLG_POPUP, int)) {
+        DWORD align;
+
+        reader_string(r, KEY(0x00571CA8), WORD_MIDDLE, r->text);            /* DlgAlignV */
+        if (!game_FUN_0053b6e0(r->text, WORD_TOP))
+            align = 8;
+        else
+            align = game_FUN_0053b6e0(r->text, WORD_BOTTOM) ? 0x10 : 0x20;
+        reader_string(r, KEY(0x00571C88), WORD_CENTER, r->text);            /* DlgAlignH */
+        if (!game_FUN_0053b6e0(r->text, WORD_RIGHT))
+            dialog_set_170(self, NULL, align | 4);
+        else if (!game_FUN_0053b6e0(r->text, WORD_LEFT))
+            dialog_set_170(self, NULL, align | 1);
+        else
+            dialog_set_170(self, NULL, align | 2);
+    } else {
+        FIELD(self, DLG_ALIGN, DWORD) = 9;
+    }
+
+    for (i = 0; i < 10; i++) {
+        char key[0x80];
+        int colour;
+
+        game_FUN_0053a11f(key, NUMBERED_KEY, WORD_TEXT_COLOR, i);
+        reader_int(r, key, (int) default_text_colours[i], &colour);
+        FIELD(self, DLG_COLOURS + 4 * i, COLORREF) = colour;
+    }
+
+    reader_string(r, KEY(0x00571C54), NO_TEXT, r->text);                    /* MouseCursorAnim */
+    if (r->text[0])
+        FIELD(self, 0x95C, int) = dialog_find(self, NULL, r->text);
+
+    reader_string(r, KEY(0x00571C44), NO_TEXT, r->text);                    /* BackgroundFile */
+    if (r->text[0] && FIELD(self, DLG_BACKGROUND, BYTE*)) {
+        BYTE* image = game_FUN_00517ca0(r->text, 0, game_resources);
+
+        if (image) {
+            BYTE* palette;
+            void* picture;
+
+            FIELD(self, 0x7F10, DWORD) = 1;
+            if (FIELD(self, DLG_PARENT, BYTE*))
+                FIELD(self, 0x9B8, DWORD) = FIELD(FIELD(self, DLG_BACKGROUND, BYTE*), 0x2C, DWORD);
+            picture = game_new(0x80, GAMEUI_CPP, 0x367);
+            if (picture)
+                picture = game_FUN_004ca650(picture, NULL, FIELD(self, 0x7F20, int), 1);
+            FIELD(FIELD(self, DLG_BACKGROUND, BYTE*), 0x2C, void*) = picture;
+            palette = FIELD(self, DLG_BACKDROP, BYTE*);
+            picture = FIELD(FIELD(self, DLG_BACKGROUND, BYTE*), 0x2C, void*);
+            VIRTUAL(picture, 0x10, picture_fill)(picture, NULL, image_pixels(image),
+                                                 image_width(image), image_height(image),
+                                                 image_width(image), image_width(image), 0x22B,
+                                                 r->video_mode,
+                                                 palette ? FIELD(palette, 0x708, DWORD) : 0, 4,
+                                                 palette ? FIELD(palette, 0x70C, DWORD) : 0, 0, 0,
+                                                 2, 1, 0, 0x80, 0xFF00FF);
+            background_invalidate(FIELD(self, DLG_BACKGROUND, BYTE*));
+            game_FUN_005184b0(image);
+        }
+    } else if (FIELD(self, DLG_PARENT, BYTE*)) {
+        FIELD(self, DLG_BACKGROUND, BYTE*) = FIELD(FIELD(self, DLG_PARENT, BYTE*), DLG_BACKGROUND,
+                                                   BYTE*);
+    }
+
+    /* The font: PointSize, or FontHeight over it, rounded up; the manager may override it. */
+    reader_string(r, KEY(0x00571C38), NO_TEXT, face);                       /* FontName */
+    game_FUN_004bc690(&r->file, NULL, KEY(0x00571C2C), 0.0f, &size);        /* PointSize */
+    height = (int) size;
+    if (x87_less(height, size))
+        height++;
+    game_FUN_004bc690(&r->file, NULL, KEY(0x00571C20), 0.0f, &size);        /* FontHeight */
+    if (size > 0.0f) {
+        height = (int) size;
+        if (x87_less(height, size))
+            height++;
+    }
+    if (face[0] && height) {
+        if (FIELD(self, DLG_FONT, HFONT))
+            DeleteObject(FIELD(self, DLG_FONT, HFONT));
+        FIELD(self, DLG_SCREEN_SIZE, int) = (int) ((double) height * FIELD(self, 0x9C8, float));
+        text_copy((char*) self + DLG_FACE, face);
+        reader_int(r, KEY(0x00571C18), 0, &bold);                           /* Bold */
+        reader_int(r, KEY(0x00571C10), 0, &italic);                         /* Italic */
+        if ((manager ? manager->font_name : NO_TEXT)[0]) {
+            text_copy((char*) self + DLG_FACE, manager->font_name);
+            bold = manager->font_bold;
+            italic = manager->font_italic;
+        }
+        height = (int) ((double) (manager ? manager->font_grow : 0.0f)
+                        + FIELD(self, DLG_SCREEN_SIZE, int));
+        FIELD(self, DLG_SCREEN_SIZE, int) = height;
+        FIELD(self, DLG_FONT, HFONT) = CreateFontA(height, 0, 0, 0, WEIGHT(bold), italic, 0, 0,
+                                                   DEFAULT_CHARSET, 0, 0, PROOF_QUALITY,
+                                                   VARIABLE_PITCH, (char*) self + DLG_FACE);
+        FIELD(self, 0x10C, int) = italic;
+        FIELD(self, 0x108, int) = bold;
+    }
+
+    /* In 8-bit modes, a palette of its own (PaletteFile) unless the manager has one. */
+    if (FIELD(FIELD(game_main, 0x10, BYTE*), 0x28, int) == 8) {
+        BOOL own_palette = TRUE;
+
+        if (manager) {
+            if (gui_manager_unknown_1f8(manager))
+                own_palette = FALSE;
+            FIELD(self, DLG_BACKDROP, void*) = FIELD(manager, 0x34, void*);
+        }
+        reader_string(r, KEY(0x00571C04), NO_TEXT, r->text);                /* PaletteFile */
+        if (r->text[0] && own_palette) {
+            BYTE* entry = game_FUN_004ee0f0(game_resources, NULL, r->text, 1);
+
+            if (entry) {
+                void* palette = game_new(0x718, GAMEUI_CPP, 0x3B6);
+
+                if (palette)
+                    palette = game_FUN_004bb350(palette, NULL, FIELD(entry, 0x14, BYTE*));
+                FIELD(self, DLG_BACKDROP, void*) = palette;
+                FIELD(self, 0x7F0C, DWORD) = 1;
+            }
+        }
+        if (manager && own_palette)
+            gui_manager_set_busy(manager, NULL, FIELD(self, DLG_BACKDROP, int));
+    }
+
+    /* BackgroundImage: a picture control behind the others, fitted to it once all is read. */
+    reader_string(r, KEY(0x00571BF4), NO_TEXT, r->background_image);
+    if (r->background_image[0]) {
+        RECT area;
+        BYTE* backdrop;
+
+        area.left = 0;
+        area.top = 0;
+        area.right = FIELD(self, DLG_AREA, RECT).right - FIELD(self, DLG_AREA, RECT).left;
+        area.bottom = FIELD(self, DLG_AREA, RECT).bottom - FIELD(self, DLG_AREA, RECT).top;
+        backdrop = game_new(0x1EC, GAMEUI_CPP, 0x3CD);
+        if (backdrop)
+            backdrop = picture_control_construct(backdrop, NULL, 0, &area, self);
+        control_set_name(backdrop, NULL, BACKDROP_NAME);
+        FIELD(backdrop, 0x1E0, DWORD) = 1;
+        object_add_child(FIELD(self, DLG_CONTAINER, void*), NULL, backdrop, -1);
+        dialog_attach(self, NULL, backdrop, 0, 0);
+    }
+}
+
+/* An anim: MSecDelay, LoopCount, and its frames (Files1), as resources or files. */
+static void reader_anim(dialog_reader* r, BYTE* entry)
+{
+    BYTE* self = r->dialog;
+    const char* name = (const char*) entry;
+    text_tokens files;
+    ui_anim** anim;
+    int delay, repeats;
+    char* file;
+
+    if (FIELD(self, DLG_CONTROL_COUNT, int) >= DLG_ANIM_LIMIT)
+        return;
+    anim = &FIELD(self, DLG_CONTROLS + 4 * FIELD(self, DLG_CONTROL_COUNT, int), ui_anim*);
+    *anim = game_new(sizeof(ui_anim), GAMEUI_CPP, 0x3DF);
+    if (*anim)
+        *anim = anim_construct(*anim, NULL, FIELD(self, 0x7F20, DWORD), 1);
+    reader_int(r, KEY(0x00571BDC), 0, &delay);                              /* MSecDelay */
+    reader_int(r, KEY(0x00571BD0), 0, &repeats);                            /* LoopCount */
+    anim_set_delay(*anim, NULL, delay);
+    anim_set_repeats(*anim, NULL, repeats);
+    reader_string(r, KEY(0x00571BC8), NO_TEXT, r->text);                    /* Files1 */
+    tokens_begin(&files, NULL, r->text);
+    for (file = tokens_next(&files, NULL, FILE_SEPARATOR); file;
+         file = tokens_next(&files, NULL, FILE_SEPARATOR)) {
+        if (game_FUN_004ee0f0(game_resources, NULL, name, 1))
+            anim_add_resource(*anim, NULL, name, game_resources, FIELD(self, 0x114, DWORD),
+                              FIELD(self, DLG_BACKDROP, BYTE*));
+        else if (game_FUN_004ee0f0(game_resources, NULL, file, 1))
+            anim_add_resource(*anim, NULL, file, game_resources, FIELD(self, 0x114, DWORD),
+                              FIELD(self, DLG_BACKDROP, BYTE*));
+        else
+            anim_add_file(*anim, NULL, file, FIELD(self, DLG_BACKDROP, BYTE*));
+    }
+    FIELD(entry, ENTRY_VALUE, ui_anim*) = *anim;
+    FIELD(self, DLG_CONTROL_COUNT, int)++;
+}
+
+/* A sound: File (or the section's own resource), Static, Copies. */
+static void reader_sound(dialog_reader* r, BYTE* entry)
+{
+    BYTE* self = r->dialog;
+    const char* name = (const char*) entry;
+    void** sound;
+    int is_static, copies, mode;
+
+    if (FIELD(self, DLG_SOUND_COUNT, int) >= DLG_SOUND_LIMIT)
+        return;
+    reader_int(r, KEY(0x00571BC0), 1, &is_static);                          /* Static */
+    reader_int(r, KEY(0x00571BB8), 0, &copies);                             /* Copies */
+    reader_string(r, KEY(0x00571BB0), NO_TEXT, r->text);                    /* File */
+    mode = is_static ? 1 : 2;
+    sound = &FIELD(self, DLG_SOUNDS + 4 * FIELD(self, DLG_SOUND_COUNT, int), void*);
+    if (game_FUN_004ee0f0(game_resources, NULL, name, 1)) {
+        *sound = game_FUN_004bffe0(FIELD(self, 0x114, DWORD), name, mode, 3, copies, -1);
+    } else if (game_FUN_004ee0f0(game_resources, NULL, r->text, 1)) {
+        *sound = game_FUN_004bffe0(FIELD(self, 0x114, DWORD), r->text, mode, 3, copies, -1);
+    } else {
+        *sound = game_new(0x1F8, GAMEUI_CPP, 0x41E);
+        if (*sound)
+            *sound = game_FUN_004c0160(*sound, NULL, FIELD(self, 0x114, DWORD), 1);
+        game_FUN_004c0a70(*sound, NULL, r->text, 0, mode, 3, copies, -1);
+    }
+    FIELD(entry, ENTRY_VALUE, void*) = *sound;
+    FIELD(self, DLG_SOUND_COUNT, int)++;
+}
+
+/* ---- Controls ---- */
+
+/*
+    Each type's keys. Reading Set_Default every type's keys are read, into their defaults;
+    reading a control only its own type's, once the control is made. Each gives the control.
+*/
+static BYTE* reader_button(dialog_reader* r)
+{
+    BYTE* self = r->dialog;
+    BYTE* button = NULL;
+
+    if (!r->is_default) {
+        BYTE* made;
+
+        if (is_type(r, KEY(0x00571B58))) {                                  /* BUTTON */
+            made = game_new(0x1F0, GAMEUI_CPP, 0x45B);
+            if (made)
+                made = button_construct(made, NULL, 0, &r->area, self);
+        } else if (is_type(r, KEY(0x00571B40))) {                           /* SCROLLDOWN */
+            made = game_new(0x1F0, GAMEUI_CPP, 0x45C);
+            if (made)
+                made = kind_button_construct(made, NULL, 10, 0, &r->area, self);
+        } else {                                                            /* SCROLLUP */
+            made = game_new(0x1F0, GAMEUI_CPP, 0x45D);
+            if (made)
+                made = kind_button_construct(made, NULL, 9, 0, &r->area, self);
+        }
+        button = dialog_add(self, NULL, made, r->keys.group, 0);
+    }
+    keys_string(r, KEY(0x00571B34), r->more.anim_norm, r->text);            /* AnimNorm */
+    if (!r->is_default)
+        button_set_normal(button, NULL, reader_find(r, r->text));
+    keys_string(r, KEY(0x00571B28), r->more.anim_focus, r->text);           /* AnimFocus */
+    if (!r->is_default)
+        button_set_over(button, NULL, reader_find(r, r->text));
+    keys_string(r, KEY(0x00571B1C), r->more.anim_push, r->text);            /* AnimPush */
+    if (!r->is_default)
+        button_set_pressed(button, NULL, reader_find(r, r->text));
+    keys_string(r, KEY(0x00571B10), r->more.anim_disable, r->text);         /* AnimDisable */
+    if (!r->is_default)
+        button_set_disabled(button, NULL, reader_find(r, r->text));
+    keys_string(r, KEY(0x00571B04), r->more.sort_list, r->text);            /* SortLBName */
+    if (!r->is_default)
+        button_set_popup(button, NULL, (void*) reader_find(r, r->text));
+    return button;
+}
+
+/* MULTISTATE: NumStates, Default, and State<n>/StateText<n> from 0 while either is there. */
+static BYTE* reader_multistate(dialog_reader* r)
+{
+    BYTE* option = NULL;
+    int count, value, n = 0;
+
+    if (!r->is_default) {
+        option = game_new(0x1F8, GAMEUI_CPP, 0x474);
+        if (option)
+            option = option_construct(option, NULL, 0, &r->area, r->dialog);
+        option = dialog_add(r->dialog, NULL, option, r->keys.group, 0);
+    }
+    keys_int(r, KEY(0x00571AEC), &r->more.num_states, &count);             /* NumStates */
+    if (!r->is_default)
+        option_set_count(option, NULL, count);
+    keys_int(r, KEY(0x00571AE4), &r->more.value, &value);                  /* Default */
+    if (!r->is_default)
+        option_select(option, NULL, value);
+    while (keys_numbered(r, WORD_STATE, n, r->more.states, r->state)
+           | keys_numbered(r, WORD_STATE_TEXT, n, r->more.state_texts, r->state_text)) {
+        if (!r->is_default) {
+            /* The original keeps the text in a global on its way. */
+            const char* text = r->state_text[0] ? r->state_text : NULL;
+
+            *(const char**) 0x00661748 = text;
+            option_set(option, NULL, n, (ui_anim*) reader_find(r, r->state), text);
+        }
+        n++;
+        if (r->is_default && n >= STATE_LIMIT)
+            break;
+    }
+    return option;
+}
+
+/* LISTBOX: its capacity, selection, sorting, colours, items (an '@' item is an anim), picture. */
+static BYTE* reader_list(dialog_reader* r)
+{
+    BYTE* list = NULL;
+    int value = 0;
+
+    reader_int(r, KEY(0x00571ABC), 100, r->is_default ? &r->more.max_items : &value);  /* MaxItems */
+    if (!r->is_default) {
+        list = game_new(0x250, GAMEUI_CPP, 0x4A3);
+        if (list)
+            list = list_construct(list, NULL, 0, value, &r->area, r->dialog);
+        list = dialog_add(r->dialog, NULL, list, r->keys.group, 0);
+    }
+    keys_int(r, KEY(0x00571AE4), &r->more.value, &value);                  /* Default */
+    if (!r->is_default)
+        list_select_all(list, NULL, value);
+    /* AutoSort falls back on Default's default, as the original has it. */
+    reader_int(r, KEY(0x00571AB0), r->more.value, r->is_default ? &r->more.auto_sort : &value);
+    if (!r->is_default)
+        list_set_21c(list, NULL, value);
+    keys_int(r, KEY(0x00571AA4), &r->more.select_colour, &value);          /* SelectColor */
+    if (!r->is_default)
+        list_set_208(list, NULL, value);
+    keys_int(r, KEY(0x00571A98), &r->more.selectable, &value);             /* Selectable */
+    if (!r->is_default)
+        list_set_224(list, NULL, value);
+    keys_int(r, KEY(0x00571A88), &r->more.allow_scroll, &value);           /* AllowWScroll */
+    if (!r->is_default)
+        list_set_228(list, NULL, value);
+    keys_int(r, KEY(0x00571A78), &r->more.select_box_colour, &value);      /* SelectBoxColor */
+    if (!r->is_default)
+        list_set_colour_2(list, NULL, value);
+    keys_int(r, KEY(0x00571A68), &r->more.item_box_colour, &value);        /* ItemBoxColor */
+    if (!r->is_default)
+        list_set_colour(list, NULL, value, -1);
+    reader_items(r, list, TRUE);
+    reader_pictures(r, list, KEY(0x00571B34), r->more.anim_norm, 4);       /* AnimNorm */
+    return list;
+}
+
+/* RADIOBUTTON: Default, and its off and on pictures. */
+static BYTE* reader_radio(dialog_reader* r)
+{
+    BYTE* radio = NULL;
+    int value;
+
+    if (!r->is_default) {
+        radio = game_new(0x1F8, GAMEUI_CPP, 0x4E3);
+        if (radio)
+            radio = radio_construct(radio, NULL, 0, &r->area, r->dialog);
+        radio = dialog_add(r->dialog, NULL, radio, r->keys.group, 0);
+    }
+    keys_int(r, KEY(0x00571AE4), &r->more.value, &value);                  /* Default */
+    if (!r->is_default)
+        option_select(radio, NULL, value);
+    keys_string(r, KEY(0x00571A4C), r->more.anim_off, r->text);            /* AnimOff */
+    if (!r->is_default)
+        option_set(radio, NULL, 0, (ui_anim*) reader_find(r, r->text), NULL);
+    keys_string(r, KEY(0x00571A44), r->more.anim_on, r->text);             /* AnimOn */
+    if (!r->is_default)
+        option_set(radio, NULL, 1, (ui_anim*) reader_find(r, r->text), NULL);
+    return radio;
+}
+
+/* STATIC and STATICTEXT: a picture, or a label, with one picture. */
+static BYTE* reader_picture(dialog_reader* r, BOOL label, int line)
+{
+    BYTE* control = NULL;
+
+    if (!r->is_default) {
+        control = game_new(0x1EC, GAMEUI_CPP, line);
+        if (control && label)
+            control = label_construct(control, NULL, 0, &r->area, r->dialog, NULL, 0xFFFF);
+        else if (control)
+            control = picture_control_construct(control, NULL, 0, &r->area, r->dialog);
+        control = dialog_add(r->dialog, NULL, control, r->keys.group, 0);
+    }
+    keys_string(r, KEY(0x00571B34), r->more.anim_norm, r->text);            /* AnimNorm */
+    if (!r->is_default)
+        control_set_picture(control, NULL, 0, reader_find(r, r->text));
+    return control;
+}
+
+/*
+    VSCROLLBAR and HSCROLLBAR: TickNum, Default, Scale, track and thumb pictures. Without a
+    size the slider takes its thumb's; without ticks it steps by pixels.
+*/
+static BYTE* reader_scroll_bar(dialog_reader* r)
+{
+    BYTE* slider = NULL;
+    int ticks, value, scale;
+
+    if (!r->is_default) {
+        slider = game_new(0x220, GAMEUI_CPP, 0x500);
+        if (slider)
+            slider = slider_construct(slider, NULL, 7, 0, &r->area, r->dialog);
+        slider = dialog_add(r->dialog, NULL, slider, r->keys.group, 0);
+    }
+    /* Set_Default gets here with no control, where the original faults. */
+    if (is_type(r, KEY(0x00571A24)) && slider)                             /* HSCROLLBAR */
+        FIELD(slider, CTL_TYPE, int) = 8;
+    keys_int(r, KEY(0x00571A1C), &r->more.tick_num, &ticks);               /* TickNum */
+    keys_int(r, KEY(0x00571AE4), &r->more.value, &value);                  /* Default */
+    keys_int(r, KEY(0x00571A14), &r->more.scale, &scale);                  /* Scale */
+    if (!r->is_default) {
+        slider_set_steps(slider, NULL, ticks);
+        slider_set_range(slider, NULL, scale);
+    }
+    keys_string(r, KEY(0x00571B34), r->more.anim_norm, r->text);            /* AnimNorm */
+    if (!r->is_default)
+        FIELD(slider, SLIDER_TRACK, DWORD) = reader_find(r, r->text);
+    reader_pictures(r, slider, KEY(0x00571A08), r->more.anim_thumb, 3);    /* AnimThumb */
+    if (!r->is_default) {
+        RECT* design = &FIELD(slider, CTL_DESIGN, RECT);
+
+        if (design->right == design->left) {
+            ui_anim* thumb = FIELD(slider, 0x16C, ui_anim*);
+
+            design->right = thumb->frames[0]->width + design->left;
+            design->bottom = design->top + thumb->frames[0]->height;
+        }
+        slider_set_value(slider, NULL, value,
+                         ticks ? ticks : design->right - design->left + 1);
+        slider_measure_thumb(slider, NULL, 0);
+    }
+    return slider;
+}
+
+/* EDITBOX: MaxLen, its key and full sounds, pictures. */
+static BYTE* reader_edit(dialog_reader* r)
+{
+    BYTE* edit = NULL;
+    int value;
+
+    if (!r->is_default) {
+        edit = game_new(0x230, GAMEUI_CPP, 0x52C);
+        if (edit)
+            edit = edit_construct(edit, NULL, 0, &r->area, r->dialog, 100, 0, 0);
+        edit = dialog_add(r->dialog, NULL, edit, r->keys.group, 0);
+    }
+    keys_int(r, KEY(0x005719F8), &r->more.max_length, &value);             /* MaxLen */
+    if (!r->is_default)
+        edit_set_capacity(edit, NULL, value);
+    keys_string(r, KEY(0x005719EC), r->defaults.sound_click, r->text);     /* SoundClick */
+    if (!r->is_default)
+        edit_set_type_sound(edit, NULL, (void*) reader_find(r, r->text));
+    keys_string(r, KEY(0x005719E0), r->more.sound_end, r->text);           /* SoundEnd */
+    if (!r->is_default)
+        edit_set_full_sound(edit, NULL, (void*) reader_find(r, r->text));
+    reader_pictures(r, edit, KEY(0x00571B34), r->more.anim_norm, 4);       /* AnimNorm */
+    return edit;
+}
+
+/* DROPDOWNLIST: the arrow's pictures and sounds, list height and items, colours, backgrounds. */
+static BYTE* reader_combo(dialog_reader* r, const char* name)
+{
+    char sounds[4][0x80];
+    BYTE* combo = NULL;
+    BYTE* list = NULL;
+    int margin[2], colour, drop_colour, value, i;
+
+    if (!r->is_default) {
+        combo = game_new(0x21C, GAMEUI_CPP, 0x54F);
+        if (combo)
+            combo = combo_construct(combo, NULL, 0, &r->area, r->dialog, NULL, 0xFFFF);
+        combo = dialog_add(r->dialog, NULL, combo, r->keys.group, 0);
+    }
+    keys_string(r, KEY(0x00571B34), r->more.anim_norm, r->text);            /* AnimNorm */
+    if (!r->is_default)
+        button_set_normal(FIELD(combo, COMBO_BUTTON, BYTE*), NULL, reader_find(r, r->text));
+    keys_string(r, KEY(0x00571B28), r->more.anim_focus, r->text);           /* AnimFocus */
+    if (!r->is_default)
+        button_set_over(FIELD(combo, COMBO_BUTTON, BYTE*), NULL, reader_find(r, r->text));
+    keys_string(r, KEY(0x00571B1C), r->more.anim_push, r->text);            /* AnimPush */
+    if (!r->is_default)
+        button_set_pressed(FIELD(combo, COMBO_BUTTON, BYTE*), NULL, reader_find(r, r->text));
+    keys_string(r, KEY(0x00571A08), r->more.anim_thumb, r->text);           /* AnimThumb */
+    if (!r->is_default) {
+        BYTE* slider = FIELD(combo, COMBO_SLIDER, BYTE*);
+
+        for (i = 0; i < 4; i++)
+            control_set_picture(slider, NULL, i, reader_find(r, r->text));
+        slider_measure_thumb(slider, NULL, 0);
+    }
+    keys_int(r, KEY(0x005719B8), &r->more.list_height, &value);            /* ListHeight */
+    if (!r->is_default) {
+        combo_set_drop(combo, NULL, value);
+        list = FIELD(combo, COMBO_LIST, BYTE*);
+    }
+    reader_items(r, list, FALSE);
+    /* Set_Default gets here with no control, where the original faults. */
+    if (combo)
+        control_set_name(combo, NULL, name);
+
+    reader_int(r, KEY(0x005719AC), 0, &margin[0]);                          /* TextLMargin */
+    reader_int(r, KEY(0x005719A0), 0, &margin[1]);                          /* TextTMargin */
+    reader_int(r, WORD_TEXT_COLOR, r->defaults.colour, &colour);
+    reader_int(r, KEY(0x00571994), r->defaults.drop_colour, &drop_colour);  /* DropColor */
+    reader_string(r, KEY(0x00571988), r->defaults.sound_norm, sounds[0]);   /* SoundNorm */
+    reader_string(r, KEY(0x0057197C), r->defaults.sound_focus, sounds[1]);  /* SoundFocus */
+    reader_string(r, KEY(0x00571970), r->defaults.sound_push, sounds[2]);   /* SoundPush */
+    reader_string(r, KEY(0x005719EC), r->defaults.sound_click, sounds[3]);  /* SoundClick */
+    if (!r->is_default) {
+        for (i = 0; i < 4; i++)
+            control_set_194(FIELD(combo, COMBO_BUTTON, BYTE*), NULL, i, reader_find(r, sounds[i]));
+        FIELD(combo, 0xE8, int) = margin[0];
+        FIELD(combo, 0xEC, int) = margin[1];
+        control_set_colour(combo, NULL, colour);
+        control_set_shadow_colour(combo, NULL, drop_colour);
+        combo_layout(combo);
+    }
+    keys_int(r, KEY(0x00571AE4), &r->more.value, &value);                  /* Default */
+    if (!r->is_default) {
+        int index = value - 1 < 0 ? 0 : value - 1;
+
+        list_select_all(list, NULL, index);
+        control_set_text(combo, NULL, list_text(list, NULL, index));
+    }
+    keys_string(r, KEY(0x00571960), r->more.anim_text_back, r->text);      /* AnimTextBack */
+    if (!r->is_default && r->text[0])
+        combo_set_text_back(combo, NULL, (ui_anim*) reader_find(r, r->text));
+    keys_string(r, KEY(0x00571950), r->more.anim_list_back, r->text);      /* AnimListBack */
+    if (!r->is_default && r->text[0])
+        combo_set_list_back(combo, NULL, (ui_anim*) reader_find(r, r->text));
+    keys_string(r, KEY(0x00571940), r->more.anim_scroll_back, r->text);    /* AnimScrollBack */
+    if (!r->is_default && r->text[0])
+        combo_set_slider_back(combo, NULL, (ui_anim*) reader_find(r, r->text));
+    return combo;
+}
+
+/* The keys every control has; Set_Default reads them into the defaults. */
+static void reader_common(dialog_reader* r, int margin[2])
+{
+    control_keys* d = &r->defaults;
+    control_keys* k = &r->keys;
+    float height;
+    int rounded;
+
+    keys_string(r, KEY(0x00571C38), d->font_name, k->font_name);           /* FontName */
+    game_FUN_004bc690(&r->file, NULL, KEY(0x00571C20), (float) d->font_height, &height);
+    rounded = (int) height;                                                 /* FontHeight, up */
+    if (x87_less(rounded, height))
+        rounded++;
+    if (r->is_default)
+        d->font_height = rounded;
+    else
+        k->font_height = rounded;
+    keys_string(r, KEY(0x00571938), d->anchor, k->anchor);                 /* Anchor */
+    keys_int(r, KEY(0x0057192C), &d->rel_anchor, &k->rel_anchor);          /* RelAnchor */
+    keys_int(r, KEY(0x00571920), &d->moveable, &k->moveable);              /* Moveable */
+    keys_string(r, KEY(0x00571914), d->text_align, k->text_align);         /* TextAlign */
+    keys_string(r, KEY(0x00571908), d->text_align_v, k->text_align_v);     /* TextAlignV */
+    reader_int(r, KEY(0x005719AC), 0, &margin[0]);                          /* TextLMargin */
+    reader_int(r, KEY(0x005719A0), 0, &margin[1]);                          /* TextTMargin */
+    keys_int(r, KEY(0x00571900), &d->fx_delay, &k->fx_delay);              /* FXDelay */
+    keys_string(r, KEY(0x005718FC), d->fx, k->fx);                         /* FX */
+    keys_string(r, KEY(0x005718F4), d->fx_sound, k->fx_sound);             /* FXSound */
+    keys_string(r, KEY(0x005718E8), d->fx_anim_in, k->fx_anim_in);         /* FXAnimIn */
+    keys_string(r, KEY(0x005718DC), d->fx_sound_in, k->fx_sound_in);       /* FXSoundIn */
+    keys_string(r, KEY(0x005718D0), d->fx_anim_out, k->fx_anim_out);       /* FXAnimOut */
+    keys_string(r, KEY(0x005718C4), d->fx_sound_out, k->fx_sound_out);     /* FXSoundOut */
+    keys_string(r, KEY(0x005718B8), d->mouse_anim, k->mouse_anim);         /* MouseAnim */
+    keys_string(r, KEY(0x00571988), d->sound_norm, k->sound_norm);         /* SoundNorm */
+    keys_string(r, KEY(0x0057197C), d->sound_focus, k->sound_focus);       /* SoundFocus */
+    keys_string(r, KEY(0x00571970), d->sound_push, k->sound_push);         /* SoundPush */
+    keys_string(r, KEY(0x005719EC), d->sound_click, k->sound_click);       /* SoundClick */
+    keys_string(r, KEY(0x005718B0), d->text, k->text);                     /* Text */
+    keys_int(r, KEY(0x005718A4), &d->attach_id, &k->attach_id);            /* AttachId */
+    keys_int(r, WORD_TEXT_COLOR, &d->colour, &k->colour);
+    keys_int(r, KEY(0x00571994), &d->drop_colour, &k->drop_colour);        /* DropColor */
+    keys_int(r, KEY(0x0057189C), &d->key_bind, &k->key_bind);              /* KeyBind */
+    keys_int(r, KEY(0x00571C10), &d->italic, &k->italic);                  /* Italic */
+    keys_int(r, KEY(0x00571C18), &d->bold, &k->bold);                      /* Bold */
+    keys_int(r, KEY(0x00571890), &d->text_drop, &k->text_drop);            /* TextDrop */
+    keys_int(r, KEY(0x00571884), &d->source_blit, &k->source_blit);        /* SourceBlit */
+    keys_int(r, KEY(0x0057187C), &d->enable, &k->enable);                  /* Enable */
+    keys_int(r, KEY(0x00571874), &d->show, &k->show);                      /* Show */
+    keys_int(r, KEY(0x0057186C), &d->pre_3d, &k->pre_3d);                  /* Pre3D */
+    keys_int(r, KEY(0x00571860), &d->permanent, &k->permanent);            /* Permanent */
+    keys_int(r, KEY(0x00571854), &d->shape_bounds, &k->shape_bounds);      /* ShapeBounds */
+    reader_string(r, KEY(0x00571848), NO_TEXT, r->tooltip);                 /* ToolTipText */
+}
+
+/* Which way a control's text goes when TextAlign is not RIGHT or CENTER: by type (1 to 10). */
+static const BYTE left_aligned_types[10] = { 0, 0, 0, 1, 0, 0, 1, 1, 1, 0 };
+
+/* The control's own font, when it names one or a size and it differs from the dialog's. */
+static void reader_font(dialog_reader* r, BYTE* control)
+{
+    BYTE* self = r->dialog;
+    gui_manager* manager = FIELD(self, DLG_MANAGER, gui_manager*);
+    control_keys* k = &r->keys;
+
+    if (!k->font_name[0] && !(k->font_height && manager))
+        return;
+    FIELD(control, 0x12C, DWORD) = 1;
+    if (FIELD(control, CTL_FONT, HFONT))
+        DeleteObject(FIELD(control, CTL_FONT, HFONT));
+    FIELD(control, CTL_FONT, HFONT) = NULL;
+    if (k->font_height)
+        FIELD(control, CTL_FONT_HEIGHT, int) = k->font_height;
+    if (k->bold > FW_MEDIUM)
+        k->bold = 1;
+    else if (k->bold > 1)
+        k->bold = 0;
+    if ((manager ? manager->font_name : NO_TEXT)[0]) {
+        text_copy((char*) control + 0x130, manager->font_name);
+        k->bold = manager->font_bold;
+        k->italic = manager->font_italic;
+    }
+    FIELD(control, CTL_FONT_HEIGHT, int) =
+        (int) ((double) (manager ? manager->font_grow : 0.0f) + FIELD(control, CTL_FONT_HEIGHT, int));
+    if (FIELD(control, CTL_FONT_HEIGHT, int) == FIELD(self, DLG_SCREEN_SIZE, int)
+        && k->bold == FIELD(self, 0x108, int) && k->italic == FIELD(self, 0x10C, int))
+        return;
+    FIELD(control, CTL_FONT_HEIGHT, int) =
+        (int) ((double) FIELD(control, CTL_FONT_HEIGHT, int) * FIELD(self, 0x9C8, float));
+    FIELD(control, CTL_FONT, HFONT) = CreateFontA(FIELD(control, CTL_FONT_HEIGHT, int), 0, 0, 0,
+                                                  WEIGHT(k->bold), k->italic, 0, 0,
+                                                  DEFAULT_CHARSET, 0, 0, PROOF_QUALITY,
+                                                  VARIABLE_PITCH, (char*) self + DLG_FACE);
+    text_copy((char*) control + 0x130, (char*) self + DLG_FACE);
+    FIELD(control, 0x158, int) = k->bold;
+    FIELD(control, 0x15C, int) = k->italic;
+}
+
+/* Its text and tooltip: from the manager's language module when it has one, else the file's. */
+static void reader_texts(dialog_reader* r, BYTE* control)
+{
+    gui_manager* manager = FIELD(r->dialog, DLG_MANAGER, gui_manager*);
+    char tip[0x400];
+    int text_id, tip_id;
+
+    /* The original reads the manager's module without a manager, and faults. */
+    if (!manager || !manager->language) {
+        if (r->tooltip[0]) {
+            FIELD(control, CTL_TOOLTIP, char*) =
+                game_FUN_004a4410(text_length(r->tooltip) + 1, GAMEUI_CPP, 0x656);
+            text_copy(FIELD(control, CTL_TOOLTIP, char*), r->tooltip);
+        }
+        if (r->keys.text[0])
+            control_set_text(control, NULL, r->keys.text);
+        return;
+    }
+    reader_int(r, KEY(0x0057183C), 0, &text_id);                            /* LocalTextId */
+    reader_int(r, KEY(0x0057182C), 0, &tip_id);                             /* LocalToolTipId */
+    if (text_id)
+        control_load_text(control, NULL, manager->language, text_id);
+    if (!tip_id)
+        return;
+    if (LoadStringA(manager->language, tip_id, tip, sizeof tip)) {
+        if (FIELD(control, CTL_TOOLTIP, char*))
+            game_FUN_004a4450(FIELD(control, CTL_TOOLTIP, char*), GAMEUI_CPP, 0x646);
+        FIELD(control, CTL_TOOLTIP, char*) = game_FUN_004a4410(text_length(tip) + 1, GAMEUI_CPP, 0x647);
+        text_copy(FIELD(control, CTL_TOOLTIP, char*), tip);
+    } else {
+        game_FUN_0053a11f(tip, TIP_FAILED, tip_id);
+        if (FIELD(control, CTL_TOOLTIP, char*))
+            game_FUN_004a4450(FIELD(control, CTL_TOOLTIP, char*), GAMEUI_CPP, 0x64D);
+        FIELD(control, CTL_TOOLTIP, char*) = NULL;
+    }
+}
+
+/* Give a made control its common keys. */
+static void reader_apply(dialog_reader* r, BYTE* control, const char* name, const int margin[2])
+{
+    control_keys* k = &r->keys;
+    RECT* design = &FIELD(control, CTL_DESIGN, RECT);
+    DWORD align;
+
+    VIRTUAL(control, 0xD0, method_1)(control, NULL, k->attach_id);
+    FIELD(control, CTL_ID, DWORD) = k->group;
+    control_set_link(control, NULL, (BYTE*) reader_find(r, k->anchor), k->rel_anchor);
+    control_set_name(control, NULL, name);
+    FIELD(control, 0x168, int) = k->moveable;
+    if (design->right == design->left) {
+        ui_anim* anim = is_type(r, KEY(0x00571AF8)) || is_type(r, KEY(0x00571A54))  /* MULTISTATE, RADIOBUTTON */
+                            ? option_current(control)->anim
+                            : FIELD(control, 0x16C, ui_anim*);
+
+        design->right = anim->frames[0]->width + design->left;
+        design->bottom = design->top + anim->frames[0]->height;
+    }
+    reader_font(r, control);
+    if (k->source_blit)
+        FIELD(control, 0xA4, DWORD) = 1;
+    control_set_a0(control, NULL, k->shape_bounds);
+    reader_texts(r, control);
+    FIELD(control, 0xE8, int) = margin[0];
+    FIELD(control, 0xEC, int) = margin[1];
+    control_set_shadow(control, NULL, k->text_drop != 0);
+    control_set_colour(control, NULL, k->colour);
+    control_set_shadow_colour(control, NULL, k->drop_colour);
+
+    if (!game_FUN_0053b6e0(k->text_align_v, WORD_TOP))
+        align = 8;
+    else
+        align = game_FUN_0053b6e0(k->text_align_v, WORD_BOTTOM) ? 0x10 : 0x20;
+    if (!game_FUN_0053b6e0(k->text_align, WORD_RIGHT))
+        align |= 4;
+    else if (!game_FUN_0053b6e0(k->text_align, WORD_CENTER))
+        align |= 2;
+    else {
+        unsigned type = FIELD(control, CTL_TYPE, unsigned) - 1;
+
+        align |= type < 10 && !left_aligned_types[type] ? 2 : 1;
+    }
+    control_set_align(control, NULL, align);
+
+    /* FX: how it comes and goes. */
+    {
+        static const struct { const char* name; int kind; } slides[] = {
+            { KEY(0x00571804), 100 },                                       /* GROW */
+            { KEY(0x005717FC), 101 },                                       /* LSLIDE */
+            { KEY(0x005717F4), 103 },                                       /* TSLIDE */
+            { KEY(0x005717EC), 102 },                                       /* RSLIDE */
+            { KEY(0x005717E4), 104 },                                       /* BSLIDE */
+        };
+        int i;
+
+        for (i = 0; i < 5; i++) {
+            if (!game_FUN_0053b6e0(k->fx, slides[i].name)) {
+                control_set_animation(control, NULL, slides[i].kind, reader_find(r, k->fx_sound),
+                                      TRUE, k->fx_delay, (DWORD) -1);
+                break;
+            }
+        }
+        if (i == 5 && !game_FUN_0053b6e0(k->fx, KEY(0x005717DC))) {          /* ANIM */
+            control_set_animation(control, NULL, 106, 0, TRUE, 0, (DWORD) -1);
+            FIELD(control, 0x184, DWORD) = reader_find(r, k->fx_anim_in);
+            FIELD(control, 0x188, DWORD) = reader_find(r, k->fx_anim_out);
+            FIELD(control, 0x1AC, DWORD) = reader_find(r, k->fx_sound_in);
+            FIELD(control, 0x1B0, DWORD) = reader_find(r, k->fx_sound_out);
+        }
+    }
+
+    control_set_194(control, NULL, 0, reader_find(r, k->sound_norm));
+    control_set_194(control, NULL, 1, reader_find(r, k->sound_focus));
+    control_set_194(control, NULL, 2, reader_find(r, k->sound_push));
+    control_set_194(control, NULL, 3, reader_find(r, k->sound_click));
+    VIRTUAL(control, 0xC4, method_1)(control, NULL, k->enable != 0);
+    control_show(control, NULL, k->show != 0, TRUE);
+    FIELD(control, 0x180, DWORD) = reader_find(r, k->mouse_anim);
+    FIELD(control, 0x1D8, DWORD) = k->key_bind;
+    FIELD(control, 0x1DC, DWORD) = !k->pre_3d;
+    FIELD(control, 0x1E0, DWORD) = k->permanent;
+    FIELD(control, 0x1CC, BYTE*) = VIRTUAL(control, 0xC0, control_state_picture)(control, NULL, -1);
+    VIRTUAL(control, 0x9C, method_0)(control);
+}
+
+/* A control's section, or Set_Default's. */
+static void reader_control(dialog_reader* r, BYTE* entry)
+{
+    const char* name = (const char*) entry;
+    BOOL every = r->is_default;
+    BYTE* control = NULL;
+    int margin[2];
+
+    r->area.left = r->area.top = r->area.right = r->area.bottom = 0;
+    if (!r->is_default) {
+        if (reader_string(r, KEY(0x00571BAC), NO_TEXT, r->text)) {            /* Xy */
+            game_FUN_0053a97b(r->text, XY_FORMAT, &r->area.left, &r->area.top);
+            r->area.right = r->area.left;
+            r->area.bottom = r->area.top;
+        }
+        if (reader_string(r, KEY(0x00571B98), NO_TEXT, r->text)) {            /* Xywh */
+            game_FUN_0053a97b(r->text, XYXY_FORMAT, &r->area.left, &r->area.top, &r->area.right,
+                              &r->area.bottom);
+            r->area.right += r->area.left;
+            r->area.bottom += r->area.top;
+        }
+        if (reader_string(r, KEY(0x00571B70), NO_TEXT, r->text))              /* Xyxy */
+            game_FUN_0053a97b(r->text, XYXY_FORMAT, &r->area.left, &r->area.top, &r->area.right,
+                              &r->area.bottom);
+    }
+    keys_int(r, KEY(0x00571B68), &r->defaults.group, &r->keys.group);       /* GroupId */
+    keys_string(r, KEY(0x00571B60), r->defaults.type, r->keys.type);        /* Type */
+
+    if (every || is_type(r, KEY(0x00571B58)) || is_type(r, KEY(0x00571B4C))
+        || is_type(r, KEY(0x00571B40)))                                     /* BUTTON, SCROLLUP/DOWN */
+        control = reader_button(r);
+    if (every || is_type(r, KEY(0x00571AF8)))                               /* MULTISTATE */
+        control = reader_multistate(r);
+    if (every || is_type(r, KEY(0x00571AC8)))                               /* LISTBOX */
+        control = reader_list(r);
+    if (every || is_type(r, KEY(0x00571A54)))                               /* RADIOBUTTON */
+        control = reader_radio(r);
+    if (every || is_type(r, KEY(0x00571A3C)))                               /* STATIC */
+        control = reader_picture(r, FALSE, 0x4F3);
+    if (every || is_type(r, KEY(0x00571A30)) || is_type(r, KEY(0x00571A24)))  /* V/HSCROLLBAR */
+        control = reader_scroll_bar(r);
+    if (every || is_type(r, KEY(0x00571A00)))                               /* EDITBOX */
+        control = reader_edit(r);
+    if (every || is_type(r, KEY(0x005719D4)))                               /* STATICTEXT */
+        control = reader_picture(r, TRUE, 0x545);
+    if (every || !game_FUN_0054cd80(r->keys.type, KEY(0x005719C4), 12))     /* DROPDOWNLIST... */
+        control = reader_combo(r, name);
+
+    reader_common(r, margin);
+    /* An unknown Type makes nothing, where the original faults. */
+    if (r->is_default || !control)
+        return;
+    reader_apply(r, control, name, margin);
+    FIELD(entry, ENTRY_VALUE, BYTE*) = control;
+}
+
+/*
+    Read a dialog file (`data`, `size` bytes, or a file when `size` is 0): its entries, then the
+    four passes, then fit the backdrop picture and place a popup on the screen.
+*/
+PORT(0x0046B850)
+int __fastcall dialog_read(BYTE* self, void* edx_unused, void* data, DWORD size)
+{
+    /* 40 KB, too big for the stack without the CRT's probe; files are read one at a time. */
+    static dialog_reader reader;
+    dialog_reader* r = &reader;
+    text_tokens sections;
+    int kind = KIND_ANIM;
+    int pass, i;
+    char* section;
+
+    (void) edx_unused;
+    __stosb((unsigned char*) r, 0, sizeof *r);
+    r->dialog = self;
+    r->video_mode = video_mode();
+    __stosd((unsigned long*) (self + DLG_ENTRIES), 0, DLG_ANIM_LIMIT * ENTRY_SIZE / 4);
+    param_construct(&r->file);
+    param_open(&r->file, NULL, data, size, TRUE);
+    param_sections(&r->file, NULL, r->text, sizeof r->text);
+
+    /* The entries: a name each, and what kind of section it is. */
+    tokens_begin(&sections, NULL, r->text);
+    for (section = tokens_next(&sections, NULL, SECTION_END); section;
+         section = tokens_next(&sections, NULL, SECTION_END)) {
+        BYTE* entry;
+
+        if (!game_FUN_0054cd80(section, KEY(0x00571D18), 8)) {              /* Set_Anim */
+            kind = KIND_ANIM;
+            continue;
+        }
+        if (!game_FUN_0054cd80(section, KEY(0x00571D0C), 9)) {              /* Set_Sound */
+            kind = KIND_SOUND;
+            continue;
+        }
+        if (!game_FUN_0054cd80(section, KEY(0x00571D00), 11)) {             /* Set_Control */
+            kind = KIND_CONTROL;
+            continue;
+        }
+        entry = self + DLG_ENTRIES + ENTRY_SIZE * FIELD(self, DLG_ENTRY_COUNT, int);
+        text_copy((char*) entry, section);
+        FIELD(entry, ENTRY_VALUE, DWORD) = 0;
+        if (!game_FUN_0054cd80(section, KEY(0x00571CF4), 8))                /* Set_Info */
+            FIELD(entry, ENTRY_KIND, int) = KIND_INFO;
+        else if (!game_FUN_0054cd80(section, KEY(0x00571CE8), 11))          /* Set_Default */
+            FIELD(entry, ENTRY_KIND, int) = KIND_DEFAULT;
+        else
+            FIELD(entry, ENTRY_KIND, int) = kind;
+        FIELD(self, DLG_ENTRY_COUNT, int)++;
+    }
+
+    r->defaults.colour = 0xFFFF;
+    r->defaults.text_drop = 1;
+    r->defaults.enable = 1;
+    r->defaults.show = 1;
+    r->more.max_items = 100;
+    r->more.scale = 100;
+    r->more.selectable = 1;
+    r->more.num_states = 2;
+    r->more.select_colour = 0xFF88FF;
+    r->more.max_length = 1000;
+    r->more.list_height = 20;
+    r->more.select_box_colour = 0xFF000000;
+    r->more.item_box_colour = 0xFF000000;
+
+    for (pass = 0; pass < 4; pass++) {
+        for (i = 0; i < FIELD(self, DLG_ENTRY_COUNT, int); i++) {
+            BYTE* entry = self + DLG_ENTRIES + ENTRY_SIZE * i;
+
+            param_select(&r->file, NULL, (const char*) entry);
+            switch (FIELD(entry, ENTRY_KIND, int)) {
+            case KIND_INFO:
+                if (pass == 0)
+                    reader_info(r);
+                break;
+            case KIND_ANIM:
+                if (pass == 1)
+                    reader_anim(r, entry);
+                break;
+            case KIND_SOUND:
+                if (pass == 2)
+                    reader_sound(r, entry);
+                break;
+            case KIND_DEFAULT:
+            case KIND_CONTROL:
+                if (pass == 3) {
+                    r->is_default = FIELD(entry, ENTRY_KIND, int) == KIND_DEFAULT;
+                    reader_control(r, entry);
+                }
+                break;
+            }
+        }
+    }
+
+    /* The backdrop picture: the dialog becomes its size. */
+    if (r->background_image[0]) {
+        BYTE* backdrop = dialog_find_control(self, NULL, BACKDROP_NAME, 5);
+        ui_anim* anim = (ui_anim*) dialog_find(self, NULL, r->background_image);
+
+        if (anim) {
+            int width = FIELD(anim_picture(anim), 0x14, int);
+            int height = FIELD(anim_picture(anim), 0x18, int);
+
+            control_set_picture(backdrop, NULL, 0, (DWORD) anim);
+            FIELD(backdrop, CTL_RECT, RECT).right = width;
+            FIELD(backdrop, CTL_RECT, RECT).bottom = height;
+            FIELD(backdrop, CTL_DESIGN, RECT) = FIELD(backdrop, CTL_RECT, RECT);
+            FIELD(backdrop, 0x1CC, BYTE*) = VIRTUAL(backdrop, 0xC0, control_state_picture)(backdrop,
+                                                                                         NULL, 0);
+            FIELD(self, DLG_AREA, RECT).right = FIELD(self, DLG_AREA, RECT).left + width;
+            FIELD(self, DLG_AREA, RECT).bottom = FIELD(self, DLG_AREA, RECT).top + height;
+            VIRTUAL(backdrop, 0x9C, method_0)(backdrop);
+        }
+    }
+
+    /* A popup goes where DLG_ALIGN says on the screen. */
+    if (FIELD(self, DLG_POPUP, int) && FIELD(self, DLG_DESIGN_W, int) && FIELD(self, DLG_DESIGN_H, int)) {
+        RECT* area = &FIELD(self, DLG_AREA, RECT);
+        DWORD align = FIELD(self, DLG_ALIGN, DWORD);
+        int width = FIELD(object_screen(self), 0xC, int);
+        int height = FIELD(object_screen(self), 0x10, int);
+        int shift;
+
+        if (align & 1) {
+            area->right -= area->left;
+            area->left = 0;
+        } else {
+            shift = align & 4 ? width - 2 * area->left - area->right
+                              : (width - area->left - area->right) / 2 - area->left;
+            area->left += shift;
+            area->right += shift;
+        }
+        if (align & 8) {
+            area->bottom -= area->top;
+            area->top = 0;
+        } else {
+            shift = align & 0x20 ? height - 2 * area->top - area->bottom
+                                 : (height - area->top - area->bottom) / 2 - area->top;
+            area->top += shift;
+            area->bottom += shift;
+        }
+    }
+    param_destruct(&r->file);
     return 1;
 }
