@@ -471,22 +471,31 @@ BYTE* __fastcall loading_baja_construct(BYTE* self, void* edx_unused, DWORD flag
 
 void __fastcall game_FUN_0044fb30(BYTE* self, void* edx_unused, const char* path);  /* add one */
 
-PORT(0x0044FDB0)
-void __fastcall ghosts_free(BYTE* self)
+/*
+    The chosen record and the listed records' paths, freed. The ghost and replay screens share
+    this layout; `line` is the first free's line in the leak report, the others follow it.
+*/
+static void records_free(BYTE* self, int line)
 {
     if (FIELD(self, GHOST_CHOSEN, void*))
-        game_FUN_004a4450(FIELD(self, GHOST_CHOSEN, void*), DLGPROCS_CPP, 0x77A);
+        game_FUN_004a4450(FIELD(self, GHOST_CHOSEN, void*), DLGPROCS_CPP, line);
     if (FIELD(self, GHOST_PATHS, char**)) {
         int i;
 
         for (i = 0; i < FIELD(self, GHOST_COUNT, int); i++)
-            game_FUN_004a4450(FIELD(self, GHOST_PATHS, char**)[i], DLGPROCS_CPP, 0x77E);
-        game_FUN_004a4450(FIELD(self, GHOST_PATHS, char**), DLGPROCS_CPP, 0x780);
+            game_FUN_004a4450(FIELD(self, GHOST_PATHS, char**)[i], DLGPROCS_CPP, line + 4);
+        game_FUN_004a4450(FIELD(self, GHOST_PATHS, char**), DLGPROCS_CPP, line + 6);
     }
     FIELD(self, GHOST_CHOSEN, void*) = NULL;
     FIELD(self, GHOST_PATHS, char**) = NULL;
     FIELD(self, GHOST_COUNT, int) = 0;
     FIELD(self, 0x7F5C, DWORD) = 0;
+}
+
+PORT(0x0044FDB0)
+void __fastcall ghosts_free(BYTE* self)
+{
+    records_free(self, 0x77A);
 }
 
 /* DDLGhostRaces: "none" (string 5319), then each Record\*.gho there is. */
@@ -1226,6 +1235,68 @@ void __fastcall track_choose_set(BYTE* self)
     track_name_copy(self, list, (char*) game_main + 0x2C6C);
     track_chosen(self);
     game_FUN_004546f0();
+}
+
+/*
+    The record screens' lists, refilled from the Record folder's files of a kind; the owner's
+    Start button is shown only when some were listed.
+*/
+typedef BOOL (__fastcall* record_add)(BYTE* self, void* edx_unused, const char* path);
+
+BOOL __fastcall game_FUN_00455640(BYTE* self, void* edx_unused, const char* path);  /* a ghost */
+BOOL __fastcall game_FUN_00456040(BYTE* self, void* edx_unused, const char* path);  /* a replay */
+
+#define LIST_RIDER  NAME(0x00570120)    /* "LstRider" */
+#define LIST_LAPS   NAME(0x0057010C)    /* "LstLaps" */
+#define LIST_LENGTH NAME(0x00570114)    /* "LstLength" */
+#define LIST_DESC   NAME(0x005700CC)    /* "LstDesc" */
+#define START       NAME(0x0056F8C4)    /* "Start" */
+
+static void records_list(BYTE* self, const char* pattern, record_add add)
+{
+    char path[0x104];
+    WIN32_FIND_DATAA found;
+    HANDLE search = FindFirstFileA(pattern, &found);
+    int listed = 0;
+
+    if (search != INVALID_HANDLE_VALUE) {
+        do {
+            game_FUN_0053a11f(path, NAME(0x0056C7DC), NAME(0x0056FB64), found.cFileName);
+            if (add(self, NULL, path))
+                listed++;
+        } while (FindNextFileA(search, &found));
+        FindClose(search);
+    }
+    control_show(dialog_find_control(FIELD(self, 0x2C, BYTE*), NULL, START, 0), NULL, listed != 0,
+                 TRUE);
+}
+
+static void list_clear_named(BYTE* self, const char* name)
+{
+    list_clear(dialog_find_control(self, NULL, name, 3));
+}
+
+PORT(0x00455470)
+void __fastcall ghost_records_fill(BYTE* self)
+{
+    records_free(self, 0x118B);
+    list_clear_named(self, LIST_TRACK);
+    list_clear_named(self, LIST_RIDER);
+    list_clear_named(self, LIST_LENGTH);
+    list_clear_named(self, LIST_DESC);
+    records_list(self, NAME(0x0056FB6C), game_FUN_00455640);                 /* Record\*.gho */
+}
+
+PORT(0x00455E60)
+void __fastcall replay_records_fill(BYTE* self)
+{
+    records_free(self, 0x125E);
+    list_clear_named(self, LIST_TRACK);
+    list_clear_named(self, LIST_RIDER);
+    list_clear_named(self, LIST_LAPS);
+    list_clear_named(self, LIST_LENGTH);
+    list_clear_named(self, LIST_DESC);
+    records_list(self, NAME(0x0056F848), game_FUN_00456040);                 /* Record\*.vcr */
 }
 
 /* ---- Replays ---- */
