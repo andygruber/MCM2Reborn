@@ -6963,3 +6963,236 @@ BYTE* __fastcall picture_control_picture(BYTE* self, void* edx_unused, int state
     (void) state;
     return anim ? anim_picture(anim) : NULL;
 }
+
+/* ---- UILabel: a control of text alone (type 12) ------------------------------------------------ */
+
+#define UILABEL_VTABLE ((void**) 0x005584D8)
+
+PORT(0x00479F80)
+BYTE* __fastcall label_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                 BYTE* dialog, const char* text, COLORREF colour)
+{
+    (void) edx_unused;
+    control_construct(self, NULL, 12, a, area, dialog);
+    *(void***) self = UILABEL_VTABLE;
+    FIELD(self, CTL_COLOUR, COLORREF) = colour;
+    if (!text) {
+        FIELD(self, CTL_TEXT, char*) = NULL;
+        FIELD(self, CTL_SHADOW, DWORD) = 0;
+        return self;
+    }
+    FIELD(self, CTL_TEXT, char*) = game_FUN_004a4410(text_length(text) + 1, GAMEUI_CPP, 0x22EC);
+    text_copy(FIELD(self, CTL_TEXT, char*), text);
+    FIELD(self, CTL_SHADOW, DWORD) = 0;
+    return self;
+}
+
+PORT(0x0047A080)
+void __fastcall label_destruct(BYTE* self)
+{
+    *(void***) self = UILABEL_VTABLE;
+    control_destruct(self);
+}
+
+PORT(0x0047A060)
+BYTE* __fastcall label_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    label_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Vtable slot 40: render as a control does, then settle. */
+PORT(0x0047A090)
+int __fastcall label_render(BYTE* self)
+{
+    int result = control_render(self);
+
+    FIELD(self, 0x1C0, DWORD) = 1;
+    return result;
+}
+
+/* Vtable slot 55: a press with the first button while it has focus tells the dialog (event 1). */
+PORT(0x0047A0B0)
+int __fastcall label_pressed(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && !button) {
+        ui_event event;
+
+        event.e = 0;
+        control_tell(self, &event, 1);
+        if (event.e)
+            return 1;
+    }
+    return control_pressed(self, NULL, button, b);
+}
+
+/* Vtable slot 29: show state `state`, settled at once. */
+PORT(0x0047A140)
+void __fastcall label_set_state(BYTE* self, void* edx_unused, DWORD state)
+{
+    (void) edx_unused;
+    FIELD(self, 0x1C0, DWORD) = 1;
+    FIELD(self, 0x60, DWORD) = state;
+}
+
+/* Vtable slot 30: never takes focus. */
+PORT(0x0047A160)
+BOOL __fastcall label_slot_30(BYTE* self)
+{
+    (void) self;
+    return FALSE;
+}
+
+/* ---- UIRadioButton: options of which one of a group is on ---------------------------------- */
+
+/*
+    A UIOption of type 4 whose option 1 is "on": of the radio buttons sharing its group (0x7C),
+    one is on at a time.
+*/
+#define UIRADIO_VTABLE ((void**) 0x005585E0)
+#define RADIO_CLASS    ((const char*) 0x00571EE4)   /* "UIRadioButton" */
+
+
+PORT(0x0047A170)
+BYTE* __fastcall radio_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                 BYTE* dialog)
+{
+    (void) edx_unused;
+    option_construct(self, NULL, a, area, dialog);
+    *(void***) self = UIRADIO_VTABLE;
+    game_FUN_0046ac10(self, NULL, self);
+    FIELD(self, CTL_TYPE, int) = 4;
+    return self;
+}
+
+PORT(0x0047A200)
+void __fastcall radio_destruct(BYTE* self)
+{
+    *(void***) self = UIRADIO_VTABLE;
+    option_destruct(self);
+}
+
+PORT(0x0047A1E0)
+BYTE* __fastcall radio_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    radio_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/*
+    Turn on the `number`th radio button of the group (counting from 1) and the rest off; with 0,
+    this one on and the others off and in state 0.
+*/
+PORT(0x0047A240)
+BOOL __fastcall radio_set(BYTE* self, void* edx_unused, int number)
+{
+    BYTE walk[0x94];
+    BYTE* radio;
+    int counted = 0;
+
+    (void) edx_unused;
+    walk_begin(walk, NULL, FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_CONTAINER, void*), 1,
+               RADIO_CLASS);
+    if (!number)
+        option_select(self, NULL, 1);
+    for (radio = walk_next(walk); radio; radio = walk_next(walk)) {
+        if (FIELD(radio, 0x7C, DWORD) != FIELD(self, 0x7C, DWORD))
+            continue;
+        counted++;
+        if (number) {
+            option_select(radio, NULL, counted == number ? 1 : 0);
+        } else if (radio != self) {
+            VIRTUAL(radio, 0x74, method_1)(radio, NULL, 0);
+            option_select(radio, NULL, 0);
+        }
+    }
+    walk_end(walk);
+    return TRUE;
+}
+
+/* Which of the group (counting from 1) is on, or 0 when none is. */
+PORT(0x0047A320)
+int __fastcall radio_number(BYTE* self)
+{
+    BYTE walk[0x94];
+    BYTE* radio;
+    int counted = 0;
+
+    walk_begin(walk, NULL, FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_CONTAINER, void*), 1,
+               RADIO_CLASS);
+    for (radio = walk_next(walk); radio; radio = walk_next(walk)) {
+        if (FIELD(radio, 0x7C, DWORD) != FIELD(self, 0x7C, DWORD))
+            continue;
+        counted++;
+        if (option_current_index(radio) == 1) {
+            walk_end(walk);
+            return counted;
+        }
+    }
+    walk_end(walk);
+    return 0;
+}
+
+/* Vtable slot 59: copy which is on out to the bound int, or (`out` FALSE) turn it on. */
+PORT(0x0047A210)
+void __fastcall radio_commit(BYTE* self, void* edx_unused, BOOL out)
+{
+    (void) edx_unused;
+    if (out)
+        *FIELD(self, EDIT_BOUND, int*) = radio_number(self);
+    else
+        radio_set(self, NULL, *FIELD(self, EDIT_BOUND, int*));
+}
+
+/*
+    Vtable slot 55: pressed with the first button while it has focus, an off radio button turns
+    on and the others of its kind off (state 0); the dialog hears (event 1, its own manager).
+*/
+PORT(0x0047A3F0)
+int __fastcall radio_pressed(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && !button) {
+        ui_event event;
+
+        event.e = 0;
+        if (!option_current_index(self)) {
+            BYTE* walk;
+            BYTE* radio;
+
+            option_select(self, NULL, 1);
+            walk = control_walk_of(self);
+            while ((radio = control_next_alike(self, NULL, walk)) != NULL) {
+                if (radio != self && option_current_index(radio) == 1) {
+                    VIRTUAL(radio, 0x74, method_1)(radio, NULL, 0);
+                    option_select(radio, NULL, 0);
+                }
+            }
+            control_walk_end(self, NULL, walk);
+        }
+        list_tell(self, &event, 1);
+        if (event.e)
+            return 1;
+    }
+    return control_pressed(self, NULL, button, b);
+}
+
+/* Vtable slot 53: a walk over the radio buttons of its dialog, on the game's heap. */
+PORT(0x0047A4F0)
+BYTE* __fastcall radio_walk(BYTE* self)
+{
+    BYTE* walk = game_new(0x94, GAMEUI_CPP, 0x23B9);
+
+    if (!walk)
+        return NULL;
+    walk_begin(walk, NULL, FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_CONTAINER, void*), 1,
+               RADIO_CLASS);
+    return walk;
+}
