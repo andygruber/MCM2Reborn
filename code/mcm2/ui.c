@@ -6312,3 +6312,254 @@ void __fastcall list_drag(BYTE* self, void* edx_unused, DWORD button, const POIN
     }
     control_drag(self, NULL, button, at);
 }
+
+#define LIST_HOVER 0x248            /* the selectable entry under the pointer, or -1 */
+
+/*
+    Vtable slot 10: tick. While it has capture a claimed joystick moves the selection up or
+    down; then the entry under the pointer is found, for the hover frame.
+*/
+PORT(0x00476FB0)
+int __fastcall list_tick(BYTE* self, void* edx_unused, DWORD time)
+{
+    gui_input* input;
+    gui_input* pointer;
+    int index = 0;
+
+    (void) edx_unused;
+    while ((input = gui_user_claimed(control_user(self), NULL, index++)) != NULL) {
+        int push;
+
+        if (FIELD(input->device, 0xC, int) != 2 || !game_FUN_0048a770(input->device, NULL, 4))
+            continue;
+        push = input->y;
+        if (control_user(self)->capture != self)
+            continue;
+        if (push <= -1) {
+            if (list_selected(self) > 0)
+                list_select_all(self, NULL, list_selected(self) - 1);
+        } else if (push >= 1) {
+            if (list_selected(self) < list_count(self) - 1)
+                list_select_all(self, NULL, list_selected(self) + 1);
+        }
+    }
+
+    FIELD(self, LIST_HOVER, int) = -1;
+    pointer = (gui_input*) control_user(self)->input;
+    if (pointer && control_user(self)->focus == self && FIELD(self, LIST_CLICKABLE, int)) {
+        POINT at;
+        RECT row = FIELD(self, CTL_RECT, RECT);
+        int i;
+
+        at.x = pointer->x;
+        at.y = pointer->y;
+        for (i = FIELD(self, LIST_FIRST, int);
+             i < FIELD(self, LIST_FIRST, int) + FIELD(self, LIST_ROWS, int); i++) {
+            row.bottom = list_height(self, NULL, i) + row.top;
+            if (PtInRect(&row, at) && !(list_entries(self)[i].b & ENTRY_FIXED)) {
+                FIELD(self, LIST_HOVER, int) = i;
+                break;
+            }
+            row.top += list_height(self, NULL, i);
+        }
+    }
+    return control_tick(self, NULL, time);
+}
+
+/* A file entry (kind 3) becomes an animation (kind 2) the first time it is drawn. */
+static void list_load_file(BYTE* self, int index)
+{
+    list_entry* entry = &list_entries(self)[index];
+
+    if (entry->text_2) {
+        ui_anim* anim;
+
+        if (entry->anim)
+            object_destroy(entry->anim);
+        anim = game_new(sizeof(ui_anim), GAMEUI_CPP, 0x1C62);
+        if (anim)
+            anim = anim_construct(anim, NULL, FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x7F20, DWORD), 0);
+        list_entries(self)[index].anim = anim;
+        entry = &list_entries(self)[index];
+        anim_add_file(entry->anim, NULL, entry->text_2, FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x140, BYTE*));
+        list_entries(self)[index].length = list_entries(self)[index].anim->frames[0]->width;
+        list_entries(self)[index].height = list_entries(self)[index].anim->frames[0]->height;
+    } else {
+        entry->anim = NULL;
+    }
+    list_entries(self)[index].kind = 2;
+    control_redraw(self);
+}
+
+/*
+    Vtable slot 40: render. Its picture, then the entries from the first showing, as many as
+    fit (a part one when 0x240 is set and none has been drawn): text in a paint pass (the
+    selection on its own brush and colour, all shifted by a drag), then pictures straight to the
+    screen. The rows drawn become LIST_ROWS; the entry under the pointer is framed.
+*/
+PORT(0x00477180)
+int __fastcall list_render(BYTE* self)
+{
+    BYTE* picture = FIELD(self, 0x1CC, BYTE*);
+    int redraws = FIELD(self, 0x1BC, int);
+    int kept = -1, drawn = 0, pass;
+    DWORD settled = 1;
+    DWORD more;
+    RECT area;
+    HDC dc = NULL;          /* set by the paint pass, the only one to use it */
+
+    if (picture) {
+        BYTE* background = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*);
+        DWORD flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
+
+        if (background) {
+            background_draw(background, NULL, picture, &FIELD(self, CTL_RECT, RECT), self + 0x4C,
+                            flags, FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
+                            &FIELD(self, 0x1BC, int), 0);
+            FIELD(self, 0x1BC, int) = redraws;
+        } else if (!VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL,
+                                                                  &FIELD(self, CTL_RECT, RECT),
+                                                                  picture, self + 0x4C, flags)) {
+            return 0;
+        }
+    }
+
+    area = FIELD(self, CTL_RECT, RECT);
+    area.left += FIELD(self, 0xE8, LONG);
+    area.right -= FIELD(self, 0xE8, LONG);
+    area.top += FIELD(self, 0xEC, LONG);
+    area.bottom -= FIELD(self, 0xEC, LONG);
+
+    for (pass = 0; pass < 2; pass++) {
+        do {
+            LONG y = area.top;
+            int i;
+
+            if (!pass) {
+                dialog_begin_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, &dc, &area, &more, self);
+                if (FIELD(self, LIST_HIGHLIGHT, HBRUSH))
+                    FillRect(dc, &area, FIELD(self, LIST_HIGHLIGHT, HBRUSH));
+            } else {
+                more = 0;
+                kept = FIELD(self, 0x1BC, int);
+                FIELD(self, 0x1BC, int) = redraws;
+            }
+
+            for (i = FIELD(self, LIST_FIRST, int); i < list_count(self); i++) {
+                int height = list_height(self, NULL, i);
+                BOOL whole = FALSE;
+                RECT cell;
+
+                if (!FIELD(self, 0x240, int) || drawn > 0) {
+                    if (height + y > area.bottom)
+                        break;
+                    whole = TRUE;
+                }
+
+                switch (list_kind(self, NULL, i)) {
+                case 1: {
+                    list_entry* entry = &list_entries(self)[i];
+                    COLORREF colour;
+
+                    if (pass || !entry->text)
+                        break;
+                    cell.left = area.left;
+                    cell.top = y;
+                    cell.right = area.right;
+                    cell.bottom = height + y;
+                    SetBkMode(dc, TRANSPARENT);
+                    if (i == FIELD(self, LIST_SELECTED, int) && FIELD(self, LIST_CLICKABLE, int)) {
+                        if (FIELD(self, LIST_BRUSH_2, HBRUSH))
+                            FillRect(dc, &cell, FIELD(self, LIST_BRUSH_2, HBRUSH));
+                        colour = FIELD(self, 0x208, COLORREF);
+                    } else {
+                        if (list_entries(self)[i].brush)
+                            FillRect(dc, &cell, list_entries(self)[i].brush);
+                        colour = list_entries(self)[i].colour;
+                        if (!colour)
+                            colour = FIELD(self, CTL_COLOUR, COLORREF);
+                    }
+                    entry = &list_entries(self)[i];
+                    if (entry->length) {
+                        int shift = FIELD(self, LIST_DRAGGED, int) + FIELD(self, LIST_SHIFT, int);
+
+                        cell.left += shift;
+                        cell.right += shift;
+                        dialog_draw_text(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc, &cell, entry->text,
+                                         entry->length, colour, FIELD(self, 0x160, int), entry->runs,
+                                         FIELD(self, CTL_SHADOW, BOOL),
+                                         FIELD(self, CTL_SHADOW_COLOUR, COLORREF),
+                                         FIELD(self, CTL_ALIGN, DWORD), TRUE, NULL);
+                    }
+                    if (!more)
+                        drawn++;
+                    break;
+                }
+                case 3:
+                    if (pass == 1) {
+                        list_load_file(self, i);
+                        height = list_entries(self)[i].height;
+                    }
+                    if (whole && height + y > area.bottom)
+                        break;
+                    /* fall through: drawn as the animation it now is */
+                case 2: {
+                    ui_anim* anim = list_entries(self)[i].anim;
+                    BYTE* shown;
+                    LONG width, tall;
+
+                    if (pass != 1 || !anim)
+                        break;
+                    width = anim_current(anim)->width;
+                    tall = anim_current(list_entries(self)[i].anim)->height;
+                    cell.left = FIELD(self, LIST_SHIFT, int) + area.left;
+                    cell.top = y;
+                    cell.right = cell.left + width < area.right ? cell.left + width : area.right;
+                    if (FIELD(self, 0x240, int))
+                        cell.bottom = tall + y < area.bottom ? tall + y : area.bottom;
+                    else
+                        cell.bottom = tall + y;
+                    shown = anim_current(list_entries(self)[i].anim)->picture;
+                    if (FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*)) {
+                        background_draw(FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*),
+                                        NULL, shown, &cell, NULL,
+                                        FIELD(shown, 0x30, int) ? 0x1008000 : 0x1000000,
+                                        FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
+                                        &FIELD(self, 0x1BC, int), 0);
+                        if (list_entries(self)[i].anim->count > 1) {
+                            settled = 0;
+                            kept = FIELD(self, 0x1BC, int);
+                        }
+                    } else if (!VIRTUAL(object_screen(self), 0xC, screen_draw)(
+                                   object_screen(self), NULL, &cell, shown, NULL,
+                                   FIELD(shown, 0x30, int) ? 0x1008000 : 0x1000000)) {
+                        return 0;
+                    }
+                    drawn++;
+                    break;
+                }
+                }
+
+                if (FIELD(self, LIST_HOVER, int) == i && !pass && FIELD(self, LIST_ROWS, int) > 1) {
+                    HBRUSH frame = FIELD(self, LIST_HIGHLIGHT, HBRUSH);
+
+                    cell.left = area.left;
+                    cell.top = y;
+                    cell.bottom = height + y;
+                    cell.right = area.right;
+                    FrameRect(dc, &cell, frame ? frame : (HBRUSH) GetStockObject(WHITE_BRUSH));
+                    control_redraw(self);
+                }
+                y += height;
+            }
+            if (!pass)
+                dialog_end_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc);
+        } while (more);
+    }
+
+    if (kept >= 0)
+        FIELD(self, 0x1BC, int) = kept;
+    FIELD(self, LIST_ROWS, int) = drawn;
+    FIELD(self, 0x1C0, DWORD) = settled;
+    return 1;
+}
