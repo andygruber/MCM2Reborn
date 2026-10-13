@@ -5914,3 +5914,86 @@ void __fastcall list_clear(BYTE* self)
     __stosb((BYTE*) list_entries(self), 0, FIELD(self, LIST_CAPACITY, int) * sizeof(list_entry));
     list_tell_sliders(self);
 }
+
+/* A resource archive (0x134 bytes): opened on the game's resources, and searched for a file. */
+void* __fastcall game_FUN_00461c80(void* self, void* edx_unused, void* resources);
+BOOL  __fastcall game_FUN_00461ec0(void* self, void* edx_unused, const char* name, const char* kind,
+                                   DWORD a);
+void  __fastcall game_FUN_00461cd0(void* self);
+BYTE* __cdecl    game_FUN_005173e0(const char* name, DWORD a, void* resources);   /* load an image */
+#define ARCHIVE_KIND ((const char*) 0x0056CA38)
+
+/*
+    Add an entry from the file `name`: an animation (kind 2) when `animated`, found through a
+    resource archive, else a picture (kind 3) whose name is kept and whose size is read from
+    the image. The original leaves the fields it does not set as they were on its stack.
+*/
+PORT(0x004780A0)
+BOOL __fastcall list_add_file(BYTE* self, void* edx_unused, const char* name, DWORD data,
+                              BOOL animated, DWORD b)
+{
+    list_entry entry;
+
+    (void) edx_unused;
+    if (list_count(self) >= FIELD(self, LIST_CAPACITY, int)
+        && !list_reserve(self, NULL, list_count(self) + 1))
+        return FALSE;
+
+    if (animated) {
+        void* archive = game_new(0x134, GAMEUI_CPP, 0x1E20);
+        ui_anim* anim;
+
+        if (archive)
+            archive = game_FUN_00461c80(archive, NULL, game_resources);
+        if (!game_FUN_00461ec0(archive, NULL, name, ARCHIVE_KIND, 0)) {
+            if (archive) {
+                game_FUN_00461cd0(archive);
+                game_delete(archive);
+            }
+            return FALSE;
+        }
+        entry.kind = 2;
+        entry.text = NULL;
+        entry.text_2 = NULL;
+        entry.runs = NULL;
+        anim = game_new(sizeof(ui_anim), GAMEUI_CPP, 0x1E27);
+        if (anim)
+            anim = anim_construct(anim, NULL, FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x7F20, DWORD), 0);
+        entry.anim = anim;
+        anim_add_file(anim, NULL, name, NULL);
+        entry.b = b;
+        entry.length = anim->frames[0]->width;
+        entry.height = anim->frames[0]->height;
+        entry.unknown_30 = 0;
+        if (archive) {
+            game_FUN_00461cd0(archive);
+            game_delete(archive);
+        }
+    } else {
+        BYTE* image;
+
+        entry.kind = 3;
+        entry.text = NULL;
+        entry.anim = NULL;
+        entry.text_2 = game_FUN_004a4410(text_length(name) + 1, GAMEUI_CPP, 0x1E37);
+        entry.b = b;
+        text_copy(entry.text_2, name);
+        entry.runs = NULL;
+        entry.unknown_30 = 0;
+        image = game_FUN_005173e0(name, 0, game_resources);
+        if (!image)
+            return FALSE;
+        entry.length = image_width(image);
+        entry.height = image_height(image);
+        game_FUN_005184b0(image);
+    }
+
+    list_entries(self)[list_count(self)] = entry;
+    list_set_data(self, NULL, list_count(self), data);
+    list_count(self)++;
+    FIELD(self, LIST_ROWS, int) = list_rows_fitting(self);
+    list_tell_sliders(self);
+    if (FIELD(self, 0x21C, int))
+        game_FUN_00478890(self, NULL, 1);
+    return TRUE;
+}
