@@ -7,6 +7,7 @@
 */
 
 #include "gui.h"
+#include <imm.h>
 
 /* The controls and lists these use, ported in ui.c. */
 BYTE*       __fastcall dialog_find_control(BYTE* self, void* edx_unused, const char* name, int type);
@@ -43,6 +44,7 @@ void __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* t
 void __fastcall game_FUN_00528820(char* profile);                         /* save it */
 int  __cdecl    game_FUN_0053a11f(char* to, const char* format, ...);      /* sprintf */
 char* __cdecl   game__strncpy(char* to, const char* from, size_t count);
+char* __cdecl   game_FUN_0054aaa5(int value, char* text, int radix);   /* _itoa */
 #define game_profile ((char*) game_main + 0x578)    /* char[16]: the player's profile */
 #define game_language FIELD(game_main, 0x420, HINSTANCE)
 #define game_session FIELD(game_main, 0x56C, BYTE*)       /* the menus' session */
@@ -520,6 +522,26 @@ size_t __cdecl game_FUN_0053a5d5(void* to, size_t size, size_t count, void* file
 int    __cdecl game_FUN_0053a2ad(void* file);                                      /* fclose */
 void*  __cdecl ui_realloc(void* block, size_t size);
 
+/* Keep a read record and its file's path; `line` is the path allocation's, for the leak report. */
+static void record_keep(BYTE* self, const BYTE* record, const char* path, int line)
+{
+    int count = FIELD(self, 0x7F5C, int);
+    char** paths;
+
+    FIELD(self, 0x7F58, BYTE*) = ui_realloc(FIELD(self, 0x7F58, BYTE*), (count + 1) * RECORD_SIZE);
+    __movsd((unsigned long*) (FIELD(self, 0x7F58, BYTE*) + count * RECORD_SIZE),
+            (const unsigned long*) record, RECORD_SIZE / 4);
+    FIELD(self, 0x7F5C, int)++;
+
+    paths = ui_realloc(FIELD(self, GHOST_PATHS, char**),
+                       (FIELD(self, GHOST_COUNT, int) + 1) * sizeof(char*));
+    FIELD(self, GHOST_PATHS, char**) = paths;
+    paths[FIELD(self, GHOST_COUNT, int)] = game_FUN_004a4410(text_length(path) + 1, DLGPROCS_CPP,
+                                                            line);
+    text_copy(paths[FIELD(self, GHOST_COUNT, int)], path);
+    FIELD(self, GHOST_COUNT, int)++;
+}
+
 /*
     Read the ghost at `path`; one of a lap on the track chosen in DDLTextBox, with a time, is
     kept with its path and listed in DDLGhostRaces. TRUE when it was. (The original first runs
@@ -550,23 +572,7 @@ BOOL __fastcall ghost_add(BYTE* self, void* edx_unused, const char* path)
             && FIELD(record, RECORD_TIME, float) > 0.0f
             && FIELD(FIELD(game_session, 0x60, BYTE*) + track, 0x4, DWORD)
                == FIELD(record, RECORD_KIND, BYTE)) {
-            int count = FIELD(self, 0x7F5C, int);
-            char** paths;
-
-            FIELD(self, 0x7F58, BYTE*) = ui_realloc(FIELD(self, 0x7F58, BYTE*),
-                                                    (count + 1) * RECORD_SIZE);
-            __movsd((unsigned long*) (FIELD(self, 0x7F58, BYTE*) + count * RECORD_SIZE),
-                    (const unsigned long*) record, RECORD_SIZE / 4);
-            FIELD(self, 0x7F5C, int)++;
-
-            paths = ui_realloc(FIELD(self, GHOST_PATHS, char**),
-                               (FIELD(self, GHOST_COUNT, int) + 1) * sizeof(char*));
-            FIELD(self, GHOST_PATHS, char**) = paths;
-            paths[FIELD(self, GHOST_COUNT, int)] = game_FUN_004a4410(text_length(path) + 1,
-                                                                    DLGPROCS_CPP, 0x763);
-            text_copy(paths[FIELD(self, GHOST_COUNT, int)], path);
-            FIELD(self, GHOST_COUNT, int)++;
-
+            record_keep(self, record, path, 0x763);
             chosen = FIELD(dialog_find_control(self, NULL, LIST_GHOSTS, 6), COMBO_LIST, BYTE*);
             game_FUN_00526fc0(game_main, NULL, 0x14C8, what, sizeof what);
             game_FUN_0053a11f(label, GHOST_LABEL, what, (const char*) record + RECORD_RIDER);
@@ -1451,7 +1457,7 @@ void __fastcall loading_handle(BYTE* self, void* edx_unused, ui_event* event)
 #define TRACK_NAME_LENGTH 0x103
 
 void __fastcall game_FUN_00529730(char* profile, void* edx_unused, DWORD track);
-void __cdecl    game_FUN_004546f0(void);
+__declspec(noinline) void __cdecl race_start_loading(void);     /* below */
 
 /* The track picked in the list (of those at 0x7F58): its settings become the race's. */
 static BYTE* track_take(BYTE* self, BYTE* list)
@@ -1490,7 +1496,7 @@ void __fastcall track_choose(BYTE* self)
     track_name_copy(self, list, (char*) game_main + 0x2B64);
     track_chosen(self);
     game_FUN_00529730(game_profile, NULL, FIELD(track, 0x3C, DWORD));
-    game_FUN_004546f0();
+    race_start_loading();
 }
 
 /* The same for a track whose settings at 0x33C come with it. */
@@ -1507,7 +1513,7 @@ void __fastcall track_choose_set(BYTE* self)
     FIELD(game_main, 0x1554, DWORD) = FIELD(track, 0x340, DWORD);
     track_name_copy(self, list, (char*) game_main + 0x2C6C);
     track_chosen(self);
-    game_FUN_004546f0();
+    race_start_loading();
 }
 
 /*
@@ -1517,7 +1523,7 @@ void __fastcall track_choose_set(BYTE* self)
 typedef BOOL (__fastcall* record_add)(BYTE* self, void* edx_unused, const char* path);
 
 BOOL __fastcall ghost_record_add(BYTE* self, void* edx_unused, const char* path);
-BOOL __fastcall game_FUN_00456040(BYTE* self, void* edx_unused, const char* path);  /* a replay */
+BOOL __fastcall replay_record_add(BYTE* self, void* edx_unused, const char* path);
 
 #define LIST_RIDER  NAME(0x00570120)    /* "LstRider" */
 #define LIST_LAPS   NAME(0x0057010C)    /* "LstLaps" */
@@ -1544,13 +1550,23 @@ void __fastcall game_FUN_004eeda0(BYTE* resources, void* edx_unused, char* text,
                                   DWORD a, const char* kind, DWORD b, DWORD c);
 void __cdecl    game_FUN_00489b60(char* text, float seconds);       /* a time, as text */
 
+/* The record's track becomes the profile's, and its env file is loaded. */
+static void record_track_load(const BYTE* record)
+{
+    char env_path[0x104];
+
+    game_FUN_00529730(game_profile, NULL, FIELD(record, RECORD_TRACK_ID, DWORD));
+    game_FUN_00529090(game_profile, NULL, FIELD(game_main, 0xC18, DWORD),
+                      (const char*) record + RECORD_TRACK_FILE, NAME(0x00570138), env_path);
+    game_FUN_004ee910(FIELD(game_main, 0x574, BYTE*), NULL, env_path);           /* "env" */
+}
+
 /* Read the ghost at `path`; one with a time is kept and listed. TRUE when it was. */
 PORT(0x00455640)
 BOOL __fastcall ghost_record_add(BYTE* self, void* edx_unused, const char* path)
 {
     char text[0x80];
     char scene_name[0x40];
-    char env_path[0x104];
     BYTE record[RECORD_SIZE];
     BOOL added = FALSE;
     void* file;
@@ -1561,37 +1577,18 @@ BOOL __fastcall ghost_record_add(BYTE* self, void* edx_unused, const char* path)
         return FALSE;
     if (game_FUN_0053a5d5(record, RECORD_SIZE, 1, file)
         && FIELD(record, RECORD_RUN_TIME, float) > 0.0f) {
-        int count = FIELD(self, 0x7F5C, int);
         BYTE* tracks;
         BYTE* riders;
         BYTE* lengths;
         BYTE* descriptions;
-        char** paths;
         size_t length;
 
-        FIELD(self, 0x7F58, BYTE*) = ui_realloc(FIELD(self, 0x7F58, BYTE*),
-                                                (count + 1) * RECORD_SIZE);
-        __movsd((unsigned long*) (FIELD(self, 0x7F58, BYTE*) + count * RECORD_SIZE),
-                (const unsigned long*) record, RECORD_SIZE / 4);
-        FIELD(self, 0x7F5C, int)++;
-
-        paths = ui_realloc(FIELD(self, GHOST_PATHS, char**),
-                           (FIELD(self, GHOST_COUNT, int) + 1) * sizeof(char*));
-        FIELD(self, GHOST_PATHS, char**) = paths;
-        paths[FIELD(self, GHOST_COUNT, int)] = game_FUN_004a4410(text_length(path) + 1,
-                                                                DLGPROCS_CPP, 0x11C5);
-        text_copy(paths[FIELD(self, GHOST_COUNT, int)], path);
-        FIELD(self, GHOST_COUNT, int)++;
-
+        record_keep(self, record, path, 0x11C5);
         tracks = dialog_find_control(self, NULL, LIST_TRACK, 3);
         riders = dialog_find_control(self, NULL, LIST_RIDER, 3);
         lengths = dialog_find_control(self, NULL, LIST_LENGTH, 3);
         descriptions = dialog_find_control(self, NULL, LIST_DESC, 3);
-
-        game_FUN_00529730(game_profile, NULL, FIELD(record, RECORD_TRACK_ID, DWORD));
-        game_FUN_00529090(game_profile, NULL, FIELD(game_main, 0xC18, DWORD),
-                          (const char*) record + RECORD_TRACK_FILE, NAME(0x00570138), env_path);
-        game_FUN_004ee910(FIELD(game_main, 0x574, BYTE*), NULL, env_path);       /* "env" */
+        record_track_load(record);
         list_add_text(riders, NULL, (const char*) record + RECORD_RIDER_NAME, 0, 0);
 
         game_FUN_004eeda0(FIELD(game_main, 0x574, BYTE*), NULL, scene_name,
@@ -1603,6 +1600,79 @@ BOOL __fastcall ghost_record_add(BYTE* self, void* edx_unused, const char* path)
         text[length] = 0;
         if (!game_FUN_0053b6e0(text, NO_NAME))
             game_FUN_00526fc0(game_main, NULL, 0x143B, text, sizeof text);
+        list_add_text(tracks, NULL, text, FIELD(self, 0x7F5C, int) - 1, 0);
+
+        game_FUN_00489b60(text, FIELD(record, RECORD_RUN_TIME, float));
+        list_add_text(lengths, NULL, text, 0, 0);
+        list_add_text(descriptions, NULL, (const char*) record + RECORD_DESC, 0, 0);
+        added = TRUE;
+    }
+    game_FUN_0053a2ad(file);
+    return added;
+}
+
+/*
+    Replays add a laps column (0x54, for race kinds 1-3 and 5; "--" otherwise, the kind at
+    0x38) and name a numbered track (kinds 1 and 5 with 0x60 set) "name, #n" from 0x64; the
+    scn file's name is looked up with the record's variant (0x68).
+*/
+#define RECORD_KIND_ID      0x38
+#define RECORD_LAPS         0x54
+#define RECORD_NUMBERED     0x60
+#define RECORD_NUMBER       0x64
+#define RECORD_VARIANT      0x68
+#define NO_LAPS             NAME(0x00570144)    /* "--" */
+#define NUMBERED_TRACK      NAME(0x0057013C)    /* "%s, #%d" */
+
+PORT(0x00456040)
+BOOL __fastcall replay_record_add(BYTE* self, void* edx_unused, const char* path)
+{
+    char text[0x80];
+    char scene_name[0x40];
+    BYTE record[RECORD_SIZE];
+    BOOL added = FALSE;
+    void* file;
+
+    (void) edx_unused;
+    file = game_FUN_0053a35b(path, NAME(0x0056C66C));                          /* "rb" */
+    if (!file)
+        return FALSE;
+    if (game_FUN_0053a5d5(record, RECORD_SIZE, 1, file)
+        && FIELD(record, RECORD_RUN_TIME, float) > 0.0f) {
+        int kind = FIELD(record, RECORD_KIND_ID, int);
+        BYTE* tracks;
+        BYTE* riders;
+        BYTE* laps;
+        BYTE* lengths;
+        BYTE* descriptions;
+
+        record_keep(self, record, path, 0x129A);
+        tracks = dialog_find_control(self, NULL, LIST_TRACK, 3);
+        riders = dialog_find_control(self, NULL, LIST_RIDER, 3);
+        laps = dialog_find_control(self, NULL, LIST_LAPS, 3);
+        lengths = dialog_find_control(self, NULL, LIST_LENGTH, 3);
+        descriptions = dialog_find_control(self, NULL, LIST_DESC, 3);
+        record_track_load(record);
+
+        text_copy(text, NO_LAPS);
+        if (kind == 1 || kind == 2 || kind == 3 || kind == 5)
+            game_FUN_0054aaa5(FIELD(record, RECORD_LAPS, int), text, 10);
+        list_add_text(laps, NULL, text, 0, 0);
+        list_add_text(riders, NULL, (const char*) record + RECORD_RIDER_NAME, 0, 0);
+
+        game_FUN_004eeda0(FIELD(game_main, 0x574, BYTE*), NULL, scene_name,
+                          (const char*) record + RECORD_TRACK_FILE,
+                          FIELD(record, RECORD_VARIANT, BYTE), NAME(0x00570134), 0, 0);
+        if (!game_FUN_0053b6e0(scene_name, NO_NAME)) {
+            game_FUN_00526fc0(game_main, NULL, 0x143B, text, sizeof text);
+        } else if ((kind == 1 || kind == 5) && FIELD(record, RECORD_NUMBERED, BYTE)) {
+            game_FUN_004eeda0(FIELD(game_main, 0x574, BYTE*), NULL, scene_name,
+                              (const char*) record + RECORD_TRACK_FILE, 0, NAME(0x00570134), 0,
+                              0);
+            game_FUN_0053a11f(text, NUMBERED_TRACK, scene_name, FIELD(record, RECORD_NUMBER, int));
+        } else {
+            text_copy(text, scene_name);
+        }
         list_add_text(tracks, NULL, text, FIELD(self, 0x7F5C, int) - 1, 0);
 
         game_FUN_00489b60(text, FIELD(record, RECORD_RUN_TIME, float));
@@ -1658,7 +1728,7 @@ void __fastcall replay_records_fill(BYTE* self)
     list_clear_named(self, LIST_LAPS);
     list_clear_named(self, LIST_LENGTH);
     list_clear_named(self, LIST_DESC);
-    records_list(self, NAME(0x0056F848), game_FUN_00456040);                 /* Record\*.vcr */
+    records_list(self, NAME(0x0056F848), replay_record_add);                 /* Record\*.vcr */
 }
 
 /*
@@ -1914,9 +1984,763 @@ BYTE* __fastcall record_init(BYTE* self)
     return self;
 }
 
+/* ---- The race's settings ---- */
+
+/*
+    The race settings the menus edit, 0x7B dwords at the game's 0x2D70. They, the bike's
+    (0x1550), the rider's (0x1EEC) and 0x60C have copies (0x2F5C, 0x15AC, 0x1FB4, 0x610) that
+    the single-player screen opens with and that Back and Start keep.
+*/
+#define race_settings   (game_main + 0x2D70)
+#define race_mode       FIELD(game_main, 0x2D70, int)   /* RaceModeDropDown's; 2 a series, 4 a ghost race */
+#define race_kind       FIELD(game_main, 0x2D74, int)   /* 0 quarry, 1 baja, 2 national, 3 SX, 4 tag, 5 enduro */
+#define race_round      FIELD(game_main, 0x2D7C, int)
+#define race_events     FIELD(game_main, 0x570, BYTE*)
+#define series_started  FIELD(game_main, 0x1664, int)
+#define record_race     FIELD(game_main, 0x3334, int)
+#define SERIES          2
+#define GHOST_RACE      4
+
+#define SET_MODE        0x00
+#define SET_EVENT       0x04
+#define SET_RACES       0x0C
+#define SET_TREES       0x10    /* tree collision */
+#define SET_LAPS        0x20
+#define SET_OPPONENTS   0x24
+#define SET_28          0x28    /* cleared by Start */
+#define SET_RANDOM_GATES 0x2C   /* BYTE */
+#define SET_GATES       0x2D    /* BYTE */
+#define SET_SEED        0x30
+#define SET_TRACK_KIND  0x34    /* BYTE */
+#define SET_TRACK       0x36    /* char[0x100] */
+#define SET_TIME        0x140   /* float: the laps list's value for the timed events (0 and 4) */
+#define TRACK_ENTRY     0x54    /* the session's tracks (0x60): kind 0x4, id 0x8, name 0x14 */
+#define SEED_MAX        999
+
+/*
+    The race's standings: 0x50 bytes a rider from events + 0x50, events + 0x4C of them. The
+    columns are named by their use: 0x04 shown as a number, 0x08, 0x14, 0x18 and 0x1C as
+    times, 0x2C as a score; 0x24 leaves the rider out.
+*/
+#define STANDING_NUMBER   0x04
+#define STANDING_TIME     0x08
+#define STANDING_LAP      0x14
+#define STANDING_TIME_18  0x18
+#define STANDING_TIME_1C  0x1C
+#define STANDING_HAS_LAP  0x20
+#define STANDING_OUT      0x24
+#define STANDING_POINTS   0x28
+#define STANDING_SCORE    0x2C
+#define STANDING_NAME     0x40
+#define STANDINGS_MAX     11
+
+static BYTE* standing(int index)
+{
+    return race_events + 0x50 + index * 0x50;
+}
+
+/* The settings into their copies (Back, Start), or back from them (opening). */
+static void settings_save(void)
+{
+    __movsd((unsigned long*) (game_main + 0x2F5C), (unsigned long*) (game_main + 0x2D70), 0x7B);
+    __movsd((unsigned long*) (game_main + 0x15AC), (unsigned long*) (game_main + 0x1550), 0x17);
+    __movsd((unsigned long*) (game_main + 0x1FB4), (unsigned long*) (game_main + 0x1EEC), 0x32);
+    FIELD(game_main, 0x610, DWORD) = FIELD(game_main, 0x60C, DWORD);
+}
+
+static void settings_restore(void)
+{
+    __movsd((unsigned long*) (game_main + 0x2D70), (unsigned long*) (game_main + 0x2F5C), 0x7B);
+    __movsd((unsigned long*) (game_main + 0x1550), (unsigned long*) (game_main + 0x15AC), 0x17);
+    __movsd((unsigned long*) (game_main + 0x1EEC), (unsigned long*) (game_main + 0x1FB4), 0x32);
+    FIELD(game_main, 0x60C, DWORD) = FIELD(game_main, 0x610, DWORD);
+}
+
+/* ---- Starting the race ---- */
+
+#define game_window FIELD(game_main, 0x31C, HWND)
+
+void __fastcall gui_manager_drop_background(gui_manager* self);
+BOOL __fastcall gui_manager_set_palette(gui_manager* self, void* edx_unused, DWORD palette);
+void __fastcall game_FUN_0049a960(BYTE* session);
+BOOL __fastcall game_FUN_00527300(BYTE* game);
+
+typedef BYTE* (__fastcall* loading_constructor)(BYTE* self, void* edx_unused, DWORD flag);
+
+static const struct {
+    int                 line;
+    loading_constructor construct;
+} loading_screens[6] = {                    /* by race_kind */
+    { 0x10CF, loading_quarry_construct },
+    { 0x10D5, loading_baja_construct },
+    { 0x10D8, loading_national_construct },
+    { 0x10C9, loading_supercross_construct },
+    { 0x10D2, loading_tag_construct },
+    { 0x10CC, loading_enduro_construct },
+};
+
+/*
+    The menus give way to the race: the settings are saved (one player's to 0x2F5C, 0x15AC and
+    0x1FB4; more players' to 0x3148, 0x1608 and 0x207C), a new series' points are cleared, the
+    display mode chosen is set, and the event's loading screen opens.
+*/
+PORT(0x004546F0)
+void __cdecl race_start_loading(void)
+{
+    BYTE* screen;
+    int kind;
+    int i;
+
+    FIELD(game_session, 0x4AC, DWORD) = 1;
+    FIELD(game_session, 0x4A8, DWORD) = 0;
+    game_FUN_0049a960(game_session);
+    gui_manager_drop_background(session_gui);
+    if (FIELD(FIELD(game_main, 0xC, BYTE*), 0x6C, int))
+        gui_manager_set_palette(session_gui, NULL, 0);
+
+    if (FIELD(game_main, 0x18, int) == 1 && !game_FUN_00527300(game_main)
+        && !FIELD(game_session, 0x4A8, int) && !FIELD(game_main, 0x3428, int))
+        settings_save();
+    if (FIELD(game_main, 0x18, int) > 1 && !FIELD(game_session, 0x4A8, int)
+        && !FIELD(game_main, 0x3428, int)) {
+        __movsd((unsigned long*) (game_main + 0x3148), (unsigned long*) (game_main + 0x2D70), 0x7B);
+        __movsd((unsigned long*) (game_main + 0x1608), (unsigned long*) (game_main + 0x1550), 0x17);
+        __movsd((unsigned long*) (game_main + 0x207C), (unsigned long*) (game_main + 0x1EEC), 0x32);
+    }
+
+    if (race_mode == SERIES && !series_started) {
+        series_started = 1;
+        FIELD(race_events, 0x48, BYTE) = 0;
+        for (i = 0; i < STANDINGS_MAX; i++)
+            FIELD(standing(i), STANDING_POINTS, DWORD) = 0;
+    }
+
+    FIELD(game_session, 0x494, HIMC) = ImmAssociateContext(game_window, NULL);
+    if (session_gui->background)
+        background_release_dc(session_gui->background);
+    if (FIELD(game_main, 0xFC4, DWORD) != FIELD(FIELD(game_main, 0xC, BYTE*), 0xC, DWORD))
+        VIRTUAL(game_main, 0x4C, method_1)(game_main, NULL, FIELD(game_main, 0xFC4, DWORD));
+    if (race_mode == GHOST_RACE) {
+        FIELD(game_main, 0x2C68, DWORD) = 0;
+        record_race = 0;
+        FIELD(game_main, 0x60C, DWORD) = 2;
+    }
+
+    kind = race_kind;
+    if ((unsigned) kind > 5)
+        return;
+    screen = game_new(0x7F5C, DLGPROCS_CPP, loading_screens[kind].line);
+    if (screen)
+        screen = loading_screens[kind].construct(screen, NULL, 1);
+    gui_manager_open(session_gui, NULL, screen, 0, 2, 0, NULL, 0, 0, 0);
+}
+
+/* ---- Single player: the event page ---- */
+
+void __fastcall dialog_notify_controls(BYTE* self, void* edx_unused, DWORD flag);
+void __fastcall dialog_enable_controls(BYTE* self, void* edx_unused, DWORD id, DWORD enabled);
+void __fastcall dialog_set_controls(BYTE* self, void* edx_unused, DWORD id, DWORD value);
+int  __fastcall option_select(BYTE* self, void* edx_unused, int index);
+int  __fastcall option_current_index(BYTE* self);
+void __fastcall edit_set_allowed(BYTE* self, void* edx_unused, const char* allowed);
+int  __fastcall list_find_data(BYTE* self, void* edx_unused, DWORD data);
+BOOL __fastcall list_remove(BYTE* self, void* edx_unused, int index);
+void __cdecl    game_FUN_004f7f20(DWORD a, const char* picture, const char* list, DWORD b,
+                                  BYTE* dialog, DWORD append);       /* the kind's tracks */
+
+#define SP_EVENT_TYPE       NAME(0x0056FA84)    /* "EventTypeDropDown" */
+#define SP_RACE_MODE        NAME(0x0056FA70)    /* "RaceModeDropDown" */
+#define SP_OPPONENTS        NAME(0x0056FA5C)    /* "OpponentsListBox" */
+#define SP_RECORD           NAME(0x0056FA4C)    /* "ChkRecordRace" */
+#define SP_LOD_EASY         NAME(0x0056FA40)    /* "RadLODEasy" */
+#define SP_GATES            NAME(0x0056FA34)    /* "LstNumGates" */
+#define SP_SEED             NAME(0x0056FA1C)    /* "EditSeed" */
+#define SP_RANDOM_GATES     NAME(0x0056FA00)    /* "ChkRandomGates" */
+#define SP_TRACK_LEFT       NAME(0x0056F9F4)    /* "TrackLeft" */
+#define SP_TRACK_RIGHT      NAME(0x0056F9E8)    /* "TrackRight" */
+#define SP_GHOST_LEFT       NAME(0x0056F9DC)    /* "GhostLeft" */
+#define SP_GHOST_RIGHT      NAME(0x0056F9C0)    /* "GhostRight" */
+#define SP_SEED_LEFT        NAME(0x0056F9B4)    /* "SeedLeft" */
+#define SP_SEED_RIGHT       NAME(0x0056F9A8)    /* "SeedRight" */
+#define SP_OPPONENTS_LEFT   NAME(0x0056F994)    /* "OpponentsLeftArrow" */
+#define SP_OPPONENTS_RIGHT  NAME(0x0056F980)    /* "OpponentsRightArrow" */
+#define SP_LAPS_BOX         NAME(0x0056FB18)    /* "LapsControlBox" */
+#define SP_RACES_BOX        NAME(0x0056FB08)    /* "RacesControlBox" */
+#define SP_GHOST_BOX        NAME(0x0056FAFC)    /* "GhostBox" */
+#define SP_OPPONENTS_BOX    NAME(0x0056FAE8)    /* "OpponentsControlBox" */
+#define SP_WAYPOINTS        NAME(0x0056FADC)    /* "WaypointBox" */
+#define SP_RACES_LEFT       NAME(0x0056FACC)    /* "RacesLeftArrow" */
+#define SP_RACES_RIGHT      NAME(0x0056FABC)    /* "RacesRightArrow" */
+#define SP_RACES_LABEL      NAME(0x0056FAB0)    /* "RacesLabel" */
+#define SP_RACES            NAME(0x0056FAA0)    /* "RacesListBox" */
+#define SP_LAPS             NAME(0x0056FB38)    /* "LapsListBox" */
+#define SP_LAPS_LABEL       NAME(0x0056FB44)    /* "LapsLabel" */
+#define SP_TREES            NAME(0x0056FB50)    /* "ChkTreeCollision" */
+#define SP_PICTURE          NAME(0x0056FB28)    /* "PictureBox" */
+#define ONE_NUMBER          NAME(0x0056EEA8)    /* "%d" */
+#define METRES              NAME(0x0056FB34)    /* "%dm" */
+#define RACE_OF             NAME(0x0056FA98)    /* "%d/%d" */
+
+#define EVENT_SELECT 2      /* a list's selection moved; c is the list */
+
+static BYTE* combo_list(BYTE* self, const char* name)
+{
+    return FIELD(dialog_find_control(self, NULL, name, 6), COMBO_LIST, BYTE*);
+}
+
+/* Event types 0 and 4 are timed: the laps list holds their time (SET_TIME). */
+static BOOL event_timed(int type)
+{
+    return type == 0 || type == 4;
+}
+
+static void numbers_fill(BYTE* list, const char* format, int first, int last)
+{
+    char number[0x100];
+    int i;
+
+    list_clear(list);
+    for (i = first; i <= last; i++) {
+        game_FUN_0053a11f(number, format, i);
+        list_add_text(list, NULL, number, i, 0);
+    }
+}
+
+static void tracks_list(BYTE* self, DWORD append)
+{
+    game_FUN_004f7f20(1, SP_PICTURE, LIST_TEXT_BOX, 0, self, append);
+}
+
+/* Out of line, as the original calls them. */
+__declspec(noinline) void __fastcall sp_event_kind_set(BYTE* self);
+__declspec(noinline) void __fastcall sp_event_refresh(BYTE* self);
+
+/*
+    The kind picked in EventTypeDropDown becomes the race's: race mode 4 for all kinds but 0,
+    0 to 10 opponents, laps - or for kind 0 lengths in metres - and the kind's tracks (kind 0
+    lists kind 5's too), the one last raced (0xC6C, 128 bytes a kind) picked.
+*/
+PORT(0x0044F2C0)
+void __fastcall sp_event_kind_set(BYTE* self)
+{
+    int kind = (int) list_data(combo_list(self, SP_EVENT_TYPE), NULL, -1);
+    BYTE* modes;
+    BYTE* label;
+    BYTE* opponents;
+    BYTE* laps;
+    int ghost;
+
+    race_kind = kind;
+    game_FUN_00529730(game_profile, NULL, kind);
+    modes = combo_list(self, SP_RACE_MODE);
+    ghost = list_find_data(modes, NULL, GHOST_RACE);
+    if (!kind) {
+        if (ghost != -1) {
+            if (list_selected(modes) == ghost) {
+                list_select_data(modes, NULL, 0);
+                race_mode = 0;
+            }
+            list_remove(modes, NULL, ghost);
+        }
+    } else if (ghost == -1) {
+        char text[0x80];
+
+        game_FUN_00526fc0(game_main, NULL, 0x13F6, text, sizeof text);
+        list_add_text(modes, NULL, text, GHOST_RACE, 0);
+    }
+
+    label = dialog_find_control(self, NULL, SP_LAPS_LABEL, 12);
+    opponents = dialog_find_control(self, NULL, SP_OPPONENTS, 3);
+    laps = dialog_find_control(self, NULL, SP_LAPS, 3);
+    dialog_find_control(self, NULL, SP_RACES, 3);      /* looked up, and not used */
+    control_load_text(label, NULL, game_language, 0x929);
+    numbers_fill(opponents, ONE_NUMBER, 0, 10);
+    numbers_fill(laps, ONE_NUMBER, kind == 2 || kind == 3 ? 2 : 1, 20);
+    list_select_data(laps, NULL, FIELD(game_main, 0x2D90, DWORD));
+    if (!kind) {
+        control_load_text(label, NULL, game_language, 0x92F);
+        numbers_fill(laps, METRES, 2, 30);
+        list_select_data(laps, NULL, (DWORD) (int) FIELD(game_main, 0x2EB0, float));
+    }
+
+    /* Read again: the profile's call may have changed it. */
+    if (!race_kind) {
+        game_FUN_00529730(game_profile, NULL, 0);
+        tracks_list(self, 0);
+        game_FUN_00529730(game_profile, NULL, 5);
+        tracks_list(self, 1);
+    } else {
+        tracks_list(self, 0);
+    }
+    dialog_notify_controls(self, NULL, 0);
+    game_FUN_00529730(game_profile, NULL, kind);
+    list_select_text(combo_list(self, LIST_TEXT_BOX), NULL,
+                     (const char*) game_main + 0xC6C + kind * 0x80);
+}
+
+/* Vtable slot 31: the event page's controls into the settings (out), or the settings into them. */
+PORT(0x0044F5A0)
+void __fastcall sp_event_sync(BYTE* self, void* edx_unused, DWORD out)
+{
+    BYTE* settings = race_settings;
+    char text[0x80];
+
+    (void) edx_unused;
+    if (out) {
+        BYTE* list;
+        const char* name;
+        size_t length;
+        int track;
+        int ghost;
+
+        if (!event_timed(FIELD(settings, SET_EVENT, int)))
+            FIELD(settings, SET_LAPS, DWORD) =
+                list_data(dialog_find_control(self, NULL, SP_LAPS, 3), NULL, -1);
+        else
+            FIELD(settings, SET_TIME, float) =
+                (float) (int) list_data(dialog_find_control(self, NULL, SP_LAPS, 3), NULL, -1);
+        if (!series_started)
+            FIELD(settings, SET_RACES, DWORD) =
+                list_data(dialog_find_control(self, NULL, SP_RACES, 3), NULL, -1);
+        FIELD(settings, SET_TREES, int) =
+            option_current_index(dialog_find_control(self, NULL, SP_TREES, 2));
+
+        text_copy((char*) settings + SET_TRACK, NO_TEXT);
+        list = combo_list(self, LIST_TEXT_BOX);
+        track = (int) list_data(list, NULL, -1) * TRACK_ENTRY;
+        name = FIELD(game_session, 0x60, char*) + track + 0x14;
+        length = text_length(name);
+        if ((int) length > 0xFF)
+            length = 0xFF;
+        game__strncpy((char*) settings + SET_TRACK, name, length);
+        settings[SET_TRACK + length] = 0;
+        game_FUN_00529730(game_profile, NULL,
+                          FIELD(FIELD(game_session, 0x60, BYTE*) + track, 0x8, DWORD));
+        FIELD(settings, SET_TRACK_KIND, BYTE) =
+            FIELD(FIELD(game_session, 0x60, BYTE*) + track, 0x4, BYTE);
+        text_copy((char*) game_main + race_kind * 0x80 + 0xC6C, list_text(list, NULL, -1));
+        FIELD(game_main, 0xF6C + race_kind * 4, DWORD) = FIELD(settings, SET_TRACK_KIND, BYTE);
+
+        FIELD(settings, SET_RANDOM_GATES, BYTE) =
+            option_current_index(dialog_find_control(self, NULL, SP_RANDOM_GATES, 2)) ? 1 : 0;
+        FIELD(settings, SET_GATES, BYTE) =
+            (BYTE) list_data(dialog_find_control(self, NULL, SP_GATES, 3), NULL, -1);
+        edit_get_text(dialog_find_control(self, NULL, SP_SEED, 11), NULL, text, sizeof text);
+        FIELD(settings, SET_SEED, int) = game_FUN_0053b6c7(text);
+        FIELD(settings, SET_EVENT, DWORD) = list_data(combo_list(self, SP_EVENT_TYPE), NULL, -1);
+        FIELD(settings, SET_MODE, DWORD) = list_data(combo_list(self, SP_RACE_MODE), NULL, -1);
+
+        ghost = (int) list_data(combo_list(self, LIST_GHOSTS), NULL, -1);
+        if (FIELD(settings, SET_MODE, int) == GHOST_RACE && ghost != -1) {
+            name = FIELD(self, GHOST_PATHS, char**)[ghost];
+            length = text_length(name);
+            if ((int) length > TRACK_NAME_LENGTH)
+                length = TRACK_NAME_LENGTH;
+            game__strncpy((char*) game_main + 0x2B64, name, length);
+            game_main[0x2B64 + length] = 0;
+            __movsd((unsigned long*) (game_session + 0x4B4),
+                    (unsigned long*) (FIELD(self, GHOST_CHOSEN, BYTE*) + ghost * RECORD_SIZE),
+                    RECORD_SIZE / 4);
+        } else {
+            FIELD(game_main, 0x2B64, BYTE) = 0;
+        }
+    } else {
+        BYTE* laps;
+
+        list_select_data(dialog_find_control(self, NULL, SP_RACES, 3), NULL,
+                         FIELD(settings, SET_RACES, DWORD));
+        option_select(dialog_find_control(self, NULL, SP_RANDOM_GATES, 2), NULL,
+                      FIELD(settings, SET_RANDOM_GATES, BYTE));
+        list_select_data(dialog_find_control(self, NULL, SP_GATES, 3), NULL,
+                         FIELD(settings, SET_GATES, BYTE));
+        game_FUN_0054aaa5(FIELD(settings, SET_SEED, int), text, 10);
+        edit_set_text(dialog_find_control(self, NULL, SP_SEED, 11), NULL, text);
+        laps = dialog_find_control(self, NULL, SP_LAPS, 3);
+        if (!event_timed(FIELD(settings, SET_EVENT, int)))
+            list_select_data(laps, NULL, FIELD(settings, SET_LAPS, DWORD));
+        else
+            list_select_data(laps, NULL, (DWORD) (int) FIELD(settings, SET_TIME, float));
+        option_select(dialog_find_control(self, NULL, SP_TREES, 2), NULL,
+                      FIELD(settings, SET_TREES, int));
+        list_select_data(combo_list(self, SP_EVENT_TYPE), NULL, FIELD(game_main, 0x2D74, DWORD));
+        list_select_data(combo_list(self, SP_RACE_MODE), NULL, FIELD(game_main, 0x2D70, DWORD));
+    }
+}
+
+/*
+    Which of the event page's boxes show for the race mode; the waypoint gates for event type 1
+    outside ghost races; and the races list, fixed at the race under way during a series.
+*/
+PORT(0x0044EEA0)
+void __fastcall sp_event_refresh(BYTE* self)
+{
+    BYTE* record = dialog_find_control(self, NULL, SP_RECORD, 0);
+    BYTE* modes = combo_list(self, SP_RACE_MODE);
+    DWORD mode = list_data(modes, NULL, -1);
+    BYTE* laps_box = dialog_find_control(self, NULL, SP_LAPS_BOX, 5);
+    BYTE* races_box = dialog_find_control(self, NULL, SP_RACES_BOX, 5);
+    BYTE* ghost_box = dialog_find_control(self, NULL, SP_GHOST_BOX, 5);
+    BYTE* opponents_box = dialog_find_control(self, NULL, SP_OPPONENTS_BOX, 5);
+    BYTE* waypoints;
+    BYTE* races_left;
+    BYTE* races_right;
+    BYTE* opponents_left;
+    BYTE* opponents_right;
+    BYTE* races_label;
+    BYTE* races;
+    BYTE* opponents;
+    BOOL free_choice;
+    char text[0x20];
+    int i;
+
+    control_show(opponents_box, NULL, TRUE, TRUE);
+    control_show(record, NULL, TRUE, TRUE);
+    control_show(ghost_box, NULL, FALSE, TRUE);
+    dialog_enable_controls(self, NULL, 0x3F3, TRUE);
+    switch (mode) {
+    case 0:
+        control_show(laps_box, NULL, FALSE, TRUE);
+        control_show(races_box, NULL, FALSE, TRUE);
+        break;
+    case 1:
+        control_show(laps_box, NULL, TRUE, TRUE);
+        control_show(races_box, NULL, FALSE, TRUE);
+        break;
+    case 2:
+        control_show(laps_box, NULL, TRUE, TRUE);
+        control_show(races_box, NULL, TRUE, TRUE);
+        break;
+    case 4:
+        control_show(opponents_box, NULL, FALSE, TRUE);
+        control_show(laps_box, NULL, FALSE, TRUE);
+        control_show(races_box, NULL, FALSE, TRUE);
+        control_show(record, NULL, FALSE, TRUE);
+        control_show(ghost_box, NULL, TRUE, TRUE);
+        dialog_enable_controls(self, NULL, 0x3F3, FALSE);
+        break;
+    }
+
+    waypoints = dialog_find_control(self, NULL, SP_WAYPOINTS, 5);
+    if (FIELD(race_settings, SET_EVENT, int) == 1 && list_data(modes, NULL, -1) != GHOST_RACE) {
+        BOOL random;
+
+        control_show(waypoints, NULL, TRUE, TRUE);
+        random = option_current_index(dialog_find_control(self, NULL, SP_RANDOM_GATES, 2)) != 0;
+        dialog_set_controls(self, NULL, 0x6F, random);
+        control_show(dialog_find_control(self, NULL, SP_GATES, 0), NULL, random, TRUE);
+        control_show(dialog_find_control(self, NULL, SP_SEED, 0), NULL, random, TRUE);
+    } else {
+        control_show(waypoints, NULL, FALSE, TRUE);
+    }
+
+    races_left = dialog_find_control(self, NULL, SP_RACES_LEFT, 9);
+    races_right = dialog_find_control(self, NULL, SP_RACES_RIGHT, 10);
+    opponents_left = dialog_find_control(self, NULL, SP_OPPONENTS_LEFT, 0);
+    opponents_right = dialog_find_control(self, NULL, SP_OPPONENTS_RIGHT, 0);
+    races_label = dialog_find_control(self, NULL, SP_RACES_LABEL, 12);
+    races = dialog_find_control(self, NULL, SP_RACES, 3);
+    opponents = dialog_find_control(self, NULL, SP_OPPONENTS, 3);
+    list_clear(races);
+    for (i = 3; i <= 7; i += 2) {
+        game_FUN_0053a11f(text, ONE_NUMBER, i);
+        list_add_text(races, NULL, text, i - 1, 0);    /* "3" holds 2, as the original has it */
+    }
+    list_select_data(races, NULL, FIELD(game_main, 0x2D7C, DWORD));
+
+    free_choice = !(FIELD(race_settings, SET_MODE, int) == SERIES && series_started);
+    control_show(opponents_left, NULL, free_choice, TRUE);
+    control_show(opponents_right, NULL, free_choice, TRUE);
+    VIRTUAL(opponents, 0xC4, method_1)(opponents, NULL, free_choice);     /* enable */
+    control_show(races_left, NULL, free_choice, TRUE);
+    control_show(races_right, NULL, free_choice, TRUE);
+    control_load_text(races_label, NULL, game_language, free_choice ? 0x92A : 0x92B);
+    if (!free_choice) {
+        game_FUN_0053a11f(text, RACE_OF, FIELD(race_events, 0x48, BYTE) + 1, race_round + 1);
+        list_clear(races);
+        list_add_text(races, NULL, text, 0, 0);
+    }
+}
+
+/* Vtable slot 54: the outside value a control shows and sets, synced by dialog_notify_controls. */
+static void control_bind(BYTE* control, void* value)
+{
+    VIRTUAL(control, 0xD8, method_1)(control, NULL, (DWORD) value);
+}
+
+static void list_add_string(BYTE* list, UINT id, DWORD data)
+{
+    char text[0x80];
+
+    game_FUN_00526fc0(game_main, NULL, id, text, sizeof text);
+    list_add_text(list, NULL, text, data, 0);
+}
+
+/* The arrows beside a drop-down list step its selection round, and tell its dialog (slot 66). */
+static void combo_step(BYTE* self, const char* name, BOOL back)
+{
+    BYTE* list = combo_list(self, name);
+    int count = FIELD(list, 0x1EC, int);
+
+    if (back)
+        list_select_all(list, NULL, (list_selected(list) + count - 1) % count);
+    else
+        list_select_all(list, NULL, (list_selected(list) + 1) % count);
+    VIRTUAL(list, 0x108, method_1)(list, NULL, 0);
+}
+
+/* The arrows beside EditSeed: 0 down wraps to 999, 999 up to 0. */
+static void seed_step(BYTE* self, BOOL back)
+{
+    BYTE* edit = dialog_find_control(self, NULL, SP_SEED, 11);
+    char seed[0x20];
+    int value;
+
+    edit_get_text(edit, NULL, seed, sizeof seed);
+    value = game_FUN_0053b6c7(seed);
+    if (back) {
+        if (--value < 0)
+            value = SEED_MAX;
+    } else if (++value > SEED_MAX) {
+        value = 0;
+    }
+    game_FUN_0054aaa5(value, seed, 10);
+    edit_set_text(edit, NULL, seed);
+    gui_user_queue_capture(FIELD(self, 0x34, gui_user*), NULL, edit, NULL, FALSE);
+}
+
+/* The single-player screen's event page (SPEvent.dtm, vtable 0x00556D68). */
+PORT(0x0044E830)
+void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, SP_RANDOM_GATES))
+            sp_event_refresh(self);
+        if (clicked(event, SP_TRACK_LEFT))
+            combo_step(self, LIST_TEXT_BOX, TRUE);
+        else if (clicked(event, SP_TRACK_RIGHT))
+            combo_step(self, LIST_TEXT_BOX, FALSE);
+        else if (clicked(event, SP_GHOST_LEFT))
+            combo_step(self, LIST_GHOSTS, TRUE);
+        else if (clicked(event, SP_GHOST_RIGHT))
+            combo_step(self, LIST_GHOSTS, FALSE);
+        else if (clicked(event, SP_SEED_LEFT))
+            seed_step(self, TRUE);
+        else if (clicked(event, SP_SEED_RIGHT))
+            seed_step(self, FALSE);
+        else if (clicked(event, SP_OPPONENTS_LEFT) || clicked(event, SP_OPPONENTS_RIGHT))
+            sp_event_refresh(self);
+    } else if (event->type == EVENT_SELECT) {
+        BYTE* list = (BYTE*) event->c;
+
+        if (clicked(event, SP_RACE_MODE)) {
+            if (list_data(list, NULL, -1) == GHOST_RACE)
+                ghosts_fill(self);
+            if (list_data(list, NULL, -1) != SERIES) {
+                series_started = 0;
+                FIELD(race_events, 0x48, BYTE) = 0;
+            }
+            sp_event_refresh(self);
+        } else if (clicked(event, SP_EVENT_TYPE)) {
+            dialog_notify_controls(self, NULL, 1);
+            sp_event_kind_set(self);
+            sp_event_refresh(self);
+            ghosts_fill(self);
+        } else if (clicked(event, LIST_TEXT_BOX)) {
+            ghosts_fill(self);
+            text_copy((char*) game_main + race_kind * 0x80 + 0xC6C, list_text(list, NULL, -1));
+        }
+    } else if (event->type == EVENT_OPEN) {
+        BYTE* list = combo_list(self, SP_EVENT_TYPE);
+        char number[0x80];
+        int i;
+
+        list_add_string(list, 0x13ED, 1);
+        list_add_string(list, 0x13EE, 0);
+        list_add_string(list, 0x13F0, 5);
+        list_add_string(list, 0x13EF, 2);
+        list_add_string(list, 0x13F2, 3);
+        list_select_data(list, NULL, FIELD(race_settings, SET_EVENT, DWORD));
+        list = combo_list(self, SP_RACE_MODE);
+        list_add_string(list, 0x13F3, 0);
+        list_add_string(list, 0x13F4, 1);
+        list_add_string(list, 0x13F5, 2);
+        list_add_string(list, 0x13F6, GHOST_RACE);
+        list_select_all(list, NULL, FIELD(race_settings, SET_MODE, int));
+        control_bind(dialog_find_control(self, NULL, SP_OPPONENTS, 0),
+                     race_settings + SET_OPPONENTS);
+        control_bind(dialog_find_control(self, NULL, SP_RECORD, 0), game_main + 0x3334);
+        control_bind(dialog_find_control(self, NULL, SP_LOD_EASY, 0), game_main + 0x60C);
+        list = dialog_find_control(self, NULL, SP_GATES, 3);
+        list_clear(list);
+        for (i = 10; i <= 30; i++) {
+            game_FUN_0054aaa5(i, number, 10);
+            list_add_text(list, NULL, number, i, 0);
+        }
+        edit_set_allowed(dialog_find_control(self, NULL, SP_SEED, 11), NULL, DIGITS);
+        dialog_notify_controls(self, NULL, 0);
+        sp_event_kind_set(self);
+        sp_event_refresh(self);
+        FIELD(self, 0x7F5C, int) = 0;
+        FIELD(self, GHOST_CHOSEN, void*) = NULL;
+        FIELD(self, GHOST_COUNT, int) = 0;
+        FIELD(self, GHOST_PATHS, char**) = NULL;
+        if (FIELD(race_settings, SET_MODE, int) == GHOST_RACE)
+            ghosts_fill(self);
+    }
+}
+
+/* ---- Single player: the screen ---- */
+
+int  __fastcall dialog_show(void* dialog, void* edx_unused, DWORD shown);
+void __fastcall game_FUN_0049a9d0(BYTE* session);
+void __fastcall game_FUN_004fdaf0(BYTE* page);        /* the rider to be dressed again (0x7F88) */
+void __fastcall game_FUN_00450f00(BYTE* page);        /* the bike chosen */
+
+/* Out of line, as the original calls them. */
+__declspec(noinline) void __fastcall sp_show_page(BYTE* self, void* edx_unused, int page);
+__declspec(noinline) void __fastcall choices_fill(BYTE* self);
+__declspec(noinline) void __fastcall ghosts_fill(BYTE* self);
+
+#define SP_TAB_EVENT        NAME(0x0056F8F0)    /* "EventTab" */
+#define SP_TAB_BIKE_RIDER   NAME(0x0056F8E0)    /* "BikeRiderTab" */
+#define SP_TAB_RACE_INFO    NAME(0x0056F8D4)    /* "RaceInfoTab" */
+#define SP_OPTIONS          NAME(0x0056F8BC)    /* "Options" */
+#define SP_JOYSTICK         NAME(0x0056F8B0)    /* "Joystick" */
+#define EVENT_CHILD_ENDED   9                   /* a dialog this one opened ended, its code in a */
+#define SP_SCREEN_RACE_INFO 0x88E               /* the screen opened on its race info */
+
+/* The tabs: words for both their states, centred (0x12). */
+static BYTE* sp_tab_setup(BYTE* self, const char* name, UINT id)
+{
+    BYTE* tab = dialog_find_control(self, NULL, name, TAB_CONTROL);
+
+    option_load_text(tab, NULL, 0, game_language, id);
+    option_load_text(tab, NULL, 1, game_language, id);
+    control_set_align(tab, NULL, 0x12);
+    return tab;
+}
+
+/* Each open page's controls into the settings. */
+static void sp_pages_store(BYTE* self, int count)
+{
+    int i;
+
+    for (i = 0; i < count; i++) {
+        BYTE* page = FIELD(self, SP_PAGES + 4 * i, BYTE*);
+
+        if (page)
+            dialog_notify_controls(page, NULL, 1);
+    }
+}
+
+/* OptBase.dtm over the screen, on its page `page` (0 the options, 1 the joystick). */
+static void sp_open_options(BYTE* self, int line, DWORD page)
+{
+    BYTE* options = game_new(0x7F70, DLGPROCS_CPP, line);
+
+    if (options) {
+        dialog_construct(options, NULL, 1, NAME(0x0056F690));             /* OptBase.dtm */
+        *(void**) options = (void*) 0x00556BD0;
+    }
+    gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, options, 0, 2, 0, self, page, 0, 1);
+}
+
+/*
+    The single-player screen (vtable 0x00556B4C). Its tabs switch the page shown (event, bike
+    and rider, race info); Back keeps the settings and goes to screen 100; Start keeps them and
+    starts the race - or, with the game's 0x614 set, shows messbox2.dtm instead. A page asks
+    (event 9) for the bike and rider page (0x33), or for that page to be refilled (0x51).
+*/
+PORT(0x0044DF50)
+void __fastcall sp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    switch (event->type) {
+    case EVENT_OPEN:
+        FIELD(self, SP_PAGES, BYTE*) = NULL;
+        FIELD(self, SP_PAGES + 4, BYTE*) = NULL;
+        FIELD(self, SP_PAGES + 8, BYTE*) = NULL;
+        radio_set(sp_tab_setup(self, SP_TAB_EVENT, 0x13E3), NULL, 0);
+        sp_tab_setup(self, SP_TAB_BIKE_RIDER, 0x13E4);
+        sp_tab_setup(self, SP_TAB_RACE_INFO, 0x13E5);
+        settings_restore();
+        game_FUN_00529730(game_profile, NULL, FIELD(race_settings, SET_EVENT, DWORD));
+        if (FIELD(self, 0xC4, int) == SP_SCREEN_RACE_INFO) {
+            radio_set(dialog_find_control(self, NULL, SP_TAB_RACE_INFO, TAB_CONTROL), NULL, 0);
+            sp_show_page(self, NULL, 2);
+        } else {
+            radio_set(dialog_find_control(self, NULL, SP_TAB_EVENT, TAB_CONTROL), NULL, 0);
+            sp_show_page(self, NULL, 0);
+        }
+        break;
+    case EVENT_CLICK:
+        if (clicked(event, NAME(0x0056F8CC))) {                                 /* "Back" */
+            sp_pages_store(self, 2);
+            dialog_notify_controls(self, NULL, 1);
+            settings_save();
+            go_to(100);
+            dialog_end(event_dialog(event), NULL, 0);
+            event->e = 1;
+        } else if (clicked(event, START)) {
+            if (FIELD(game_main, 0x614, int)) {
+                BYTE* box = game_new(0x7F58, DLGPROCS_CPP, 0x4E1);
+
+                if (box) {
+                    dialog_construct(box, NULL, 1, NAME(0x0056F734));          /* messbox2.dtm */
+                    *(void**) box = (void*) 0x00556CE4;
+                }
+                gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, box, 0, 4, 0, self, 0, 0,
+                                 1);
+                return;
+            }
+            game_FUN_0049a9d0(game_session);
+            FIELD(race_settings, SET_28, DWORD) = 0;
+            sp_pages_store(self, 3);
+            FIELD(game_main, 0x342C, DWORD) = record_race && race_mode != GHOST_RACE;
+            FIELD(game_main, 0x3428, DWORD) = 0;
+            settings_save();
+            if (race_mode == GHOST_RACE && FIELD(game_main, 0x2B64, BYTE))
+                __movsd((unsigned long*) race_settings, (unsigned long*) (game_session + 0x4E8),
+                        0x7B);                          /* the ghost's own settings */
+            else
+                FIELD(game_main, 0x2B64, BYTE) = 0;
+            race_start_loading();
+            VIRTUAL(self, 0x68, method_0)(self);
+        } else if (clicked(event, SP_TAB_EVENT)) {
+            sp_show_page(self, NULL, 0);
+        } else if (clicked(event, SP_TAB_BIKE_RIDER)) {
+            sp_show_page(self, NULL, 1);
+        } else if (clicked(event, SP_TAB_RACE_INFO)) {
+            sp_show_page(self, NULL, 2);
+        } else if (clicked(event, SP_OPTIONS)) {
+            sp_open_options(self, 0x518, 0);
+        } else if (clicked(event, SP_JOYSTICK)) {
+            sp_open_options(self, 0x51B, 1);
+        } else if (clicked(event, HELP)) {
+            game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
+        }
+        break;
+    case EVENT_CLOSE:
+        if (FIELD(self, 0x2C, BYTE*))
+            dialog_show(FIELD(self, 0x2C, BYTE*), NULL, 1);
+        break;
+    case EVENT_CHILD_ENDED:
+        if (event->a == 0x33) {
+            radio_set(dialog_find_control(self, NULL, SP_TAB_BIKE_RIDER, TAB_CONTROL), NULL, 0);
+            sp_show_page(self, NULL, 1);
+        } else if (event->a == 0x51 && FIELD(self, SP_PAGES + 4, BYTE*)) {
+            dialog_notify_controls(FIELD(self, SP_PAGES + 4, BYTE*), NULL, 0);
+            choices_fill(FIELD(self, SP_PAGES + 4, BYTE*));
+            game_FUN_004fdaf0(FIELD(self, SP_PAGES + 4, BYTE*));
+            game_FUN_00450f00(FIELD(self, SP_PAGES + 4, BYTE*));
+        }
+        break;
+    }
+}
+
 /* ---- Numbers ---- */
 
-char* __cdecl game_FUN_0054aaa5(int value, char* text, int radix);   /* _itoa */
 
 PORT(0x00452190)
 char* __cdecl number_text(int value, char* text)
