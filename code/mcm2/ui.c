@@ -4783,7 +4783,7 @@ int __fastcall slider_tick(BYTE* self, void* edx_unused, DWORD time)
 #define SLIDER_FIRST    0x1FC       /* the first entry of a list it follows */
 #define SLIDER_REVERSED 0x21C
 #define slider_across(s) (FIELD(s, CTL_TYPE, int) == 8)
-#define list_last(l)     game_FUN_00479d00(l)
+#define list_first_shown(l) game_FUN_00479d00(l)   /* its first entry showing (0x1F0) */
 
 int __fastcall game_FUN_00479d00(BYTE* list);
 
@@ -4851,9 +4851,9 @@ BOOL __fastcall slider_follow(BYTE* self, void* edx_unused, BYTE* list)
     (void) edx_unused;
     control_redraw(self);
     if (FIELD(self, SLIDER_REVERSED, int))
-        FIELD(self, SLIDER_FIRST, int) = FIELD(list, 0x1EC, int) - list_last(list);
+        FIELD(self, SLIDER_FIRST, int) = FIELD(list, 0x1EC, int) - list_first_shown(list);
     else
-        FIELD(self, SLIDER_FIRST, int) = list_last(list);
+        FIELD(self, SLIDER_FIRST, int) = list_first_shown(list);
     if (slider_list_span(self, NULL, list) == FIELD(self, SLIDER_FIRST, int))
         return TRUE;
 
@@ -5048,7 +5048,7 @@ static void slider_page(BYTE* self, int direction)
         if (FIELD(list, CTL_TYPE, int) == 3) {
             int page = FIELD(list, 0x200, int);
 
-            game_FUN_004777f0(list, NULL, list_last(list) + direction * page, TRUE);
+            game_FUN_004777f0(list, NULL, list_first_shown(list) + direction * page, TRUE);
         }
     }
     control_walk_end(self, NULL, walk);
@@ -6562,4 +6562,338 @@ int __fastcall list_render(BYTE* self)
     FIELD(self, LIST_ROWS, int) = drawn;
     FIELD(self, 0x1C0, DWORD) = settled;
     return 1;
+}
+
+/* ---- UIOption: a control that steps through options ------------------------------------------- */
+
+/* An option, 32 bytes: its pictures (normal, and disabled for state 4) and its text. */
+typedef struct ui_option {
+    ui_anim*  anim;
+    ui_anim*  anim_disabled;
+    char*     text;             /* on the game's heap */
+    int       length;
+    DWORD     enabled;          /* stepped to by option_next */
+    int       extent[2];        /* as CTL_EXTENT: length without markup, width */
+    text_run* runs;             /* on the game's heap */
+} ui_option;
+
+_Static_assert(sizeof(ui_option) == 32, "an option is 32 bytes");
+
+#define UIOPTION_VTABLE ((void**) 0x005582C8)
+#define OPTION_COUNT    0x1EC
+#define OPTION_CURRENT  0x1F0
+#define OPTION_LIST     0x1F4
+
+#define option_count(o)   FIELD(o, OPTION_COUNT, int)
+#define option_list(o)    FIELD(o, OPTION_LIST, ui_option*)
+#define option_current(o) (&option_list(o)[FIELD(o, OPTION_CURRENT, int)])
+
+/* Vtable slots 34 to 37: the text of the option showing, its length, markup and extent. */
+PORT(0x004791F0)
+const char* __fastcall option_text(BYTE* self)
+{
+    return option_current(self)->text;
+}
+
+PORT(0x00479210)
+int __fastcall option_length(BYTE* self)
+{
+    return option_current(self)->length;
+}
+
+PORT(0x00479230)
+text_run* __fastcall option_runs(BYTE* self)
+{
+    return option_current(self)->runs;
+}
+
+PORT(0x00479250)
+int* __fastcall option_extent(BYTE* self)
+{
+    return option_current(self)->extent;
+}
+
+/* The option showing. */
+PORT(0x00479D00)
+int __fastcall option_current_index(BYTE* self)
+{
+    return FIELD(self, OPTION_CURRENT, int);
+}
+
+/* Show option `index`. */
+PORT(0x00479C80)
+int __fastcall option_select(BYTE* self, void* edx_unused, int index)
+{
+    (void) edx_unused;
+    if (index < option_count(self))
+        FIELD(self, OPTION_CURRENT, int) = index;
+    return control_redraw(self);
+}
+
+/* Step to the next enabled option, coming round; stays when none other is. */
+PORT(0x00479CA0)
+void __fastcall option_next(BYTE* self)
+{
+    ui_option* options = option_list(self);
+    int start, at;
+
+    if (!options)
+        return;
+    start = FIELD(self, OPTION_CURRENT, int);
+    at = (start + 1) % option_count(self);
+    FIELD(self, OPTION_CURRENT, int) = at;
+    while (!options[at].enabled && at != start) {
+        at = (at + 1) % option_count(self);
+        FIELD(self, OPTION_CURRENT, int) = at;
+    }
+    control_redraw(self);
+}
+
+/* Free option `index`'s parts; the original frees its pictures without destroying them. */
+static void option_free(BYTE* self, int index, int line)
+{
+    ui_option* option = &option_list(self)[index];
+
+    if (option->anim && !option->anim->unknown_f4)
+        game_FUN_004a4450(option->anim, GAMEUI_CPP, line);
+    option = &option_list(self)[index];
+    if (option->anim_disabled && !option->anim_disabled->unknown_f4)
+        game_FUN_004a4450(option->anim_disabled, GAMEUI_CPP, line + 1);
+    if (option_list(self)[index].text)
+        game_FUN_004a4450(option_list(self)[index].text, GAMEUI_CPP, line + 2);
+    if (option_list(self)[index].runs)
+        game_FUN_004a4450(option_list(self)[index].runs, GAMEUI_CPP, line + 3);
+}
+
+/* Hold `count` options: the ones past it freed, new ones empty and enabled; the first shows. */
+PORT(0x004797F0)
+BOOL __fastcall option_set_count(BYTE* self, void* edx_unused, int count)
+{
+    int i;
+
+    (void) edx_unused;
+    if (count < option_count(self)) {
+        for (i = count; i < option_count(self); i++)
+            option_free(self, i, 0x21B6);
+        option_list(self) = game_FUN_0047c4b0(option_list(self), count * sizeof(ui_option));
+    } else if (count > option_count(self)) {
+        option_list(self) = game_FUN_0047c4b0(option_list(self), count * sizeof(ui_option));
+        for (i = option_count(self); i < count; i++) {
+            option_list(self)[i].anim = NULL;
+            option_list(self)[i].anim_disabled = NULL;
+            option_list(self)[i].text = NULL;
+            option_list(self)[i].runs = NULL;
+            option_list(self)[i].enabled = 1;
+        }
+    }
+    FIELD(self, OPTION_CURRENT, int) = 0;
+    option_count(self) = count;
+    control_redraw(self);
+    return TRUE;
+}
+
+PORT(0x00479180)
+BYTE* __fastcall option_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                  BYTE* dialog)
+{
+    (void) edx_unused;
+    control_construct(self, NULL, 2, a, area, dialog);
+    *(void***) self = UIOPTION_VTABLE;
+    option_count(self) = 0;
+    FIELD(self, OPTION_CURRENT, int) = 0;
+    option_list(self) = NULL;
+    option_set_count(self, NULL, 2);
+    return self;
+}
+
+/* The options are only freed when the dialog is not being torn down whole (0x9B0). */
+PORT(0x00479290)
+void __fastcall option_destruct(BYTE* self)
+{
+    BYTE* dialog;
+    int i;
+
+    *(void***) self = UIOPTION_VTABLE;
+    dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    if (option_count(self) && (!dialog || !FIELD(dialog, 0x9B0, int))) {
+        for (i = 0; i < option_count(self); i++)
+            option_free(self, i, 0x210E);
+    }
+    if (option_list(self))
+        game_FUN_004a4450(option_list(self), GAMEUI_CPP, 0x2114);
+    control_destruct(self);
+}
+
+PORT(0x00479270)
+BYTE* __fastcall option_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    option_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* The option's picture for the state showing: disabled (4) when it has one. */
+static ui_anim* option_anim(BYTE* self)
+{
+    ui_option* option = option_current(self);
+
+    if (FIELD(self, 0x60, int) == 4 && option->anim_disabled)
+        return option->anim_disabled;
+    return option_current(self)->anim;
+}
+
+/* Vtable slot 38: whether it must be drawn again, as control_needs_redraw but for its option. */
+PORT(0x004793E0)
+void __fastcall option_needs_redraw(BYTE* self)
+{
+    BYTE* last = control_chain_end(self, NULL, NULL);
+
+    if (!FIELD(self, 0x70, int) || !chain_settled(last)) {
+        if (--FIELD(self, 0x1BC, int) >= 0)
+            return;
+        FIELD(self, 0x1BC, int) = 0;
+    } else if (option_list(self) && option_current(self)->anim) {
+        FIELD(self, 0x1C0, DWORD) = option_current(self)->anim->count == 1 ? 1 : 0;
+        return;
+    }
+    FIELD(self, 0x1C0, DWORD) = 1;
+}
+
+/* Vtable slot 27: step the option's picture. */
+PORT(0x00479470)
+void __fastcall option_animate(BYTE* self)
+{
+    ui_anim* anim;
+
+    if (!option_list(self))
+        return;
+    anim = FIELD(self, 0x60, int) == 4 ? option_current(self)->anim_disabled
+                                       : option_current(self)->anim;
+    if (anim)
+        anim_step(anim);
+}
+
+/* Vtable slot 29: show state `state`, drawn over three frames. */
+PORT(0x004794B0)
+void __fastcall option_set_state(BYTE* self, void* edx_unused, DWORD state)
+{
+    (void) edx_unused;
+    FIELD(self, 0x1BC, int) = 3;
+    FIELD(self, 0x60, DWORD) = state;
+}
+
+/* Vtable slot 59: copy the option showing out to the bound int, or (`out` FALSE) show it. */
+PORT(0x004794D0)
+void __fastcall option_commit(BYTE* self, void* edx_unused, BOOL out)
+{
+    (void) edx_unused;
+    if (out)
+        *FIELD(self, EDIT_BOUND, int*) = option_current_index(self);
+    else
+        option_select(self, NULL, *FIELD(self, EDIT_BOUND, int*));
+}
+
+/* Vtable slot 48: the picture showing, or NULL. */
+PORT(0x004797A0)
+BYTE* __fastcall option_picture(BYTE* self, void* edx_unused, int state)
+{
+    ui_anim* anim = option_anim(self);
+
+    (void) edx_unused;
+    (void) state;
+    return anim ? anim_picture(anim) : NULL;
+}
+
+/* Option `index`'s text: kept, its markup parsed, and measured when it has none. */
+PORT(0x00479A60)
+int __fastcall option_set_text(BYTE* self, void* edx_unused, int index, const char* text)
+{
+    int showing = FIELD(self, OPTION_CURRENT, int);
+
+    (void) edx_unused;
+    if (index < option_count(self)) {
+        ui_option* option;
+
+        FIELD(self, OPTION_CURRENT, int) = index;
+        if (option_list(self)[index].text)
+            game_FUN_004a4450(option_list(self)[index].text, GAMEUI_CPP, 0x2210);
+        if (option_list(self)[index].runs)
+            game_FUN_004a4450(option_list(self)[index].runs, GAMEUI_CPP, 0x2211);
+        if (!text) {
+            option_list(self)[index].text = NULL;
+            option_list(self)[index].runs = NULL;
+        } else {
+            option_list(self)[index].text = game_FUN_004a4410(text_length(text) + 1, GAMEUI_CPP,
+                                                              0x2213);
+            text_copy(option_list(self)[index].text, text);
+            option_list(self)[index].runs =
+                dialog_parse_runs(FIELD(self, CTL_DIALOG, BYTE*), NULL, option_list(self)[index].text,
+                                  FIELD(self, CTL_COLOUR, COLORREF), FIELD(self, CTL_FONT, HFONT),
+                                  FIELD(self, CTL_TABS, const int*), option_list(self)[index].extent);
+            option = &option_list(self)[index];
+            if (!option->runs) {
+                void* surface;
+                HDC dc;
+
+                option->extent[0] = (int) text_length(option->text);
+                option_list(self)[index].length = option_list(self)[index].extent[0];
+                surface = video_surface();
+                if (!VIRTUAL(surface, 0x44, surface_get_dc)(surface, &dc)) {
+                    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+                    HFONT font = FIELD(self, CTL_FONT, HFONT);
+                    HGDIOBJ old;
+                    SIZE size;
+
+                    if (!font)
+                        font = dialog ? FIELD(dialog, 0xD8, HFONT) : NULL;
+                    old = SelectObject(dc, font);
+                    GetTextExtentPoint32A(dc, option_list(self)[index].text,
+                                          option_list(self)[index].length, &size);
+                    SelectObject(dc, old);
+                    surface = video_surface();
+                    VIRTUAL(surface, 0x68, surface_release_dc)(surface, dc);
+                    option_list(self)[index].extent[1] = size.cx;
+                } else {
+                    option_list(self)[index].extent[1] = 0;
+                }
+            }
+        }
+        FIELD(self, OPTION_CURRENT, int) = showing;
+    }
+    return control_redraw(self);
+}
+
+/* Option `index`'s picture (when given, the old one destroyed) and text (when given). */
+PORT(0x00479980)
+void __fastcall option_set(BYTE* self, void* edx_unused, int index, ui_anim* anim,
+                           const char* text)
+{
+    (void) edx_unused;
+    if (index < option_count(self) && anim) {
+        ui_anim* old = option_list(self)[index].anim;
+
+        if (old && !old->unknown_f4)
+            object_destroy(old);
+        option_list(self)[index].anim = anim;
+    }
+    if (text)
+        option_set_text(self, NULL, index, text);
+}
+
+/* Option `index`'s text from string resource `id` of `module`. */
+PORT(0x004799E0)
+int __fastcall option_load_text(BYTE* self, void* edx_unused, int index, HINSTANCE module, UINT id)
+{
+    char text[0x400];
+    const char* shown = text;
+
+    (void) edx_unused;
+    if (!LoadStringA(module, id, text, sizeof text)) {
+        game_FUN_0053a11f(text, RESOURCE_FAILED, id);
+        shown = RESOURCE_UNAVAILABLE;
+    }
+    option_set_text(self, NULL, index, shown);
+    return control_redraw(self);
 }
