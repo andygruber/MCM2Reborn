@@ -1228,6 +1228,67 @@ int __fastcall preview_draw(BYTE* self)
     return drawn;
 }
 
+/*
+    DDLBikes: the session's bikes (0x94 bytes each from 0x50, 0x54 of them) a player can ride -
+    those marked at 0x88, or whose maker's player kind (0xC4) is 2 or 3, or 10 with bit 0 of the
+    game's 0x1EE8 - as "maker model", sorted, with the game's bike (0x1FB0) picked. DDLRiders:
+    the riders (200 bytes each from 0x58, 0x5C of them) of kind 2 or 3 or marked at 0xC0, with
+    the one named at the game's 0x1F6C picked.
+*/
+#define BIKE_SIZE   0x94
+#define RIDER_SIZE  200
+
+int __fastcall list_select_data(BYTE* self, void* edx_unused, DWORD data);
+int __cdecl    game__strcmp(const char* a, const char* b);
+
+static BOOL maker_rideable(int kind)
+{
+    return kind == 2 || kind == 3 || (kind == 10 && (FIELD(game_main, 0x1EE8, BYTE) & 1));
+}
+
+PORT(0x00450630)
+void __fastcall choices_fill(BYTE* self)
+{
+    BYTE* list = FIELD(dialog_find_control(self, NULL, NAME(0x0056FBCC), 6), COMBO_LIST, BYTE*);
+    int bike_chosen = 0;
+    int rider_chosen = 0;
+    char label[0x80];
+    int i;
+
+    list_clear(list);
+    for (i = 0; i < FIELD(game_session, 0x54, int); i++) {
+        BYTE* bike = FIELD(game_session, 0x50, BYTE*) + i * BIKE_SIZE;
+        BYTE* maker = session_players + FIELD(bike, 0, int) * RIDER_SIZE;
+
+        if (FIELD(bike, 0x88, DWORD) || maker_rideable(FIELD(maker, 0xC4, int))) {
+            game_FUN_0053a11f(label, TWO_WORDS, (const char*) maker, (const char*) bike + 4);
+            list_add_text(list, NULL, label, i, 0);
+            if (FIELD(game_main, 0x1FB0, int) == i)
+                bike_chosen = i;
+        }
+    }
+    if (bike_chosen)
+        list_select_data(list, NULL, bike_chosen);
+    else
+        list_select_all(list, NULL, 0);
+    list_sort(list, NULL, TRUE);
+
+    list = FIELD(dialog_find_control(self, NULL, NAME(0x0056FBC0), 6), COMBO_LIST, BYTE*);
+    list_clear(list);
+    for (i = 0; i < FIELD(game_session, 0x5C, int); i++) {
+        BYTE* rider = FIELD(game_session, 0x58, BYTE*) + i * RIDER_SIZE;
+        int kind = FIELD(rider, 0xC4, int);
+
+        if (kind == 2 || kind == 3 || FIELD(rider, 0xC0, DWORD)) {
+            list_add_text(list, NULL, (const char*) rider, i, 0);
+            rider = FIELD(game_session, 0x58, BYTE*) + i * RIDER_SIZE;
+            if (!game__strcmp((const char*) rider + 0x40, (const char*) game_main + 0x1F6C))
+                rider_chosen = i;
+        }
+    }
+    list_select_data(list, NULL, rider_chosen);
+}
+
 void __fastcall game_FUN_00418300(DWORD* scope, void* edx_unused, BYTE* display);
 void __fastcall game_FUN_00418470(DWORD* scope, void* edx_unused, BYTE* model, DWORD value);
 void __fastcall game_FUN_00418370(DWORD* scope);
