@@ -480,7 +480,7 @@ BYTE* __fastcall loading_baja_construct(BYTE* self, void* edx_unused, DWORD flag
     The chosen record and the listed records' paths, freed. The ghost and replay screens share
     this layout; `line` is the first free's line in the leak report, the others follow it.
 */
-static void records_free(BYTE* self, int line)
+static void records_release(BYTE* self, int line)
 {
     if (FIELD(self, GHOST_CHOSEN, void*))
         game_FUN_004a4450(FIELD(self, GHOST_CHOSEN, void*), DLGPROCS_CPP, line);
@@ -491,6 +491,11 @@ static void records_free(BYTE* self, int line)
             game_FUN_004a4450(FIELD(self, GHOST_PATHS, char**)[i], DLGPROCS_CPP, line + 4);
         game_FUN_004a4450(FIELD(self, GHOST_PATHS, char**), DLGPROCS_CPP, line + 6);
     }
+}
+
+static void records_free(BYTE* self, int line)
+{
+    records_release(self, line);
     FIELD(self, GHOST_CHOSEN, void*) = NULL;
     FIELD(self, GHOST_PATHS, char**) = NULL;
     FIELD(self, GHOST_COUNT, int) = 0;
@@ -948,14 +953,14 @@ void __fastcall named_choice_handle(BYTE* self, void* edx_unused, ui_event* even
 
 /*
     A prompt quoting the name in the event's parameter. Left or Enter answers through
-    0x453740, Right or Escape through result_back, both with result 303.
+    result_confirm, Right or Escape through result_back, both with result 303.
 */
 #define QUOTED      NAME(0x0056E540)    /* "\"%s\"" */
 #define KEY_ESCAPE  0x1B
 #define KEY_ENTER   0x0D
 
 int  __fastcall control_set_align(BYTE* self, void* edx_unused, DWORD align);
-void __cdecl    game_FUN_00453740(int code, ui_event* event);
+void __cdecl    result_confirm(int code, ui_event* event);       /* below */
 void __cdecl    result_back(int code, ui_event* event);
 
 static void set_string(BYTE* control, UINT id)
@@ -974,7 +979,7 @@ void __fastcall quoted_choice_handle(BYTE* self, void* edx_unused, ui_event* eve
         if (clicked(event, BUTTON_RIGHT))
             result_back(0x12F, event);
         else if (clicked(event, BUTTON_LEFT))
-            game_FUN_00453740(0x12F, event);
+            result_confirm(0x12F, event);
     } else if (event->type == EVENT_OPEN) {
         BYTE* title = dialog_find_control(self, NULL, TITLE_TEXT, 0);
         char text[0x80];
@@ -991,7 +996,7 @@ void __fastcall quoted_choice_handle(BYTE* self, void* edx_unused, ui_event* eve
         if (event->d == KEY_ESCAPE)
             result_back(0x12F, event);
         else if (event->d == KEY_ENTER)
-            game_FUN_00453740(0x12F, event);
+            result_confirm(0x12F, event);
     }
 }
 
@@ -2737,6 +2742,737 @@ void __fastcall sp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
         }
         break;
     }
+}
+
+/* ---- Results ---- */
+
+#define TEXT_AND_ASIDE  NAME(0x0056FC94)    /* "%s (%s)" */
+#define ROUND_OF        NAME(0x0056FC9C)    /* "%s (%d/%d)" */
+
+int  __fastcall dialog_queue_focus(BYTE* self, void* edx_unused, BYTE* control, BYTE** old,
+                                   BOOL now);
+void __fastcall button_set_sort_list(BYTE* self, void* edx_unused, BYTE* list);
+typedef int (__cdecl* entry_compare)(const BYTE* a, const BYTE* b);
+void __fastcall list_set_compare(BYTE* self, void* edx_unused, entry_compare compare);
+void __cdecl    game_FUN_0051dd10(char* text, float seconds);   /* a time, as text */
+
+/* A series' title: string 0x93B and the rounds; while rounds remain, 0x93A and screen 0x10E next. */
+static void results_title(BYTE* self)
+{
+    BYTE* title = dialog_find_control(self, NULL, TITLE_TEXT, 12);
+    char round[0x80];
+    char text[0x80];
+
+    game_FUN_00526fc0(game_main, NULL, 0x93B, round, sizeof round);
+    game_FUN_0053a11f(text, ROUND_OF, round, (int) FIELD(race_events, 0x48, BYTE), race_round + 1);
+    control_set_text(title, NULL, text);
+    if ((int) FIELD(race_events, 0x48, BYTE) > race_round) {
+        control_load_text(title, NULL, game_language, 0x93A);
+        series_started = 0;
+        FIELD(game_session, 0x3C, int) = 0x10E;
+    }
+}
+
+static UINT points_heading(void)
+{
+    return race_mode == SERIES ? 0x938 : 0;
+}
+
+/* Timed events: the number, the time with the best lap, and points in a series. */
+static void results_timed(BYTE* self, ui_event* event, BOOL skip_out)
+{
+    char number[0x80];
+    char time_and_lap[0x80];
+    char points[0x80];
+    char time[0x80];
+    char lap[0x80];
+    char heading[0x80];
+    char aside[0x80];
+    int i;
+
+    stats_load_headings(event, 0x934, 0x935, 0, points_heading());
+    game_FUN_00526fc0(game_main, NULL, 0x936, heading, sizeof heading);
+    game_FUN_00526fc0(game_main, NULL, 0x13B8, aside, sizeof aside);
+    game_FUN_0053a11f(time, TEXT_AND_ASIDE, heading, aside);
+    control_set_text(dialog_find_control(self, NULL, stats_buttons[2], 0), NULL, time);
+
+    for (i = 0; i < FIELD(race_events, 0x4C, int); i++) {
+        BYTE* rider = standing(i);
+
+        if (skip_out && FIELD(rider, STANDING_OUT, DWORD))
+            continue;
+        game_FUN_0053a11f(number, ONE_NUMBER, FIELD(rider, STANDING_NUMBER, int));
+        game_FUN_0051dd10(time, FIELD(rider, STANDING_TIME, float));
+        if (FIELD(rider, STANDING_HAS_LAP, DWORD))
+            game_FUN_0051dd10(lap, FIELD(rider, STANDING_LAP, float));
+        else
+            game_FUN_00526fc0(game_main, NULL, 0xFF0, lap, sizeof lap);
+        game_FUN_0053a11f(time_and_lap, TEXT_AND_ASIDE, time, lap);
+        if (race_mode == SERIES) {
+            game_FUN_0053a11f(points, ONE_NUMBER, FIELD(rider, STANDING_POINTS, int));
+            stats_add_row(event, (const char*) rider + STANDING_NAME, number, time_and_lap, points);
+        } else {
+            stats_add_row(event, (const char*) rider + STANDING_NAME, number, time_and_lap, NULL);
+        }
+    }
+}
+
+/* Scored events: the score, and points in a series. */
+static void results_scored(ui_event* event, BOOL skip_out)
+{
+    char score[0x80];
+    char points[0x80];
+    int i;
+
+    stats_load_headings(event, 0x934, 0, 0x937, points_heading());
+    for (i = 0; i < FIELD(race_events, 0x4C, int); i++) {
+        BYTE* rider = standing(i);
+
+        if (skip_out && FIELD(rider, STANDING_OUT, DWORD))
+            continue;
+        game_FUN_0053a11f(score, ONE_NUMBER, (int) FIELD(rider, STANDING_SCORE, float));
+        if (race_mode == SERIES) {
+            game_FUN_0053a11f(points, ONE_NUMBER, FIELD(rider, STANDING_POINTS, int));
+            stats_add_row(event, (const char*) rider + STANDING_NAME, NULL, score, points);
+        } else {
+            stats_add_row(event, (const char*) rider + STANDING_NAME, NULL, score, NULL);
+        }
+    }
+}
+
+/* Tag: the number and two times; in a series the second time gives way to points. */
+static void results_tag(ui_event* event)
+{
+    char first[0x80];
+    char second[0x80];
+    char third[0x80];
+    char fourth[0x80];
+    int i;
+
+    if (race_mode == SERIES) {
+        stats_load_headings(event, 0x934, 0x939, 0x938, 0);
+    } else {
+        game_FUN_00526fc0(game_main, NULL, 0x934, first, sizeof first);
+        game_FUN_00526fc0(game_main, NULL, 0x935, second, sizeof second);
+        game_FUN_00526fc0(game_main, NULL, 0x939, third, sizeof third);
+        game_FUN_00526fc0(game_main, NULL, 0x142B, fourth, sizeof fourth);
+        stats_set_headings(event, first, second, third, fourth);
+    }
+    for (i = 0; i < FIELD(race_events, 0x4C, int); i++) {
+        BYTE* rider = standing(i);
+
+        if (FIELD(rider, STANDING_OUT, DWORD))
+            continue;
+        game_FUN_0053a11f(first, ONE_NUMBER, FIELD(rider, STANDING_NUMBER, int));
+        game_FUN_0051dd10(second, FIELD(rider, STANDING_TIME_1C, float));
+        game_FUN_0051dd10(third, FIELD(rider, STANDING_TIME_18, float));
+        if (race_mode == SERIES)        /* formatted, then overwritten, as the original has it */
+            game_FUN_0053a11f(third, ONE_NUMBER, FIELD(rider, STANDING_POINTS, int));
+        stats_add_row(event, (const char*) rider + STANDING_NAME, first, second, third);
+    }
+}
+
+/* The stats column `column`, sorted by `compare`; with `button`, its heading sorts it too. */
+static void column_order(BYTE* self, int column, entry_compare compare, BOOL button, BOOL sort)
+{
+    BYTE* list = dialog_find_control(self, NULL, stats_lists[column], 0);
+
+    if (button)
+        button_set_sort_list(dialog_find_control(self, NULL, stats_buttons[column], 1), NULL, list);
+    list_set_compare(list, NULL, compare);
+    if (sort)
+        list_sort(list, NULL, TRUE);
+}
+
+/* The race results screen (vtable 0x0055CC00). */
+PORT(0x004521B0)
+void __fastcall results_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type != EVENT_OPEN)
+        return;
+    if (race_mode == SERIES)
+        results_title(self);
+    dialog_queue_focus(self, NULL, dialog_find_control(self, NULL, stats_lists[0], 0), NULL, FALSE);
+    stats_clear(event);
+
+    switch (race_kind) {
+    case 1:
+    case 2:
+    case 3:
+    case 5:
+        results_timed(self, event, TRUE);
+        column_order(self, 3, entries_by_number_falling, TRUE, FALSE);
+        column_order(self, 1, entries_by_number, FALSE, TRUE);
+        break;
+    case 4:
+        if (!FIELD(game_main, 0x2EB8, int)) {
+            results_tag(event);
+            column_order(self, 1, entries_by_number, FALSE, TRUE);
+            break;
+        }
+        /* fall through: scored like the quarry */
+    case 0:
+        results_scored(event, TRUE);
+        column_order(self, 3, entries_by_number_falling, TRUE, FALSE);
+        column_order(self, 2, entries_by_number_falling, FALSE, TRUE);
+        break;
+    }
+}
+
+/* ---- Race information ---- */
+
+#define BUTTON_VIEW_REPLAY NAME(0x0056FCA8)     /* "ButViewReplay" */
+#define REPLAY_TAPE        NAME(0x0056DC74)     /* "VCRtape.dat": the race just run */
+
+/* ButViewReplay: the tape's race settings become the game's, and the owner takes the track. */
+static void replay_watch(BYTE* self, ui_event* event)
+{
+    BYTE record[RECORD_SIZE];
+    size_t length;
+    void* file;
+    int i;
+
+    for (i = 0; i < 8; i++) {           /* the record's member constructors */
+        FIELD(record, 0x180 + i * 8, DWORD) = 0;
+        record[0x184 + i * 8] = 0;
+    }
+    file = game_FUN_0053a35b(REPLAY_TAPE, NAME(0x0056C66C));                  /* "rb" */
+    if (!file) {
+        control_show((BYTE*) event->c, NULL, FALSE, TRUE);
+        return;
+    }
+    game_FUN_0053a5d5(record, RECORD_SIZE, 1, file);       /* unchecked, as in the original */
+    game_FUN_0053a2ad(file);
+    __movsd((unsigned long*) race_settings, (unsigned long*) (record + 0x34), 0x7B);
+    game_FUN_00529730(game_profile, NULL, race_kind);
+    FIELD(game_main, 0x3428, DWORD) = 1;
+    FIELD(game_main, 0x342C, DWORD) = 1;
+    FIELD(game_main, 0x1550, DWORD) = FIELD(record, 0x33C, DWORD);
+    FIELD(game_main, 0x1554, DWORD) = FIELD(record, 0x340, DWORD);
+    length = text_length(REPLAY_TAPE);
+    if ((int) length > TRACK_NAME_LENGTH)
+        length = TRACK_NAME_LENGTH;
+    game__strncpy((char*) game_main + 0x2C6C, REPLAY_TAPE, length);
+    game_main[0x2C6C + length] = 0;
+    race_start_loading();
+    track_chosen(self);
+}
+
+/* The single-player screen's race information page (SPRInfo.dtm, vtable 0x00556E70). */
+PORT(0x004515C0)
+void __fastcall race_info_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, BUTTON_VIEW_REPLAY))
+            replay_watch(self, event);
+        return;
+    }
+    if (event->type != EVENT_OPEN)
+        return;
+    control_show(dialog_find_control(self, NULL, BUTTON_VIEW_REPLAY, 1), NULL,
+                 FIELD(game_session, 0x40, DWORD) != 0, TRUE);
+    if (race_mode == SERIES)
+        results_title(self);
+    dialog_queue_focus(self, NULL, dialog_find_control(self, NULL, stats_lists[0], 0), NULL, FALSE);
+    stats_clear(event);
+
+    switch (race_kind) {
+    case 0:
+        results_scored(event, FALSE);
+        column_order(self, 3, entries_by_number_falling, TRUE, FALSE);
+        column_order(self, 2, entries_by_number_falling, FALSE, TRUE);
+        break;
+    case 1:
+    case 2:
+    case 3:
+    case 5:
+        results_timed(self, event, FALSE);
+        column_order(self, 3, entries_by_number_falling, TRUE, FALSE);
+        column_order(self, 1, entries_by_number, TRUE, TRUE);
+        break;
+    }
+}
+
+/* ---- New profiles ---- */
+
+#define player_name     ((char*) game_main + 0x588)     /* char[0x80] */
+#define PROFILE_PROMPT_VTABLE ((void*) 0x00557210)      /* messbox2.dtm, named_choice_handle */
+#define PROFILE_CHARACTERS NAME(0x0056FE6C)  /* letters, digits and "_-()$#@" */
+#define OK_BUTTON_WORDS NAME(0x0056FF54)     /* "OKButton": OkButton too, names being matched by _stricmp */
+#define profile_asking  FIELD(game_session, 0x4B0, DWORD)
+
+#define EVENT_EDIT_CHANGED  19
+
+BOOL __fastcall game_FUN_0044b8b0(BYTE* files, void* edx_unused, const char* name);  /* listed */
+void __fastcall game_FUN_00527a70(char* profile);       /* the profile's defaults */
+void __fastcall game_FUN_00528630(char* profile);
+void __fastcall game_FUN_00449e20(BYTE* controls, void* edx_unused, const char* path, int a);
+void __fastcall game_FUN_00527080(BYTE* game);
+void __fastcall game_FUN_004b0e10(BYTE* net, void* edx_unused, DWORD player, char* name);
+
+/* Copy at most `most` characters, as the game inlines it. */
+static void text_copy_most(char* to, const char* from, int most)
+{
+    int length = (int) text_length(from);
+
+    if (length > most)
+        length = most;
+    game__strncpy(to, from, length);
+    to[length] = 0;
+}
+
+/*
+    A new profile named in EditBox (at most 15 characters): one already listed is asked about
+    (messbox2, given the name); otherwise its folder is made, the profile reset with the
+    session's default bike (0xFA at 0x8C) and first rider, and ui\preset.ctl copied in as its
+    control.ctl. The screen ends with 30.
+*/
+__declspec(noinline) void __cdecl profile_create(ui_event* event);
+
+PORT(0x00452990)
+void __cdecl profile_create(ui_event* event)
+{
+    char name[0x80];
+    char path[0x104];
+    char controls[0x104];
+    int i;
+
+    edit_get_text(dialog_find_control(event_dialog(event), NULL, EDIT_BOX, 0), NULL, name, 0x10);
+    if (!name[0])
+        return;
+    if (game_FUN_0044b8b0(game_files, NULL, name)) {
+        BYTE* prompt = game_new(0x7F58, DLGPROCS_CPP, 0xCF9);
+
+        if (prompt) {
+            dialog_construct(prompt, NULL, 1, NAME(0x0056F734));              /* messbox2.dtm */
+            *(void**) prompt = PROFILE_PROMPT_VTABLE;
+        }
+        gui_manager_open(session_gui, NULL, prompt, 0, 4, 0, event_dialog(event), (DWORD) name,
+                         0, 1);
+        return;
+    }
+    game_FUN_0053a11f(path, NAME(0x0056C7DC), PROFILE_FOLDER, name);           /* %s\%s */
+    if (!CreateDirectoryA(path, NULL))
+        return;
+
+    game_FUN_00527a70(game_profile);
+    text_copy_most(game_profile, name, PROFILE_LENGTH);
+    FIELD(game_main, 0x614, DWORD) = 1;
+
+    for (i = 0; i < FIELD(game_session, 0x54, int); i++) {
+        if (FIELD(FIELD(game_session, 0x50, BYTE*) + i * BIKE_SIZE, 0x8C, int) == 0xFA) {
+            BYTE* bike;
+
+            FIELD(game_main, 0x1FB0, int) = i;
+            FIELD(game_main, 0x1FAC, int) =
+                FIELD(FIELD(game_session, 0x50, BYTE*) + i * BIKE_SIZE, 0, int);
+            bike = FIELD(game_session, 0x50, BYTE*) + i * BIKE_SIZE;
+            text_copy((char*) game_main + 0x1EEC,
+                      (const char*) session_players + FIELD(bike, 0, int) * RIDER_SIZE + 0x40);
+            text_copy((char*) game_main + 0x1F2C,
+                      (const char*) FIELD(game_session, 0x50, BYTE*) + i * BIKE_SIZE + 0x48);
+            break;
+        }
+    }
+    text_copy((char*) game_main + 0x1F6C, FIELD(game_session, 0x58, char*) + 0x40);
+    __movsd((unsigned long*) (game_main + 0x207C), (unsigned long*) (game_main + 0x1EEC), 0x32);
+    __movsd((unsigned long*) (game_main + 0x1FB4), (unsigned long*) (game_main + 0x207C), 0x32);
+    for (i = 0; i < 6; i++) {
+        game_main[0xC6C + i * 0x80] = 0;
+        FIELD(game_main, 0xF6C + i * 4, DWORD) = 0;
+    }
+    text_copy(player_name, NO_TEXT);
+    text_copy((char*) game_main + 0x2DA6, NO_TEXT);
+    race_kind = 0;
+    FIELD(game_main, 0x2DA4, BYTE) = 0;
+    FIELD(game_main, 0x2D78, DWORD) = 0;
+
+    game_FUN_0053a11f(path, NAME(0x0056C7DC), NAME(0x0056FE48), NAME(0x0056FE4C));  /* ui\preset.ctl */
+    game_FUN_0053a11f(controls, NAME(0x0056FE30), PROFILE_FOLDER, name,
+                      NAME(0x0056FE3C));                                          /* ...\control.ctl */
+    CopyFileA(path, controls, FALSE);
+    game_FUN_00528630(game_profile);
+    VIRTUAL(game_files, 4, method_0)(game_files);
+    game_FUN_00528bb0(game_profile);
+    game_FUN_00449e20(FIELD(game_main, 0x33FC, BYTE*), NULL, controls, -1);
+    game_FUN_00527080(game_main);
+    dialog_end(event_dialog(event), NULL, 0x1E);
+    event->e = 1;
+}
+
+static void ok_enable(BYTE* self, BOOL enabled)
+{
+    BYTE* ok = dialog_find_control(self, NULL, OK_BUTTON, 0);
+
+    VIRTUAL(ok, 0xC4, method_1)(ok, NULL, enabled);
+}
+
+/*
+    A new profile's name, typed (OK only once there is one), or in a network game (screen
+    0xBBB) the player's own. A yes (31) from the prompt it raises saves it as the profile.
+*/
+PORT(0x00452E00)
+void __fastcall profile_name_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    char text[0x80];
+    BYTE* edit;
+
+    (void) edx_unused;
+    switch (event->type) {
+    case EVENT_OPEN: {
+        char name[0x10];
+        int screen;
+
+        profile_asking = 1;
+        load_text(self, TITLE_TEXT, 0, 0x926);
+        load_text(self, OK_BUTTON_WORDS, 0, 0x13E9);
+        load_text(self, CANCEL_BUTTON, 0, 0x13DC);
+        screen = FIELD(game_session, 0x3C, int);
+        if (screen == 0xBBA || screen == 0xBBB)
+            dialog_enable_controls(self, NULL, 0x65, FALSE);
+        load_prompt(self, 0x13AE);
+        edit = dialog_find_control(self, NULL, EDIT_BOX, 0);
+        edit_set_capacity(edit, NULL, PROFILE_LENGTH);
+        edit_set_allowed(edit, NULL, PROFILE_CHARACTERS);
+        if (FIELD(game_session, 0x3C, int) == 0xBBB) {
+            BYTE* net = FIELD(game_main, 0x8, BYTE*);
+
+            game_FUN_004b0e10(net, NULL, FIELD(net, 0xC, DWORD), name);
+            edit_set_text(edit, NULL, name);
+            FIELD(edit, 0x5C, int) = 12;            /* the box becomes a label */
+            profile_create(event);
+            dialog_end(self, NULL, 0);
+        } else {
+            gui_user_queue_capture(FIELD(self, 0x34, gui_user*), NULL, edit, NULL, FALSE);
+        }
+        ok_enable(self, FALSE);
+        break;
+    }
+    case EVENT_CLICK:
+        if (clicked(event, CANCEL_BUTTON))
+            result_back(0xBB9, event);
+        else if (clicked(event, OK_BUTTON_WORDS))
+            result_confirm(0xBB9, event);
+        break;
+    case EVENT_CHILD_ENDED:
+        edit = dialog_find_control(self, NULL, EDIT_BOX, 0);
+        if (event->a == 0x1F) {
+            edit_get_text(edit, NULL, text, sizeof text);
+            text_copy_most(game_profile, text, PROFILE_LENGTH);
+            game_FUN_00528820(game_profile);
+            dialog_end(self, NULL, 0x1F);
+        } else {
+            edit_set_text(edit, NULL, NO_TEXT);
+            gui_user_queue_capture(FIELD(self, 0x34, gui_user*), NULL, edit, NULL, FALSE);
+        }
+        break;
+    case EVENT_EDIT_CHANGED:
+        edit_get_text(dialog_find_control(self, NULL, EDIT_BOX, 11), NULL, text, 0x7F);
+        ok_enable(self, text[0] != 0);
+        break;
+    case EVENT_CLOSE:
+        profile_asking = 0;
+        break;
+    }
+}
+
+/* ---- Confirming ---- */
+
+/* What the setup screens confirm into the game (copied whole), and DirectPlay's providers. */
+#define confirmed_c24   ((unsigned long*) 0x0068E9D8)  /* 0xDD dwords to game + 0xC24 */
+#define confirmed_f98   ((unsigned long*) 0x0068E8D8)  /* 0xB dwords to game + 0xF98 */
+#define confirmed_mode  (*(DWORD*) 0x0068E918)         /* then 7 dwords to game + 0xFC4 */
+#define serial_settings ((void*) 0x0068E7F8)     /* the cable's COM port, baud and so on */
+#define PROVIDER_TCPIP  (*(const GUID*) 0x0055BA70)    /* DPSPGUID_TCPIP */
+#define PROVIDER_SERIAL (*(const GUID*) 0x0055BA80)    /* DPSPGUID_SERIAL */
+#define game_net        FIELD(game_main, 0x8, BYTE*)
+
+void __cdecl    game_FUN_004b2ae0(const void* from, DWORD* to);
+BOOL __fastcall game_FUN_004b0600(BYTE* net, void* edx_unused, GUID provider, const char* address,
+                                  const char* b, void* settings, void** data, DWORD* size);
+int  __fastcall game_FUN_004b04e0(BYTE* net, void* edx_unused, void* data, DWORD size, DWORD flags);
+
+/*
+    The confirming answer to a screen's result code (see result_back). Those it knows end the
+    screen that sent the event (most with 0) and mark the event handled; the connections free
+    what they were given.
+*/
+PORT(0x00453740)
+void __cdecl result_confirm(int code, ui_event* event)
+{
+    char text[0x80];
+    char computer[0x10];
+    DWORD address[5] = { 0, 0, 0, 0, 0 };
+    DWORD size;
+    void* data;
+    DWORD end = 0;
+
+    switch (code) {
+    case 0xC9:
+        dialog_notify_controls(event_dialog(event), NULL, 1);
+        __movsd((unsigned long*) (game_main + 0xC24), confirmed_c24, 0xDD);
+        session_gui->unknown_ec = FIELD(game_main, 0xC40, int);
+        go_to(0x66);
+        break;
+    case 0xCA:
+        dialog_notify_controls(event_dialog(event), NULL, 1);
+        __movsd((unsigned long*) (game_main + 0xF98), confirmed_f98, 0xB);
+        game_FUN_00527080(game_main);
+        go_to(0x66);
+        break;
+    case 0xCB:
+        dialog_notify_controls(event_dialog(event), NULL, 1);
+        confirmed_mode = list_data(FIELD(dialog_find_control(event_dialog(event), NULL,
+                                                             NAME(0x0056FF68), 0),   /* ModeDDL */
+                                         COMBO_LIST, BYTE*), NULL, -1);
+        __movsd((unsigned long*) (game_main + 0xFC4), &confirmed_mode, 7);
+        go_to(0x66);
+        break;
+    case 0xCD:
+        if (!game_main[0x2DA6])
+            return;
+        go_to(0xD0);
+        break;
+    case 0xD0:
+        go_to(0x68);
+        break;
+    case 0xD8:
+        game_FUN_004b2ae0(serial_settings, address);    /* a DPCOMPORTADDRESS */
+        if (!game_FUN_004b0600(game_net, NULL, PROVIDER_SERIAL, NO_TEXT, NO_TEXT, address, &data,
+                               &size)) {
+            end = 0xD;
+            break;
+        }
+        if (game_FUN_004b04e0(game_net, NULL, data, size, 8)) {
+            game_FUN_004a4450(data, DLGPROCS_CPP, 0xEA4);
+            go_to(0x85C);
+            return;
+        }
+        dialog_end(event_dialog(event), NULL, 0xD);
+        event->e = 1;
+        game_FUN_004a4450(data, DLGPROCS_CPP, 0xEAB);
+        return;
+    case 0xD9:
+        data = NULL;
+        edit_get_text(dialog_find_control(event_dialog(event), NULL, EDIT_BOX, 0), NULL, text,
+                      sizeof text);
+        if (!text[0]) {
+            end = 0xE;
+            break;
+        }
+        if (!game_FUN_004b0600(game_net, NULL, PROVIDER_TCPIP, text, NO_TEXT, NULL, &data,
+                               &size)) {
+            end = 0xD;
+            break;
+        }
+        if (game_FUN_004b04e0(game_net, NULL, data, size, 4)) {
+            dialog_end(event_dialog(event), NULL, 0xF);
+            event->e = 1;
+            game_FUN_004a4450(data, DLGPROCS_CPP, 0xEC3);
+        } else {
+            dialog_end(event_dialog(event), NULL, 0xD);
+            event->e = 1;
+            game_FUN_004a4450(data, DLGPROCS_CPP, 0xEC8);
+        }
+        return;
+    case 0x104:
+    case 0x105:
+        FIELD(game_session, 0x30, int) = FIELD(game_session, 0x3C, int);
+        if (race_kind == 3) {
+            go_to(0xCD);
+            return;
+        }
+        if (race_kind != 0 && race_kind != 2)
+            return;
+        break;
+    case 0x12C:
+        /* The player's name; the computer's, or string 0xBD8, when left empty. */
+        edit_get_text(dialog_find_control(event_dialog(event), NULL, EDIT_BOX, 0), NULL,
+                      player_name, 0x80);
+        if (!player_name[0]) {
+            size = sizeof computer;
+            GetComputerNameA(computer, &size);
+            text_copy_most(player_name, computer, 0x7F);
+            if (!player_name[0]) {
+                game_FUN_00526fc0(game_main, NULL, 0xBD8, text, sizeof text);
+                text_copy_most(player_name, text, 0x7F);
+            }
+        }
+        end = 0x14;
+        break;
+    case 0x12F:
+        end = 0x32;
+        break;
+    case 0x191:
+        game_FUN_00526eb0(game_main, NULL, 0, 0x191, 1);
+        return;
+    case 0x1F9:
+    case 0x1FA:
+        break;
+    case 0xBB9:
+    case 0xBBA:
+    case 0xBBB:
+        profile_create(event);
+        return;
+    default:
+        return;
+    }
+    dialog_end(event_dialog(event), NULL, end);
+    event->e = 1;
+}
+
+/* ---- The record filter panels ---- */
+
+#define DESCRIPTION         0x7F68              /* char[0x20]: the description being typed */
+#define DESCRIPTION_LENGTH  0x1F
+#define BUTTON_DELETE       NAME(0x005700F8)    /* "ButDelete" */
+#define BUTTON_DESCRIPTION  NAME(0x005700D4)    /* "ButDescription" */
+#define TEXT_LAPS           NAME(0x00570104)    /* "TxtLaps" */
+#define TRACK_AND_DESC      NAME(0x005700E4)    /* "%s, %s" */
+
+int    __cdecl game_FUN_0053a51c(void* file, long offset, int origin);                  /* fseek */
+size_t __cdecl game_FUN_0053a727(const void* data, size_t size, size_t count, void* file); /* fwrite */
+
+/* Out of line, as the original calls them. */
+__declspec(noinline) void __fastcall prompt_setup_ids(BYTE* self, void* edx_unused,
+    const char* title, UINT title_id, const char* prompt, UINT prompt_id, const char* left,
+    UINT left_id, const char* middle, UINT middle_id, const char* right, UINT right_id);
+__declspec(noinline) void __fastcall text_entry_setup_ids(BYTE* self, void* edx_unused,
+    const char* title, UINT title_id, const char* prompt, UINT prompt_id, char* buffer, int size);
+__declspec(noinline) void __fastcall ghost_records_fill(BYTE* self);
+__declspec(noinline) void __fastcall replay_records_fill(BYTE* self);
+
+typedef struct record_filter {
+    void (__fastcall* fill)(BYTE* self);
+    int  ask_line;          /* the delete prompt's allocation */
+    int  describe_line;     /* the description entry's */
+    int  free_line;         /* the first of the frees on closing */
+    BOOL replays;           /* a laps column, and descriptions kept to 31 characters */
+} record_filter;
+
+static BYTE* record_picked(BYTE* self, BYTE* list)
+{
+    return FIELD(self, GHOST_CHOSEN, BYTE*) + list_data(list, NULL, -1) * RECORD_SIZE;
+}
+
+/* Delete asks first: messbox2 (three_way_handle), "track, description". */
+static void record_ask_delete(BYTE* self, int line)
+{
+    BYTE* list = dialog_find_control(self, NULL, LIST_TRACK, 3);
+    BYTE* record = record_picked(self, list);
+    char text[0x100];
+    BYTE* prompt;
+
+    game_FUN_0053a11f(text, TRACK_AND_DESC, list_text(list, NULL, -1),
+                      (const char*) record + RECORD_DESC);
+    prompt = game_new(0x7F58, DLGPROCS_CPP, line);
+    if (prompt) {
+        dialog_construct(prompt, NULL, 1, NAME(0x0056F734));                   /* messbox2.dtm */
+        *(void**) prompt = (void*) 0x005575AC;
+    }
+    gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, prompt, 0, 4, 0, self, 0, 0, 1);
+    prompt_setup_ids(prompt, NULL, NULL, 0x143C, text, 0, NULL, 0x143E, NULL, 0, NULL, 0x143D);
+}
+
+/* The chosen record's description, to edit in messbox1 (text_entry_handle). */
+static void record_ask_description(BYTE* self, int line)
+{
+    char* description = (char*) self + DESCRIPTION;
+    BYTE* entry;
+
+    text_copy_most(description, list_text(dialog_find_control(self, NULL, LIST_DESC, 3), NULL, -1),
+                   DESCRIPTION_LENGTH);
+    entry = game_new(0x7F60, DLGPROCS_CPP, line);
+    if (entry) {
+        dialog_construct(entry, NULL, 1, NAME(0x005700BC));                    /* messbox1.dtm */
+        *(void**) entry = (void*) 0x00557528;
+    }
+    gui_manager_open(FIELD(self, 0x30, gui_manager*), NULL, entry, 0, 4, 0, self, 0, 0, 1);
+    text_entry_setup_ids(entry, NULL, NULL, 0x143F, NULL, 0, description, 0x20);
+}
+
+/* The prompts' answers: 101 deletes the file, 201 writes the new description into it. */
+static void record_answered(BYTE* self, const ui_event* event, const record_filter* kind)
+{
+    BYTE* list;
+
+    if (event->a == 0x65) {
+        list = dialog_find_control(self, NULL, LIST_TRACK, 3);
+        DeleteFileA(FIELD(self, GHOST_PATHS, char**)[list_data(list, NULL, -1)]);
+        kind->fill(self);
+    } else if (event->a == 0xC9) {
+        BYTE* record;
+        void* file;
+
+        list = dialog_find_control(self, NULL, LIST_TRACK, 3);
+        record = record_picked(self, list);
+        if (kind->replays)
+            text_copy_most((char*) record + RECORD_DESC, (char*) self + DESCRIPTION,
+                           DESCRIPTION_LENGTH);
+        else
+            text_copy((char*) record + RECORD_DESC, (char*) self + DESCRIPTION);
+        file = game_FUN_0053a35b(FIELD(self, GHOST_PATHS, char**)[list_data(list, NULL, -1)],
+                                 NAME(0x005700B8));                            /* "rb+" */
+        if (file) {
+            game_FUN_0053a51c(file, 0, 0);                  /* to the start */
+            game_FUN_0053a727(record, RECORD_SIZE, 1, file);
+            game_FUN_0053a2ad(file);
+        }
+        kind->fill(self);
+    }
+}
+
+static void record_filter_handle(BYTE* self, ui_event* event, const record_filter* kind)
+{
+    switch (event->type) {
+    case EVENT_CLICK:
+        if (clicked(event, BUTTON_DELETE)) {
+            if (FIELD(self, 0x7F5C, int))
+                record_ask_delete(self, kind->ask_line);
+        } else if (clicked(event, BUTTON_DESCRIPTION)) {
+            if (FIELD(self, 0x7F5C, int))
+                record_ask_description(self, kind->describe_line);
+        }
+        break;
+    case EVENT_OPEN:
+        FIELD(self, 0x7F5C, DWORD) = 0;
+        FIELD(self, GHOST_CHOSEN, void*) = NULL;
+        FIELD(self, GHOST_COUNT, int) = 0;
+        FIELD(self, GHOST_PATHS, char**) = NULL;
+        kind->fill(self);
+        if (!kind->replays) {
+            control_show(dialog_find_control(self, NULL, LIST_LAPS, 0), NULL, FALSE, TRUE);
+            control_show(dialog_find_control(self, NULL, TEXT_LAPS, 0), NULL, FALSE, TRUE);
+        }
+        break;
+    case EVENT_CLOSE:
+        records_release(self, kind->free_line);
+        break;
+    case EVENT_CHILD_ENDED:
+        record_answered(self, event, kind);
+        break;
+    }
+}
+
+static const record_filter ghost_filter = { ghost_records_fill, 0x1149, 0x1155, 0x1178, FALSE };
+static const record_filter replay_filter = { replay_records_fill, 0x121C, 0x1228, 0x124B, TRUE };
+
+/* GhostFil.dtm's handler (vtable 0x00557420). */
+PORT(0x00455030)
+void __fastcall ghost_filter_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    record_filter_handle(self, event, &ghost_filter);
+}
+
+/* ReplyFil.dtm's handler (vtable 0x005574A4). */
+PORT(0x00455A50)
+void __fastcall replay_filter_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    record_filter_handle(self, event, &replay_filter);
 }
 
 /* ---- Numbers ---- */

@@ -26,7 +26,9 @@ DECLARATION = re.compile(
 
 def stack_bytes(convention, parameters):
     params = [p.strip() for p in parameters.split(",") if p.strip() and p.strip() != "void"]
-    sizes = [8 if re.match(r"^(double|__int64|LONGLONG)\b", p) else 4 for p in params]
+    sizes = [8 if re.match(r"^(double|__int64|LONGLONG)\b", p)
+             else 16 if re.match(r"^(const\s+)?GUID\s+\w+$", p)     # a GUID by value
+             else 4 for p in params]
     if convention == "__fastcall":
         sizes = sizes[2:]
     return sum(sizes)
