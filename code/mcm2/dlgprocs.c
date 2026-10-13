@@ -19,6 +19,12 @@ BOOL        __fastcall list_add_text(BYTE* self, void* edx_unused, const char* t
 void        __fastcall list_clear(BYTE* self);
 void        __fastcall control_show(BYTE* self, void* edx_unused, DWORD shown, BOOL animate);
 void        __fastcall dialog_end(BYTE* self, void* edx_unused, DWORD code);
+BYTE*       __fastcall dialog_construct(BYTE* self, void* edx_unused, DWORD flag, const char* name);
+int         __fastcall dialog_tick(BYTE* self, void* edx_unused, float seconds);
+BOOL        __fastcall game_FUN_004a3ef0(void* stream);                 /* start a movie */
+BYTE*       __fastcall gui_manager_open(gui_manager* self, void* edx_unused, BYTE* dialog, DWORD a,
+                                        DWORD flags, DWORD area, BYTE* parent, DWORD arg, DWORD c,
+                                        DWORD wait);
 void        __fastcall list_sort(BYTE* self, void* edx_unused, BOOL outer);
 int         __fastcall list_select_text(BYTE* self, void* edx_unused, const char* text);
 int         __fastcall list_set_208(BYTE* self, void* edx_unused, DWORD value);
@@ -51,6 +57,14 @@ BOOL __fastcall game_FUN_0044b460(BYTE* files, void* edx_unused, char* name);   
 
 #define PROFILE_COLOUR  0xFEB97A
 #define PROFILE_LENGTH  15
+
+#define DLGPROCS_CPP NAME(0x0056F744)     /* "...\dlgprocs.cpp" */
+
+/* Less as the x87 compare tests it (C0 set): unordered counts too. */
+static BOOL x87_less(double a, double b)
+{
+    return !(a >= b);
+}
 
 static BYTE* event_dialog(const ui_event* event)
 {
@@ -314,4 +328,78 @@ void __fastcall notice_close_handle(BYTE* self, void* edx_unused, ui_event* even
         load_text(self, TITLE_TEXT, 12, 0x146D);
         load_prompt(self, 0x146E);
     }
+}
+
+/* ---- Screens ---- */
+
+/*
+    A screen with a movie (0x7F58) that starts 4 seconds after it is ready (0x7F78), while its
+    page at 0x7F60 is hidden. Vtable slot 10: tick.
+*/
+PORT(0x0044D6F0)
+int __fastcall movie_screen_tick(BYTE* self, void* edx_unused, float seconds)
+{
+    (void) edx_unused;
+    if (FIELD(self, 0x7F6C, int)) {
+        BYTE* over = dialog_find_control(self, NULL, NAME(0x0056F724), 0);  /* ScreenOverCtl */
+
+        VIRTUAL(over, 0xC8, method_0)(over);
+        if (FIELD(self, 0x7F6C, int) && !FIELD(FIELD(self, 0x7F60, BYTE*), 0x68, int)
+            && FIELD(self, 0x7F78, int)) {
+            if (x87_less(FIELD(self, 0x7F7C, float), 4.0f)) {
+                FIELD(self, 0x7F7C, float) = (float) ((double) FIELD(game_main, 0x2F0, float)
+                                                      + FIELD(self, 0x7F7C, float));
+                return dialog_tick(self, NULL, seconds);
+            }
+            FIELD(self, 0x7F78, int) = 0;
+            game_FUN_004a3ef0(FIELD(FIELD(self, 0x7F58, BYTE*), 0x1EC, void*));
+            VIRTUAL(FIELD(FIELD(self, 0x7F58, BYTE*), 0x1EC, void*), 0x40, method_1)(
+                FIELD(FIELD(self, 0x7F58, BYTE*), 0x1EC, void*), NULL, FIELD(self, 0x7F78, DWORD));
+            control_show(FIELD(self, 0x7F58, BYTE*), NULL, TRUE, TRUE);
+        }
+    }
+    return dialog_tick(self, NULL, seconds);
+}
+
+/* The single-player screen's pages: an event's, the bike's, the rider's. */
+#define SP_PAGES 0x7F58             /* BYTE*[3], each a dialog open over the screen */
+
+static const struct {
+    DWORD       size;
+    int         line;
+    const char* file;
+    void**      vtable;
+} sp_pages[3] = {
+    { 0x7F68, 0x545, NAME(0x0056F95C), (void**) 0x00556D68 },               /* SPEvent.dtm */
+    { 0x7F9C, 0x54B, NAME(0x0056F968), (void**) 0x00556DEC },               /* SPBikeR.dtm */
+    { 0x7F58, 0x551, NAME(0x0056F974), (void**) 0x00556E70 },               /* SPRInfo.dtm */
+};
+
+/* Show page `page` (0 to 2) over the screen, closing the others; one already open stays. */
+PORT(0x0044E600)
+void __fastcall sp_show_page(BYTE* self, void* edx_unused, int page)
+{
+    RECT area = { 16, 41, 626, 396 };
+    BYTE* dialog;
+    int i;
+
+    (void) edx_unused;
+    for (i = 0; i < 3; i++) {
+        BYTE** open = &FIELD(self, SP_PAGES + 4 * i, BYTE*);
+
+        if (*open && page != i) {
+            object_destroy(*open);
+            *open = NULL;
+        }
+    }
+    if (page < 0 || page > 2 || FIELD(self, SP_PAGES + 4 * page, BYTE*))
+        return;
+    dialog = game_new(sp_pages[page].size, DLGPROCS_CPP, sp_pages[page].line);
+    if (dialog) {
+        dialog_construct(dialog, NULL, 1, sp_pages[page].file);
+        *(void***) dialog = sp_pages[page].vtable;
+    }
+    FIELD(self, SP_PAGES + 4 * page, BYTE*) = dialog;
+    gui_manager_open(FIELD(FIELD(game_main, 0x56C, BYTE*), 0x2C, gui_manager*), NULL, dialog, 0, 1,
+                     (DWORD) &area, self, 0, 0, 1);
 }
