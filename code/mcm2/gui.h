@@ -277,3 +277,18 @@ int  __fastcall gui_user_queue_capture(gui_user* self, void* edx_unused, BYTE* d
 void __fastcall gui_manager_drop_cursors(gui_manager* self);
 void __fastcall gui_manager_set_cursors(gui_manager* self, void* edx_unused, const char* image,
                                         DWORD arg);
+
+/* What a dialog's vtable slot 0x74 is told: the dialog closing (6), slot 28 (5), a control's events. */
+typedef struct ui_event {
+    DWORD        a;
+    DWORD        b;
+    DWORD        type;
+    void*        sender;
+    gui_manager* manager;
+    DWORD        c;
+    DWORD        param;
+    DWORD        d;
+    DWORD        e;
+} ui_event;
+
+_Static_assert(sizeof(ui_event) == 0x24, "the event is 36 bytes");

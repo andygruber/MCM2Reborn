@@ -304,7 +304,12 @@ def main():
     print("link.exe : %s" % link)
     print("entry    : %s" % entry)
     print("object   : %s (%d bytes)" % (OBJ, os.path.getsize(OBJ)))
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    # Every port adds a switch, and the lot outgrows the 32K a command line may be; link.exe
+    # reads them from a response file instead, one to a line.
+    rsp = os.path.join(ROOT, "build", "link.rsp")
+    with open(rsp, "w", encoding="utf-8") as f:
+        f.write("\n".join('"%s"' % arg for arg in cmd[1:]) + "\n")
+    res = subprocess.run([link, "@" + rsp], capture_output=True, text=True)
     out = (res.stdout or "") + (res.stderr or "")
     if res.returncode != 0:
         # Unresolved externals come in thousands when something structural is wrong and in ones

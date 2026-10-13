@@ -75,21 +75,6 @@ int   __fastcall game_FUN_00404a10(BYTE* background, void* edx_unused, HDC* dc, 
                                    DWORD slot, DWORD a, void* b, void* out, RECT* clip);
 const char* __fastcall game_FUN_00471d20(BYTE* control);              /* its name */
 
-/* What a dialog's vtable slot 0x74 is told: the dialog closing (6) or slot 28 (5). */
-typedef struct ui_event {
-    DWORD        a;
-    DWORD        b;
-    DWORD        type;
-    void*        sender;
-    gui_manager* manager;
-    DWORD        c;
-    DWORD        param;
-    DWORD        d;
-    DWORD        e;
-} ui_event;
-
-_Static_assert(sizeof(ui_event) == 0x24, "the event is 36 bytes");
-
 typedef int (__fastcall* dialog_handle)(void* self, void* edx_unused, ui_event* event);
 
 /* ---- UIDialog: life cycle ----------------------------------------------------------------- */
