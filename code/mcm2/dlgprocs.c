@@ -241,7 +241,7 @@ void __cdecl stats_add_row(ui_event* event, const char* first, const char* secon
 #define PROMPT_TEXT   NAME(0x0056F858)      /* "TxtPrompt" */
 #define KEY_RETURN    0x1C
 
-enum { EVENT_CLICK = 1, EVENT_OPEN = 5 };
+enum { EVENT_CLICK = 1, EVENT_OPEN = 5, EVENT_CLOSE = 6 };
 
 static void load_text(BYTE* self, const char* name, int type, UINT id)
 {
@@ -760,6 +760,27 @@ void __fastcall text_entry_setup_ids(BYTE* self, void* edx_unused, const char* t
     text_entry_setup(self, NULL, title_id ? title_text : title, prompt, buffer, size);
 }
 
+/* The prompt's title and text, and the buttons' words; a button given none is hidden. */
+static void set_or_hide(BYTE* control, const char* text)
+{
+    if (text && *text)
+        control_set_text(control, NULL, text);
+    else
+        control_show(control, NULL, FALSE, TRUE);
+}
+
+PORT(0x00456630)
+void __fastcall prompt_setup(BYTE* self, void* edx_unused, const char* title, const char* prompt,
+                             const char* left, const char* middle, const char* right)
+{
+    (void) edx_unused;
+    control_set_text(dialog_find_control(self, NULL, TITLE_TEXT, 0), NULL, title);
+    control_set_text(dialog_find_control(self, NULL, PROMPT_TEXT, 0), NULL, prompt);
+    set_or_hide(dialog_find_control(self, NULL, BUTTON_LEFT, 0), left);
+    set_or_hide(dialog_find_control(self, NULL, BUTTON_MIDDLE, 0), middle);
+    set_or_hide(dialog_find_control(self, NULL, BUTTON_RIGHT, 0), right);
+}
+
 /* ---- Leaving ---- */
 
 void __fastcall game_FUN_0045f530(BYTE* events);
@@ -814,6 +835,259 @@ void __cdecl result_go(int code, ui_event* event)
     }
     dialog_end(event_dialog(event), NULL, end);
     event->e = 1;
+}
+
+/* ---- Intro ---- */
+
+#define game_session    FIELD(game_main, 0x56C, BYTE*)
+#define session_gui     FIELD(game_session, 0x2C, gui_manager*)
+#define cursors_locked  (FIELD(game_main, 0x2D5, BYTE) & 2)
+
+void __fastcall gui_manager_show_cursors(gui_manager* self, void* edx_unused, BOOL show);
+void __fastcall game_FUN_00469760(BYTE* game);
+
+/* The intro's next screen, opened as this one closes. */
+static void open_next(size_t size, int line, const char* name, void* vtable)
+{
+    BYTE* dialog = game_new(size, DLGPROCS_CPP, line);
+
+    if (dialog) {
+        dialog_construct(dialog, NULL, 1, name);
+        *(void**) dialog = vtable;
+    }
+    gui_manager_open(session_gui, NULL, dialog, 0, 2, 0, NULL, 0, 0, 0);
+}
+
+/* Without the cursor; a key skips it unless the game asks otherwise (0xC44). Then intro2. */
+PORT(0x00454240)
+void __fastcall intro_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_OPEN) {
+        gui_manager_show_cursors(session_gui, NULL, FALSE);
+        FIELD(self, 0x7F58, DWORD) = 0;
+        wait_skipped = !FIELD(game_main, 0xC44, int);
+    } else if (event->type == EVENT_CLOSE && !cursors_locked) {
+        open_next(0x7F64, 0x101A, NAME(0x0056FFA8), (void*) 0x00557294);     /* intro2.dtm */
+    }
+}
+
+/* Then the intro video. */
+PORT(0x00454590)
+void __fastcall intro2_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_OPEN) {
+        FIELD(self, 0x7F5C, DWORD) = 0;
+        FIELD(self, 0x7F58, DWORD) = 0;
+        game_FUN_00469760(game_main);
+    } else if (event->type == EVENT_CLOSE && !cursors_locked) {
+        open_next(0x7F60, 0x106F, NAME(0x0056FFFC), (void*) 0x0055739C);     /* IntroVid.dtm */
+    }
+}
+
+/* ---- Previews ---- */
+
+int   __fastcall dialog_draw_over(BYTE* self);
+DWORD __fastcall list_data(BYTE* self, void* edx_unused, int index);
+void  __fastcall game_FUN_00445c10(BYTE* model, void* edx_unused, DWORD a, BYTE* look,
+                                   BYTE* display);
+
+#define session_players FIELD(game_session, 0x48, BYTE*)    /* 200 bytes each */
+#define player_model(player) FIELD(FIELD(player, 0xC0, BYTE*), 0x1A0, BYTE*)
+#define COMBO_LIST      0x1FC
+
+/*
+    Vtable slot 13: draw. A bike or rider picked from DDLBikes or DDLRiders since the last draw
+    (0x7F84, 0x7F88) dresses the model showing it.
+*/
+PORT(0x00450DF0)
+int __fastcall preview_draw(BYTE* self)
+{
+    int drawn = dialog_draw_over(self);
+    BYTE* combo;
+    BYTE* session;
+    BYTE* look;
+
+    if (FIELD(self, 0x110, BYTE*))
+        background_release_dc(FIELD(self, 0x110, BYTE*));
+    if (FIELD(self, 0x7F84, int)) {
+        combo = dialog_find_control(self, NULL, NAME(0x0056FBCC), 6);       /* DDLBikes */
+        session = game_session;
+        look = FIELD(session, 0x50, BYTE*)
+               + list_data(FIELD(combo, COMBO_LIST, BYTE*), NULL, -1) * 0x94;
+        game_FUN_00445c10(player_model(FIELD(session, 0x48, BYTE*) + FIELD(look, 0, int) * 200),
+                          NULL, 0, look + 0x48, game_main + 0x1C);
+        FIELD(self, 0x7F84, int) = 0;
+    }
+    if (FIELD(self, 0x7F88, int)) {
+        combo = dialog_find_control(self, NULL, NAME(0x0056FBC0), 6);       /* DDLRiders */
+        session = game_session;
+        look = FIELD(session, 0x58, BYTE*)
+               + list_data(FIELD(combo, COMBO_LIST, BYTE*), NULL, -1) * 200;
+        game_FUN_00445c10(FIELD(FIELD(session, 0x46C, BYTE*), 0x1A0, BYTE*), NULL, 0, look + 0x40,
+                          game_main + 0x1C);
+        FIELD(self, 0x7F88, int) = 0;
+    }
+    return drawn;
+}
+
+void __fastcall game_FUN_00418300(DWORD* scope, void* edx_unused, BYTE* display);
+void __fastcall game_FUN_00418470(DWORD* scope, void* edx_unused, BYTE* model, DWORD value);
+void __fastcall game_FUN_00418370(DWORD* scope);
+
+/* Each player's model is given `value`, under one scope on the display. */
+PORT(0x00450830)
+void __fastcall players_set(BYTE* self, void* edx_unused, DWORD value)
+{
+    DWORD scope[11];
+    int i;
+
+    (void) self;
+    (void) edx_unused;
+    game_FUN_00418300(scope, NULL, FIELD(game_main, 0x1C, BYTE*));
+    for (i = 0; i < FIELD(game_session, 0x4C, int); i++)
+        game_FUN_00418470(scope, NULL, player_model(session_players + i * 200), value);
+    game_FUN_00418370(scope);
+}
+
+/* ---- Starting ---- */
+
+#define race_starting (*(DWORD*) 0x005A0FD4)
+
+int  __fastcall game_FUN_0045d930(BYTE* events);
+void __fastcall game_FUN_004b0f20(BYTE* net, void* edx_unused, DWORD type, void* data, DWORD size,
+                                  DWORD to, DWORD flags);
+void __cdecl    game_FUN_004b3610(void);                 /* leave the network game */
+void __fastcall game_FUN_0049aa80(BYTE* session);
+void __fastcall game_FUN_00527680(BYTE* player);
+void __fastcall dialog_add_timer(BYTE* self, void* edx_unused, DWORD id, DWORD period,
+                                 BYTE* target);
+
+/*
+    Vtable slot 10: at the third tick the race is started. If it cannot be, the screen closes,
+    a network game is told (message 204) and left, and the menus go back to screen 100.
+    Otherwise a network game's players are readied and a timer set.
+*/
+PORT(0x00452080)
+int __fastcall race_start_tick(BYTE* self, void* edx_unused, float seconds)
+{
+    (void) edx_unused;
+    if (FIELD(self, 0x7F58, int) == 2 && !race_starting) {
+        BYTE* net;
+        int i;
+
+        if (!game_FUN_0045d930(FIELD(game_main, 0x570, BYTE*))) {
+            dialog_end(self, NULL, 0);
+            net = FIELD(game_main, 0x8, BYTE*);
+            if (net) {
+                /* The first word is left unset by the original; zeroed here. */
+                DWORD message[2] = { 0, FIELD(net, 0xC, DWORD) };
+
+                game_FUN_004b0f20(net, NULL, 0xCC, message, sizeof message, message[1], 0);
+                game_FUN_004b3610();
+            }
+            game_FUN_0049aa80(game_session);
+            go_to(100);
+            return 1;
+        }
+        if (FIELD(game_main, 0x8, BYTE*))
+            for (i = 0; i < FIELD(game_main, 0x2158, int); i++)
+                game_FUN_00527680(game_main + 0x215C + i * 0xF8);
+        race_starting = 1;
+        dialog_add_timer(self, NULL, 0, 100, NULL);
+    }
+    FIELD(self, 0x7F58, int)++;
+    return dialog_tick(self, NULL, seconds);
+}
+
+/* ---- Tracks ---- */
+
+#define LIST_TRACK  NAME(0x005700EC)    /* "LstTrack" */
+#define TRACK_SIZE  0xEB0
+#define TRACK_NAME_LENGTH 0x103
+
+void __fastcall game_FUN_00529730(char* profile, void* edx_unused, DWORD track);
+void __cdecl    game_FUN_004546f0(void);
+
+/* The track picked in the list (of those at 0x7F58): its settings become the race's. */
+static BYTE* track_take(BYTE* self, BYTE* list)
+{
+    BYTE* track = FIELD(self, 0x7F58, BYTE*) + list_data(list, NULL, -1) * TRACK_SIZE;
+
+    __movsd((unsigned long*) (game_main + 0x2D70), (unsigned long*) (track + 0x34), 0x7B);
+    return track;
+}
+
+/* Its name, from the screen's names (0x7F60), at most 259 characters. */
+static void track_name_copy(BYTE* self, BYTE* list, char* to)
+{
+    char** names = FIELD(self, 0x7F60, char**);
+    size_t length = text_length(names[list_data(list, NULL, -1)]);
+
+    if ((int) length > TRACK_NAME_LENGTH)
+        length = TRACK_NAME_LENGTH;
+    game__strncpy(to, names[list_data(list, NULL, -1)], length);
+    to[length] = 0;
+}
+
+static void track_chosen(BYTE* self)
+{
+    BYTE* owner = FIELD(self, 0x2C, BYTE*);
+
+    VIRTUAL(owner, 0x68, method_0)(owner);
+}
+
+PORT(0x00455970)
+void __fastcall track_choose(BYTE* self)
+{
+    BYTE* list = dialog_find_control(self, NULL, LIST_TRACK, 3);
+    BYTE* track = track_take(self, list);
+
+    track_name_copy(self, list, (char*) game_main + 0x2B64);
+    track_chosen(self);
+    game_FUN_00529730(game_profile, NULL, FIELD(track, 0x3C, DWORD));
+    game_FUN_004546f0();
+}
+
+/* The same for a track whose settings at 0x33C come with it. */
+PORT(0x00456490)
+void __fastcall track_choose_set(BYTE* self)
+{
+    BYTE* list = dialog_find_control(self, NULL, LIST_TRACK, 3);
+    BYTE* track = track_take(self, list);
+
+    game_FUN_00529730(game_profile, NULL, FIELD(track, 0x3C, DWORD));
+    FIELD(game_main, 0x3428, DWORD) = 1;
+    FIELD(game_main, 0x342C, DWORD) = 1;
+    FIELD(game_main, 0x1550, DWORD) = FIELD(track, 0x33C, DWORD);
+    FIELD(game_main, 0x1554, DWORD) = FIELD(track, 0x340, DWORD);
+    track_name_copy(self, list, (char*) game_main + 0x2C6C);
+    track_chosen(self);
+    game_FUN_004546f0();
+}
+
+/* ---- Replays ---- */
+
+void __fastcall game_FUN_0045ddd0(BYTE* events, void* edx_unused, DWORD a);
+void __fastcall game_FUN_0045f720(BYTE* events, void* edx_unused, DWORD a);
+
+/* Back ends it; closing puts back the race settings saved before it and shows the cursor. */
+PORT(0x00456A10)
+void __fastcall back_restore_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, NAME(0x0056F8CC)))                                 /* "Back" */
+            dialog_end(self, NULL, 0);
+    } else if (event->type == EVENT_CLOSE && !cursors_locked) {
+        game_FUN_0045ddd0(FIELD(game_main, 0x570, BYTE*), NULL, 2);
+        __movsd((unsigned long*) (game_main + 0x2D70), (unsigned long*) (game_main + 0x2F5C), 0x7B);
+        __movsd((unsigned long*) (game_main + 0x1550), (unsigned long*) (game_main + 0x15AC), 0x17);
+        __movsd((unsigned long*) (game_main + 0x1EEC), (unsigned long*) (game_main + 0x1FB4), 0x32);
+        game_FUN_0045f720(FIELD(game_main, 0x570, BYTE*), NULL, 100);
+        gui_manager_show_cursors(FIELD(self, 0x30, gui_manager*), NULL, TRUE);
+    }
 }
 
 /* ---- Records ---- */
