@@ -4539,3 +4539,236 @@ BYTE* __fastcall kind_button_delete(BYTE* self, void* edx_unused, BYTE flags)
         game_delete(self);
     return self;
 }
+
+/* ---- The kind buttons: arrows that step the lists of their group ------------------------------ */
+
+/* Vtable slot 53: a walk over the controls of the control's dialog. */
+typedef BYTE* (__fastcall* control_walk)(void* control);
+#define control_walk_of(c) VIRTUAL(c, 0xD4, control_walk)(c)
+
+#define ARROW_BACK  9               /* a kind button of type 9 steps back; 10, forward */
+#define TIMER_HOLD  0x101           /* the first, longer wait while an arrow is held */
+#define TIMER_STEP  0x102
+
+void __fastcall game_FUN_004786c0(BYTE* list, void* edx_unused, int by);    /* step a list */
+
+/* Step every list (type 3) of the group by `by`, from the start (0x23C) when `restart`. */
+static void arrow_step(BYTE* self, int by, BOOL restart)
+{
+    BYTE* walk = control_walk_of(self);
+    BYTE* control;
+
+    while ((control = control_next_in_group(self, NULL, walk)) != NULL) {
+        if (FIELD(control, CTL_TYPE, int) == 3) {
+            if (restart)
+                FIELD(control, 0x23C, DWORD) = 0;
+            game_FUN_004786c0(control, NULL, by);
+        }
+        if (restart && FIELD(control, CTL_TYPE, int) == 6) {
+            BYTE* list = FIELD(control, 0x1FC, BYTE*);
+
+            FIELD(list, 0x23C, DWORD) = 0;
+            game_FUN_004786c0(list, NULL, by);
+        }
+    }
+    control_walk_end(self, NULL, walk);
+}
+
+/*
+    Vtable slot 55: pressed with the first button while it has focus, the arrow steps its group
+    (back for type 9) and tells the dialog (event 14), and steps again while it is held. The
+    original reads the manager for that event from the dialog (0x30), not the control.
+*/
+PORT(0x00475820)
+int __fastcall arrow_pressed(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && !button) {
+        BYTE* dialog;
+        ui_event event;
+
+        event.e = 0;
+        arrow_step(self, FIELD(self, CTL_TYPE, int) == ARROW_BACK ? -1 : 1, TRUE);
+        event.a = FIELD(self, 0x74, DWORD);
+        event.b = (DWORD) control_get_name(self);
+        event.type = 14;
+        dialog = FIELD(self, CTL_DIALOG, BYTE*);
+        event.sender = dialog;
+        event.c = (DWORD) self;
+        event.manager = FIELD(dialog, 0x30, gui_manager*);
+        VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, &event);
+        dialog_add_timer(FIELD(self, CTL_DIALOG, BYTE*), NULL, TIMER_HOLD, 250, self);
+    }
+    return control_pressed(self, NULL, button, b);
+}
+
+/* Vtable slot 60: its timers. After the first wait it steps every 100 ms. */
+PORT(0x00475990)
+void __fastcall arrow_timer(BYTE* self, void* edx_unused, BYTE* timer)
+{
+    int by;
+
+    (void) edx_unused;
+    if (FIELD(timer, 8, DWORD) == TIMER_HOLD) {
+        dialog_remove_child(FIELD(self, CTL_DIALOG, BYTE*), NULL, timer);
+        dialog_add_timer(FIELD(self, CTL_DIALOG, BYTE*), NULL, TIMER_STEP, 100, self);
+        return;
+    }
+    if (FIELD(timer, 8, DWORD) != TIMER_STEP)
+        return;
+    if (FIELD(self, CTL_TYPE, int) == ARROW_BACK)
+        by = -1;
+    else if (FIELD(self, CTL_TYPE, int) == ARROW_BACK + 1)
+        by = 1;
+    else
+        return;
+    arrow_step(self, by, FALSE);
+    edit_event(self, 14);
+}
+
+/* Vtable slot 56: released after a press, it tells the dialog (event 1). */
+PORT(0x00475AB0)
+int __fastcall arrow_released(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && !button && FIELD(self, 0x60, int) == 2
+        && edit_event(self, 1))
+        return 1;
+    return control_released(self, NULL, button, b);
+}
+
+/* ---- UISlider: a thumb along a track ---------------------------------------------------------- */
+
+/*
+    A UIControl of type 8 (across) or other (down). Its value runs from 0 to SLIDER_RANGE; the
+    thumb's offset in pixels is SLIDER_AT. It can be bound (0x1B4) to an int.
+*/
+#define UISLIDER_VTABLE ((void**) 0x005580B0)
+#define SLIDER_AT       0x1EC
+#define SLIDER_STEPS    0x1F0       /* the values it steps through, or 0 to step by pixels */
+#define SLIDER_RANGE    0x200
+
+int  __fastcall game_FUN_004764a0(BYTE* self);                                  /* its value */
+int  __fastcall game_FUN_00476360(BYTE* self, void* edx_unused, int value, int range);
+#define slider_value(s)       game_FUN_004764a0(s)
+#define slider_set(s, v, r)   game_FUN_00476360(s, NULL, v, r)
+#define slider_steps(s)       FIELD(s, SLIDER_STEPS, DWORD)
+
+PORT(0x00475B40)
+BYTE* __fastcall slider_construct(BYTE* self, void* edx_unused, int type, DWORD a,
+                                  const RECT* area, BYTE* dialog)
+{
+    (void) edx_unused;
+    control_construct(self, NULL, type, a, area, dialog);
+    *(void***) self = UISLIDER_VTABLE;
+    FIELD(self, SLIDER_AT, DWORD) = 0;
+    FIELD(self, SLIDER_STEPS, DWORD) = 0;
+    FIELD(self, 0x1F4, DWORD) = 0;
+    FIELD(self, 0x1F8, DWORD) = 0;
+    FIELD(self, 0x1FC, DWORD) = 0;
+    FIELD(self, 0x208, DWORD) = 0;
+    FIELD(self, 0x204, DWORD) = 0;
+    FIELD(self, 0x210, DWORD) = 0;
+    FIELD(self, 0x20C, DWORD) = 0;
+    FIELD(self, 0x218, DWORD) = 0;
+    FIELD(self, 0x21C, DWORD) = 0;
+    FIELD(self, SLIDER_RANGE, int) = 100;
+    FIELD(self, 0x214, float) = 0.2f;
+    return self;
+}
+
+/* Vtable slot 59: copy the value out to the bound int, or (`out` FALSE) take it from there. */
+PORT(0x00475C50)
+void __fastcall slider_commit(BYTE* self, void* edx_unused, BOOL out)
+{
+    (void) edx_unused;
+    if (out)
+        *FIELD(self, EDIT_BOUND, int*) = slider_value(self);
+    else
+        slider_set(self, *FIELD(self, EDIT_BOUND, int*), FIELD(self, SLIDER_RANGE, int));
+}
+
+PORT(0x00475BF0)
+void __fastcall slider_destruct(BYTE* self)
+{
+    *(void***) self = UISLIDER_VTABLE;
+    if (FIELD(self, EDIT_BOUND, int*))
+        slider_commit(self, NULL, TRUE);
+    control_destruct(self);
+}
+
+PORT(0x00475BD0)
+BYTE* __fastcall slider_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    slider_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Device type 2 (a joystick) whose 0x10 is 4. */
+BOOL __fastcall game_FUN_0048a770(void* device, void* edx_unused, int kind);
+
+/*
+    Vtable slot 10: tick. While it has capture, each joystick claimed by its user nudges it a step
+    along its down axis, once per push (the dialog's 0x7F1C rearms when the stick comes back to
+    the middle), between 0 and its steps, or its width when it has none. Then the base tick; a
+    list of its group that has run out of entries (0x1EC past 0x200) leaves its picture unset.
+*/
+PORT(0x00475C90)
+int __fastcall slider_tick(BYTE* self, void* edx_unused, DWORD time)
+{
+    unsigned width = (unsigned) VIRTUAL(self, 0xF4, method_0)(self);
+    gui_input* input;
+    int index = 0;
+    int result;
+
+    (void) edx_unused;
+    while ((input = gui_user_claimed(control_user(self), NULL, index++)) != NULL) {
+        BYTE* device = input->device;
+        BYTE* dialog;
+        int push;
+
+        if (FIELD(device, 0xC, int) != 2 || !game_FUN_0048a770(device, NULL, 4))
+            continue;
+        dialog = FIELD(self, CTL_DIALOG, BYTE*);
+        push = input->y;
+        if (control_user(self)->capture != self)
+            continue;
+        if (push == 0) {
+            FIELD(dialog, 0x7F1C, DWORD) = 1;
+            continue;
+        }
+        if (!FIELD(dialog, 0x7F1C, DWORD))
+            continue;
+        if (push < 0) {
+            if (slider_value(self))
+                slider_set(self, slider_value(self) - 1,
+                           slider_steps(self) ? slider_steps(self) : width);
+        } else {
+            unsigned top = slider_steps(self) ? slider_steps(self) : width;
+
+            if ((unsigned) slider_value(self) < top)
+                slider_set(self, slider_value(self) + 1, top);
+        }
+        FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x7F1C, DWORD) = 0;
+    }
+
+    result = control_tick(self, NULL, time);
+    if (result) {
+        BYTE* walk = control_walk_of(self);
+        BYTE* control;
+        BOOL spent = FALSE;
+
+        while ((control = control_next_in_group(self, NULL, walk)) != NULL) {
+            if (FIELD(control, CTL_TYPE, int) == 3
+                && FIELD(control, 0x200, int) >= FIELD(control, 0x1EC, int))
+                spent = TRUE;
+        }
+        control_walk_end(self, NULL, walk);
+        if (spent)
+            FIELD(self, 0x1CC, DWORD) = 0;
+    }
+    return result;
+}
