@@ -7196,3 +7196,746 @@ BYTE* __fastcall radio_walk(BYTE* self)
                RADIO_CLASS);
     return walk;
 }
+
+/* Shared by many vtables: a slot that answers TRUE. */
+PORT(0x0047BD10)
+BOOL __fastcall vtable_true(void* self)
+{
+    (void) self;
+    return TRUE;
+}
+
+/* ---- UIComboBox: a label that drops a list ----------------------------------------------- */
+
+/*
+    A UILabel of type 6 built from pieces: an arrow button beside the text, and below it a list
+    with its scroll bar, each over a background picture (the text has one too). Shut, only the
+    button and the text's background are its children; open, the list and scroll bar and their
+    backgrounds go under the dialog's container, over everything else. Each piece knows the
+    combo box, and losing capture to anything that is not part of it shuts it.
+*/
+#define UICOMBO_VTABLE    ((void**) 0x00558B10)
+#define COMBO_BUTTON      0x1EC
+#define COMBO_LIST_BACK   0x1F0     /* the pictures behind the list, the scroll bar and the text */
+#define COMBO_SLIDER_BACK 0x1F4
+#define COMBO_TEXT_BACK   0x1F8
+#define COMBO_LIST        0x1FC
+#define COMBO_SLIDER      0x200
+#define COMBO_DROP        0x204     /* the list's height */
+#define COMBO_OPEN        0x208
+#define COMBO_OPEN_AREA   0x20C     /* RECT: all it covers open */
+#define COMBO_GROUP       0x4D43    /* the list and scroll bar's group when it has none */
+#define CTL_DESIGN        0x3C      /* RECT: the control's design rectangle */
+
+#define COMBO_NAME_BUTTON      ((const char*) 0x00571FC0)  /* "%s_BUT" */
+#define COMBO_NAME_LIST        ((const char*) 0x00571FB8)  /* "%s_LB" */
+#define COMBO_NAME_SLIDER      ((const char*) 0x00571FB0)  /* "%s_SB" */
+#define COMBO_NAME_LIST_BACK   ((const char*) 0x00571FA8)  /* "%s_LBK" */
+#define COMBO_NAME_SLIDER_BACK ((const char*) 0x00571FA0)  /* "%s_SBK" */
+#define COMBO_NAME_TEXT_BACK   ((const char*) 0x00571F98)  /* "%s_TBK" */
+
+/* The pieces that drop down with the list, in the order the original walks them. */
+static const int combo_dropped[] = { COMBO_LIST_BACK, COMBO_SLIDER_BACK, COMBO_LIST, COMBO_SLIDER };
+
+int  __fastcall game_FUN_0046a0d0(void* self);    /* unlink from its parent; 0 while locked */
+#define object_unlink game_FUN_0046a0d0
+
+/* Open or shut the list. */
+PORT(0x0047B210)
+void __fastcall combo_open(BYTE* self, void* edx_unused, BOOL open)
+{
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    int i;
+
+    (void) edx_unused;
+    for (i = 0; i < 4; i++)
+        control_show(FIELD(self, combo_dropped[i], BYTE*), NULL, open, TRUE);
+    if (!FIELD(self, COMBO_OPEN, BOOL) && open) {
+        for (i = 0; i < 4; i++)
+            object_add_child(FIELD(dialog, DLG_CONTAINER, void*), NULL,
+                             FIELD(self, combo_dropped[i], BYTE*), -1);
+        list_tell_sliders(FIELD(self, COMBO_LIST, BYTE*));
+    } else if (FIELD(self, COMBO_OPEN, BOOL) && !open) {
+        for (i = 0; i < 4; i++)
+            object_unlink(FIELD(self, combo_dropped[i], BYTE*));
+        if (FIELD(dialog, DLG_BACKGROUND, BYTE*))
+            background_invalidate(FIELD(dialog, DLG_BACKGROUND, BYTE*));
+    }
+    FIELD(self, COMBO_OPEN, BOOL) = open;
+}
+
+/* Whether `control` is the combo box or one of its pieces. */
+PORT(0x0047B740)
+BOOL __fastcall combo_owns(BYTE* self, void* edx_unused, BYTE* control)
+{
+    (void) edx_unused;
+    return control == self || control == FIELD(self, COMBO_SLIDER, BYTE*)
+        || control == FIELD(self, COMBO_BUTTON, BYTE*) || control == FIELD(self, COMBO_LIST, BYTE*)
+        || control == FIELD(self, COMBO_LIST_BACK, BYTE*)
+        || control == FIELD(self, COMBO_SLIDER_BACK, BYTE*)
+        || control == FIELD(self, COMBO_TEXT_BACK, BYTE*);
+}
+
+/* Vtable slot 33 of the combo box and its pieces: capture lost outside it shuts the list. */
+static void combo_lose_capture(BYTE* self, BYTE* combo, DWORD to)
+{
+    game_vf_32_47D940(self, NULL, to);
+    if (!combo_owns(combo, NULL, (BYTE*) to))
+        combo_open(combo, NULL, FALSE);
+}
+
+/* Tell the dialog as a piece of `combo`: the event is the piece's, under the combo box's name. */
+static void combo_tell(BYTE* self, BYTE* combo, ui_event* event, DWORD type, gui_manager* manager)
+{
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+
+    event->a = FIELD(self, 0x74, DWORD);
+    event->type = type;
+    event->b = (DWORD) control_get_name(combo);
+    event->sender = dialog;
+    event->manager = manager;
+    event->c = (DWORD) self;
+    VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, event);
+}
+
+/* Copy a control's box to its design rectangle. */
+static void control_keep_design(BYTE* control)
+{
+    FIELD(control, CTL_DESIGN, RECT) = FIELD(control, CTL_RECT, RECT);
+}
+
+/* ---- The combo box's scroll bar ---- */
+
+#define COMBO_SLIDER_VTABLE ((void**) 0x005586E8)
+#define COMBO_SLIDER_OWNER  0x220
+
+PORT(0x0047A570)
+BYTE* __fastcall combo_slider_construct(BYTE* self, void* edx_unused, int type, DWORD a,
+                                        const RECT* area, BYTE* dialog, BYTE* combo)
+{
+    (void) edx_unused;
+    slider_construct(self, NULL, type, a, area, dialog);
+    FIELD(self, COMBO_SLIDER_OWNER, BYTE*) = combo;
+    *(void***) self = COMBO_SLIDER_VTABLE;
+    game_FUN_0046ac10(self, NULL, self);
+    return self;
+}
+
+PORT(0x0047A600)
+void __fastcall combo_slider_destruct(BYTE* self)
+{
+    slider_destruct(self);
+}
+
+PORT(0x0047A5E0)
+BYTE* __fastcall combo_slider_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    combo_slider_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+PORT(0x0047A610)
+void __fastcall combo_slider_lose_capture(BYTE* self, void* edx_unused, DWORD to)
+{
+    (void) edx_unused;
+    combo_lose_capture(self, FIELD(self, COMBO_SLIDER_OWNER, BYTE*), to);
+}
+
+/*
+    Vtable slot 57: dragged, as a slider is (events 15, 3 and 17 under the combo box's name),
+    but the list it scrolls is the combo box's own.
+*/
+PORT(0x0047A640)
+void __fastcall combo_slider_drag(BYTE* self, void* edx_unused, DWORD button, const POINT* at)
+{
+    BYTE* combo = FIELD(self, COMBO_SLIDER_OWNER, BYTE*);
+    gui_manager* manager = FIELD(self, CTL_MANAGER, gui_manager*);
+    int width, height, steps, offset;
+    ui_event event;
+    BYTE* list;
+
+    (void) edx_unused;
+    control_drag(self, NULL, button, at);
+    event.e = 0;
+    if (button || !at)
+        return;
+    width = VIRTUAL(self, 0xF4, method_0)(self);
+    height = VIRTUAL(self, 0xF8, method_0)(self);
+    control_redraw(self);
+    steps = slider_steps(self);
+    if (slider_across(self)) {
+        offset = at->x - FIELD(self, CTL_RECT, RECT).left;
+        if (!steps)
+            offset -= FIELD(self, SLIDER_THUMB, int) / 2;
+        offset = slider_place(offset, width - FIELD(self, SLIDER_THUMB, int));
+    } else {
+        offset = at->y - FIELD(self, CTL_RECT, RECT).top;
+        if (!steps)
+            offset -= FIELD(self, SLIDER_THUMB + 4, int) / 2;
+        offset = slider_place(offset, height - FIELD(self, SLIDER_THUMB + 4, int));
+    }
+    FIELD(self, SLIDER_AT, float) = (float) offset;
+    if (steps)
+        slider_set_value(self, NULL, slider_value_at(self, NULL, steps), steps);
+
+    if (!FIELD(self, SLIDER_DRAGGING, int)) {
+        combo_tell(self, combo, &event, 15, manager);
+        FIELD(self, SLIDER_DRAGGING, int) = 1;
+    }
+    if (event.e)
+        return;
+    if (at->x == FIELD(self, SLIDER_HELD_AT, LONG) && at->y == FIELD(self, SLIDER_HELD_AT + 4, LONG)) {
+        double held = (double) FIELD(FIELD(self, CTL_DIALOG, BYTE*), 0x9C0, float)
+                      + FIELD(self, SLIDER_HELD, float);
+
+        FIELD(self, SLIDER_HELD, float) = (float) held;
+        if (!x87_less(held, FIELD(self, SLIDER_HOLD, float))) {
+            combo_tell(self, combo, &event, 17, manager);
+            if (event.e)
+                return;
+        }
+    } else {
+        combo_tell(self, combo, &event, 3, manager);
+        FIELD(self, SLIDER_HELD_AT, LONG) = at->x;
+        FIELD(self, SLIDER_HELD_AT + 4, LONG) = at->y;
+        FIELD(self, SLIDER_HELD, float) = 0.0f;
+        if (event.e)
+            return;
+    }
+
+    list = FIELD(combo, COMBO_LIST, BYTE*);
+    if (list)
+        list_scroll(list, NULL,
+                    slider_value_at(self, NULL, list_count(list) - FIELD(list, LIST_LAST_PAGE, int)),
+                    FALSE);
+}
+
+/*
+    Vtable slot 55: pressed with the first button while it has focus. With steps the thumb jumps
+    to the pointer; without, a press below the thumb pages the list on, above it back. It runs
+    down only.
+*/
+PORT(0x0047A930)
+int __fastcall combo_slider_pressed(BYTE* self, void* edx_unused, DWORD button, const POINT* at)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self && !button && at) {
+        BYTE* list = FIELD(FIELD(self, COMBO_SLIDER_OWNER, BYTE*), COMBO_LIST, BYTE*);
+        LONG top = FIELD(self, CTL_RECT, RECT).top;
+        int thumb = FIELD(self, SLIDER_THUMB + 4, int);
+
+        if (slider_steps(self)) {
+            int track = VIRTUAL(self, 0xF8, method_0)(self) - thumb;
+
+            FIELD(self, SLIDER_AT, float) = (float) slider_place(at->y - top, track);
+        } else if ((double) at->y > (double) thumb + top + FIELD(self, SLIDER_AT, float)) {
+            list_scroll(list, NULL, list_first_shown(list) + FIELD(list, LIST_ROWS, int), TRUE);
+        } else if (x87_less(at->y, (double) top + FIELD(self, SLIDER_AT, float))) {
+            list_scroll(list, NULL, list_first_shown(list) - FIELD(list, LIST_ROWS, int), TRUE);
+        }
+    }
+    if (slider_steps(self))
+        slider_set_value(self, NULL, slider_value_at(self, NULL, slider_steps(self)),
+                         slider_steps(self));
+    return control_pressed(self, NULL, button, (DWORD) at);
+}
+
+/* ---- The combo box's background pictures ---- */
+
+#define COMBO_PICTURE_VTABLE ((void**) 0x005587F0)
+#define COMBO_PICTURE_OWNER  0x1EC
+
+PORT(0x0047AA80)
+BYTE* __fastcall combo_picture_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                         BYTE* dialog, BYTE* combo)
+{
+    (void) edx_unused;
+    picture_control_construct(self, NULL, a, area, dialog);
+    FIELD(self, COMBO_PICTURE_OWNER, BYTE*) = combo;
+    *(void***) self = COMBO_PICTURE_VTABLE;
+    game_FUN_0046ac10(self, NULL, self);
+    return self;
+}
+
+PORT(0x0047AAF0)
+void __fastcall combo_picture_destruct(BYTE* self)
+{
+    picture_control_destruct(self);
+}
+
+/* Also the slot 0 of other UIPicture kinds, which destroy no more than it. */
+PORT(0x0047BDB0)
+BYTE* __fastcall combo_picture_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    combo_picture_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+PORT(0x0047AB00)
+void __fastcall combo_picture_lose_capture(BYTE* self, void* edx_unused, DWORD to)
+{
+    (void) edx_unused;
+    combo_lose_capture(self, FIELD(self, COMBO_PICTURE_OWNER, BYTE*), to);
+}
+
+/* ---- The combo box's arrow button ---- */
+
+#define COMBO_BUTTON_VTABLE ((void**) 0x005588F8)
+#define COMBO_BUTTON_OWNER  0x1F0
+
+PORT(0x0047AB30)
+BYTE* __fastcall combo_button_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                        BYTE* dialog, BYTE* combo)
+{
+    (void) edx_unused;
+    button_construct(self, NULL, a, area, dialog);
+    FIELD(self, COMBO_BUTTON_OWNER, BYTE*) = combo;
+    *(void***) self = COMBO_BUTTON_VTABLE;
+    game_FUN_0046ac10(self, NULL, self);
+    return self;
+}
+
+PORT(0x0047ABC0)
+void __fastcall combo_button_destruct(BYTE* self)
+{
+    button_destruct(self);
+}
+
+PORT(0x0047ABA0)
+BYTE* __fastcall combo_button_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    combo_button_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Vtable slot 55: pressed while it has focus, it opens or shuts the list. */
+PORT(0x0047ABD0)
+int __fastcall combo_button_pressed(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    control_pressed(self, NULL, button, b);
+    if (control_user(self)->focus == self) {
+        BYTE* combo = FIELD(self, COMBO_BUTTON_OWNER, BYTE*);
+
+        combo_open(combo, NULL, 1 - FIELD(combo, COMBO_OPEN, int));
+    }
+    return 0;
+}
+
+PORT(0x0047AC20)
+void __fastcall combo_button_lose_capture(BYTE* self, void* edx_unused, DWORD to)
+{
+    (void) edx_unused;
+    combo_lose_capture(self, FIELD(self, COMBO_BUTTON_OWNER, BYTE*), to);
+}
+
+/* ---- The combo box's list ---- */
+
+#define COMBO_LIST_VTABLE ((void**) 0x00558A00)
+#define COMBO_LIST_OWNER  0x250
+
+PORT(0x0047AC50)
+BYTE* __fastcall combo_list_construct(BYTE* self, void* edx_unused, DWORD a, int capacity,
+                                      const RECT* area, BYTE* dialog, BYTE* combo)
+{
+    (void) edx_unused;
+    list_construct(self, NULL, a, capacity, area, dialog);
+    FIELD(self, COMBO_LIST_OWNER, BYTE*) = combo;
+    *(void***) self = COMBO_LIST_VTABLE;
+    game_FUN_0046ac10(self, NULL, self);
+    return self;
+}
+
+PORT(0x0047ACE0)
+void __fastcall combo_list_destruct(BYTE* self)
+{
+    list_destruct(self);
+}
+
+PORT(0x0047ACC0)
+BYTE* __fastcall combo_list_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    combo_list_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Vtable slot 65: select entry `index`, and the combo box shows its text. */
+PORT(0x0047ACF0)
+int __fastcall combo_list_select(BYTE* self, void* edx_unused, int index)
+{
+    int result = list_select(self, NULL, index);
+
+    (void) edx_unused;
+    if (result)
+        control_set_text(FIELD(self, COMBO_LIST_OWNER, BYTE*), NULL, list_text(self, NULL, index));
+    return result;
+}
+
+/* Vtable slot 66: an entry chosen. The combo box shows it and shuts, and the dialog hears (2). */
+PORT(0x0047AD30)
+void __fastcall combo_list_choose(BYTE* self, void* edx_unused, DWORD unused)
+{
+    BYTE* combo = FIELD(self, COMBO_LIST_OWNER, BYTE*);
+    ui_event event;
+
+    (void) edx_unused;
+    (void) unused;
+    event.e = 0;
+    control_set_text(combo, NULL, list_text(self, NULL, list_selected(self)));
+    combo_open(combo, NULL, FALSE);
+    combo_tell(self, combo, &event, 2,
+               FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_MANAGER, gui_manager*));
+}
+
+PORT(0x0047ADB0)
+void __fastcall combo_list_lose_capture(BYTE* self, void* edx_unused, DWORD to)
+{
+    (void) edx_unused;
+    combo_lose_capture(self, FIELD(self, COMBO_LIST_OWNER, BYTE*), to);
+}
+
+/* ---- The combo box itself ---- */
+
+PORT(0x0047ADE0)
+BYTE* __fastcall combo_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                 BYTE* dialog, const char* text, COLORREF colour)
+{
+    static const int linked[] = { COMBO_LIST_BACK, COMBO_SLIDER_BACK, COMBO_TEXT_BACK,
+                                  COMBO_BUTTON, COMBO_LIST, COMBO_SLIDER };
+    static const int attached[] = { COMBO_BUTTON, COMBO_LIST, COMBO_SLIDER,
+                                    COMBO_LIST_BACK, COMBO_TEXT_BACK, COMBO_SLIDER_BACK };
+    static const int backs[] = { COMBO_LIST_BACK, COMBO_SLIDER_BACK, COMBO_TEXT_BACK };
+    RECT box = { 0, 0, 10, 10 };
+    BYTE* piece;
+    int i;
+
+    (void) edx_unused;
+    label_construct(self, NULL, a, area, dialog, text, colour);
+    *(void***) self = UICOMBO_VTABLE;
+    game_FUN_0046ac10(self, NULL, self);
+    FIELD(self, CTL_TYPE, int) = 6;
+    FIELD(self, COMBO_DROP, int) = 20;
+
+    piece = game_new(0x1F4, GAMEUI_CPP, 0x24E3);
+    FIELD(self, COMBO_BUTTON, BYTE*) =
+        piece ? combo_button_construct(piece, NULL, 0, &box, dialog, self) : NULL;
+    piece = game_new(0x254, GAMEUI_CPP, 0x24E4);
+    FIELD(self, COMBO_LIST, BYTE*) =
+        piece ? combo_list_construct(piece, NULL, 0, 100, &box, dialog, self) : NULL;
+    piece = game_new(0x224, GAMEUI_CPP, 0x24E5);
+    FIELD(self, COMBO_SLIDER, BYTE*) =
+        piece ? combo_slider_construct(piece, NULL, 7, 0, &box, dialog, self) : NULL;
+    for (i = 0; i < 3; i++) {
+        piece = game_new(0x1F0, GAMEUI_CPP, 0x24E6 + i);
+        FIELD(self, backs[i], BYTE*) =
+            piece ? combo_picture_construct(piece, NULL, 0, &box, dialog, self) : NULL;
+    }
+
+    for (i = 0; i < 6; i++)
+        control_set_link(FIELD(self, linked[i], BYTE*), NULL, self, 1);
+    VIRTUAL(FIELD(self, COMBO_LIST, BYTE*), 0xD0, method_1)(FIELD(self, COMBO_LIST, BYTE*), NULL,
+                                                           COMBO_GROUP);
+    VIRTUAL(FIELD(self, COMBO_SLIDER, BYTE*), 0xD0, method_1)(FIELD(self, COMBO_SLIDER, BYTE*),
+                                                             NULL, COMBO_GROUP);
+    object_add_child(self, NULL, FIELD(self, COMBO_BUTTON, BYTE*), -1);
+    object_add_child(self, NULL, FIELD(self, COMBO_TEXT_BACK, BYTE*), -1);
+    FIELD(self, COMBO_OPEN, BOOL) = FALSE;
+    combo_open(self, NULL, FALSE);
+    for (i = 0; i < 6; i++)
+        dialog_attach(dialog, NULL, FIELD(self, attached[i], BYTE*), 0, 0);
+    return self;
+}
+
+/* Vtable slot 59: copy the selection out to the bound int, or (`out` FALSE) choose from it. */
+PORT(0x0047BCC0)
+void __fastcall combo_commit(BYTE* self, void* edx_unused, BOOL out)
+{
+    BYTE* list = FIELD(self, COMBO_LIST, BYTE*);
+
+    (void) edx_unused;
+    if (out) {
+        *FIELD(self, EDIT_BOUND, int*) = list_selected(list);
+        return;
+    }
+    list_select_all(list, NULL, *FIELD(self, EDIT_BOUND, int*));
+    VIRTUAL(list, 0x108, method_1)(list, NULL, 0);
+}
+
+/* Shut, the pieces that drop down are not under the dialog, so the combo box destroys them. */
+PORT(0x0047B130)
+void __fastcall combo_destruct(BYTE* self)
+{
+    *(void***) self = UICOMBO_VTABLE;
+    if (FIELD(self, EDIT_BOUND, void*))
+        combo_commit(self, NULL, TRUE);
+    if (!FIELD(self, COMBO_OPEN, BOOL)) {
+        int i;
+
+        for (i = 0; i < 4; i++)
+            object_destroy(FIELD(self, combo_dropped[i], BYTE*));
+    }
+    label_destruct(self);
+}
+
+PORT(0x0047B110)
+BYTE* __fastcall combo_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    combo_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Vtable slot 52: its group (0x7C), which the list and scroll bar share, or theirs alone. */
+PORT(0x0047B1D0)
+void __fastcall combo_set_group(BYTE* self, void* edx_unused, DWORD group)
+{
+    (void) edx_unused;
+    FIELD(self, 0x7C, DWORD) = group;
+    if (!group)
+        group = COMBO_GROUP;
+    VIRTUAL(FIELD(self, COMBO_LIST, BYTE*), 0xD0, method_1)(FIELD(self, COMBO_LIST, BYTE*), NULL,
+                                                           group);
+    VIRTUAL(FIELD(self, COMBO_SLIDER, BYTE*), 0xD0, method_1)(FIELD(self, COMBO_SLIDER, BYTE*),
+                                                             NULL, group);
+}
+
+/* Name `piece` after the combo box ("<name>_BUT" ...) and place it at `box`, its design too. */
+static void combo_place(BYTE* self, BYTE* piece, const char* format, LONG left, LONG top,
+                        LONG right, LONG bottom)
+{
+    char name[0x34];
+
+    game_FUN_0053a11f(name, format, control_get_name(self));
+    control_set_name(piece, NULL, name);
+    FIELD(piece, CTL_RECT, RECT).left = left;
+    FIELD(piece, CTL_RECT, RECT).top = top;
+    FIELD(piece, CTL_RECT, RECT).right = right;
+    FIELD(piece, CTL_RECT, RECT).bottom = bottom;
+    control_keep_design(piece);
+}
+
+/*
+    Lay the pieces out from its box: the text's background over it, the arrow just past it as
+    wide as its picture (hidden when it has none), and below, the list and its background the
+    combo box's width and the scroll bar under the arrow, COMBO_DROP tall. The list takes its
+    margins and colours.
+*/
+PORT(0x0047B340)
+void __fastcall combo_layout(BYTE* self)
+{
+    const RECT* area = &FIELD(self, CTL_RECT, RECT);
+    BYTE* button = FIELD(self, COMBO_BUTTON, BYTE*);
+    BYTE* list = FIELD(self, COMBO_LIST, BYTE*);
+    ui_anim* arrow = FIELD(button, 0x16C, ui_anim*);
+    LONG width = area->right - area->left;
+    LONG height = area->bottom - area->top;
+    LONG drop = FIELD(self, COMBO_DROP, int);
+    LONG side = 0, right = 0, tall = 0;
+
+    if (arrow) {
+        side = width + 1;
+        right = arrow->frames[0]->width + side;
+        tall = height;
+    }
+    FIELD(self, COMBO_OPEN_AREA, RECT).left = area->left;
+    FIELD(self, COMBO_OPEN_AREA, RECT).top = area->top;
+    FIELD(self, COMBO_OPEN_AREA, RECT).right = area->left + right;
+    FIELD(self, COMBO_OPEN_AREA, RECT).bottom = area->top + height + drop - 1;
+
+    combo_place(self, button, COMBO_NAME_BUTTON, side, 0, right, tall);
+    if (!side)
+        VIRTUAL(button, 0x10, method_0)(button);   /* hide it */
+    combo_place(self, list, COMBO_NAME_LIST, 0, height + 1, width, height + 1 + drop);
+    combo_place(self, FIELD(self, COMBO_SLIDER, BYTE*), COMBO_NAME_SLIDER, side, height + 3, right,
+                height + drop - 1);
+    combo_place(self, FIELD(self, COMBO_LIST_BACK, BYTE*), COMBO_NAME_LIST_BACK, 0, height + 1,
+                width, height + 1 + drop);
+    combo_place(self, FIELD(self, COMBO_SLIDER_BACK, BYTE*), COMBO_NAME_SLIDER_BACK, side,
+                height + 3, right, height + drop - 1);
+    combo_place(self, FIELD(self, COMBO_TEXT_BACK, BYTE*), COMBO_NAME_TEXT_BACK, 0, 0, width,
+                height);
+
+    FIELD(list, 0xE8, LONG) = FIELD(self, 0xE8, LONG);
+    FIELD(list, 0xEC, LONG) = FIELD(self, 0xEC, LONG);
+    list_set_text_colour(list, NULL, FIELD(self, CTL_COLOUR, COLORREF), -1);
+    if (FIELD(self, CTL_COLOUR, COLORREF) != 0xFFFFFF)
+        list_set_208(list, NULL, 0xFFFFFF);
+    control_set_shadow_colour(list, NULL, FIELD(self, CTL_SHADOW_COLOUR, COLORREF));
+}
+
+PORT(0x0047B710)
+void __fastcall combo_lose_capture_slot(BYTE* self, void* edx_unused, DWORD to)
+{
+    (void) edx_unused;
+    combo_lose_capture(self, self, to);
+}
+
+/* Vtable slots 61 and 62: its width, to the arrow's far side when it has one, and its height open. */
+PORT(0x0047B790)
+int __fastcall combo_width(BYTE* self)
+{
+    BYTE* button = FIELD(self, COMBO_BUTTON, BYTE*);
+
+    if (!FIELD(button, CTL_DESIGN, RECT).left)
+        return FIELD(self, CTL_DESIGN, RECT).right - FIELD(self, CTL_DESIGN, RECT).left;
+    return FIELD(button, CTL_DESIGN, RECT).right - FIELD(self, CTL_DESIGN, RECT).left;
+}
+
+PORT(0x0047B7B0)
+int __fastcall combo_height(BYTE* self)
+{
+    return FIELD(FIELD(self, COMBO_LIST, BYTE*), CTL_DESIGN, RECT).bottom
+         - FIELD(self, CTL_DESIGN, RECT).top;
+}
+
+/* Make the list `drop` tall, with its background and the scroll bar (inset 2 at each end). */
+PORT(0x0047B7C0)
+void __fastcall combo_set_drop(BYTE* self, void* edx_unused, int drop)
+{
+    BYTE* slider = FIELD(self, COMBO_SLIDER, BYTE*);
+    RECT* box;
+
+    (void) edx_unused;
+    box = &FIELD(FIELD(self, COMBO_LIST, BYTE*), CTL_RECT, RECT);
+    box->bottom = box->top + drop;
+    control_keep_design(FIELD(self, COMBO_LIST, BYTE*));
+    box = &FIELD(FIELD(self, COMBO_LIST_BACK, BYTE*), CTL_RECT, RECT);
+    box->bottom = box->top + drop;
+    control_keep_design(FIELD(self, COMBO_LIST_BACK, BYTE*));
+    box = &FIELD(slider, CTL_RECT, RECT);
+    box->bottom = box->top + drop;
+    box->top += 2;
+    box->bottom -= 2;
+    control_keep_design(slider);
+    box = &FIELD(FIELD(self, COMBO_SLIDER_BACK, BYTE*), CTL_RECT, RECT);
+    box->bottom = box->top + drop;
+    control_keep_design(FIELD(self, COMBO_SLIDER_BACK, BYTE*));
+    FIELD(self, COMBO_DROP, int) = drop;
+}
+
+/* Give background piece `back` the picture `anim`, sized to it. */
+static void combo_set_back(BYTE* back, ui_anim* anim)
+{
+    RECT* box = &FIELD(back, CTL_RECT, RECT);
+
+    control_set_picture(back, NULL, 0, (DWORD) anim);
+    box->right = anim_current(anim)->width + box->left;
+    box->bottom = anim_current(anim)->height + box->top;
+    control_keep_design(back);
+}
+
+/* The list moves to its background's box (by way of its design rectangle). */
+static void combo_list_to_back(BYTE* self)
+{
+    BYTE* list = FIELD(self, COMBO_LIST, BYTE*);
+
+    FIELD(list, CTL_DESIGN, RECT) = FIELD(FIELD(self, COMBO_LIST_BACK, BYTE*), CTL_RECT, RECT);
+    FIELD(list, CTL_RECT, RECT) = FIELD(list, CTL_DESIGN, RECT);
+}
+
+/* The scroll bar moves to its background's box, inset 2 at each end. */
+static void combo_slider_to_back(BYTE* self)
+{
+    BYTE* slider = FIELD(self, COMBO_SLIDER, BYTE*);
+
+    FIELD(slider, CTL_RECT, RECT) = FIELD(FIELD(self, COMBO_SLIDER_BACK, BYTE*), CTL_RECT, RECT);
+    FIELD(slider, CTL_RECT, RECT).top += 2;
+    FIELD(slider, CTL_RECT, RECT).bottom -= 2;
+    control_keep_design(slider);
+}
+
+/* The list's background picture; the list drops as tall as it. */
+PORT(0x0047B8B0)
+void __fastcall combo_set_list_back(BYTE* self, void* edx_unused, ui_anim* anim)
+{
+    (void) edx_unused;
+    combo_set_back(FIELD(self, COMBO_LIST_BACK, BYTE*), anim);
+    combo_list_to_back(self);
+    combo_set_drop(self, NULL, anim_current(anim)->height);
+}
+
+/* The scroll bar's background picture. */
+PORT(0x0047B980)
+void __fastcall combo_set_slider_back(BYTE* self, void* edx_unused, ui_anim* anim)
+{
+    (void) edx_unused;
+    combo_set_back(FIELD(self, COMBO_SLIDER_BACK, BYTE*), anim);
+    combo_slider_to_back(self);
+}
+
+/*
+    The text's background picture: the combo box takes its size, and the other pieces go round
+    it, the list below, the arrow (when placed) and the scroll bar past its right edge.
+*/
+PORT(0x0047BA60)
+void __fastcall combo_set_text_back(BYTE* self, void* edx_unused, ui_anim* anim)
+{
+    BYTE* text_back = FIELD(self, COMBO_TEXT_BACK, BYTE*);
+    const RECT* back;
+    RECT* area = &FIELD(self, CTL_RECT, RECT);
+    BYTE* button;
+
+    (void) edx_unused;
+    control_set_picture(text_back, NULL, 0, (DWORD) anim);
+    FIELD(text_back, CTL_RECT, RECT).top = 0;
+    FIELD(text_back, CTL_RECT, RECT).left = 0;
+    FIELD(text_back, CTL_RECT, RECT).right = anim_current(anim)->width;
+    FIELD(text_back, CTL_RECT, RECT).bottom = anim_current(anim)->height;
+    control_keep_design(text_back);
+    back = &FIELD(FIELD(self, COMBO_TEXT_BACK, BYTE*), CTL_RECT, RECT);
+
+    area->right = back->right + area->left;
+    area->bottom = back->bottom + area->top;
+    control_keep_design(self);
+
+    FIELD(FIELD(self, COMBO_LIST_BACK, BYTE*), CTL_RECT, RECT).left = 0;
+    FIELD(FIELD(self, COMBO_LIST_BACK, BYTE*), CTL_RECT, RECT).top = back->bottom;
+    control_keep_design(FIELD(self, COMBO_LIST_BACK, BYTE*));
+    combo_list_to_back(self);
+
+    button = FIELD(self, COMBO_BUTTON, BYTE*);
+    if (FIELD(button, CTL_DESIGN, RECT).left) {
+        RECT* box = &FIELD(button, CTL_RECT, RECT);
+        BYTE* arrow;
+
+        box->top = 0;
+        box->left = back->right;
+        arrow = VIRTUAL(button, 0xC0, control_state_picture)(button, NULL, -1);
+        box->right = FIELD(arrow, 0x14, LONG) + box->left;
+        arrow = VIRTUAL(button, 0xC0, control_state_picture)(button, NULL, -1);
+        box->bottom = FIELD(arrow, 0x18, LONG) + box->top;
+        control_keep_design(button);
+    }
+
+    FIELD(FIELD(self, COMBO_SLIDER_BACK, BYTE*), CTL_RECT, RECT).left = back->right;
+    FIELD(FIELD(self, COMBO_SLIDER_BACK, BYTE*), CTL_RECT, RECT).top = back->bottom;
+    control_keep_design(FIELD(self, COMBO_SLIDER_BACK, BYTE*));
+    combo_slider_to_back(self);
+}
+
+/* Vtable slot 55: pressed while it has focus, it opens or shuts and takes capture. */
+PORT(0x0047BD20)
+int __fastcall combo_pressed(BYTE* self, void* edx_unused, DWORD button, DWORD b)
+{
+    (void) edx_unused;
+    if (control_user(self)->focus == self) {
+        combo_open(self, NULL, !FIELD(self, COMBO_OPEN, BOOL));
+        gui_user_queue_capture(control_user(self), NULL, self, NULL, 0);
+        return 1;
+    }
+    return control_pressed(self, NULL, button, b);
+}
