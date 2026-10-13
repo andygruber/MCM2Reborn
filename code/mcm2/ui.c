@@ -10,6 +10,7 @@
 */
 
 #include "gui.h"
+#include <imm.h>
 
 /* UIDialog fields, by offset. */
 #define DLG_PARENT        0x2C      /* the dialog it was opened over, or NULL */
@@ -3855,4 +3856,268 @@ BOOL __fastcall button_contains(BYTE* self, void* edx_unused, LONG x, LONG y, DW
         solid = FIELD(desc, DESC_PIXELS, WORD*)[pixel] != FIELD(desc, DESC_SOURCE_KEY, WORD);
     VIRTUAL(surface, 0x80, surface_unlock)(surface, NULL);
     return solid;
+}
+
+/* ---- UIEdit: a text box ------------------------------------------------------------------------ */
+
+/*
+    A UIControl of type 11 whose text (CTL_TEXT) is a buffer of `capacity` bytes that it edits,
+    optionally bound to an outside buffer (0x1B4, of EDIT_BOUND_SIZE bytes) that it is copied
+    back to. It scrolls to keep the caret, a one-pixel box at EDIT_CARET_X, in view.
+*/
+#define UIEDIT_VTABLE   ((void**) 0x00557EA0)
+#define EDIT_BOUND      0x1B4       /* char*: the outside buffer, or NULL */
+#define EDIT_CAPACITY   0x1F0
+#define EDIT_CARET_X    0x1FC       /* the caret's distance into the text, in pixels */
+#define EDIT_SCROLL     0x200       /* how far the text is drawn left of its box, negated */
+#define EDIT_CARET_PEN  0x20C       /* HBRUSH for the caret, or white when NULL */
+#define EDIT_ALLOWED    0x210       /* char*: the only characters it takes, or NULL for all */
+#define EDIT_CARET      0x214       /* RECT: where the caret was last drawn */
+#define EDIT_BOUND_SIZE 0x224
+
+#define EDIT_MAX     1000           /* the most a box holds when it starts without text */
+#define EMPTY_TEXT   ((const char*) 0x0057D888)     /* "" */
+
+#define ime_in_use() FIELD(FIELD(game_main, 0xC, BYTE*), 0x6C, int)
+
+PORT(0x00474560)
+BYTE* __fastcall edit_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                BYTE* dialog, int length, DWORD b, DWORD c)
+{
+    char* text;
+
+    (void) edx_unused;
+    control_construct(self, NULL, 11, a, area, dialog);
+    *(void***) self = UIEDIT_VTABLE;
+    text = FIELD(self, CTL_TEXT, char*);
+    if (!text) {
+        int capacity = length + 1;
+
+        if (capacity >= EDIT_MAX)
+            capacity = EDIT_MAX;
+        else if (capacity < 1)
+            capacity = 1;
+        FIELD(self, EDIT_CAPACITY, int) = capacity;
+    } else {
+        int held = (int) text_length(text);
+
+        FIELD(self, EDIT_CAPACITY, int) = held > length + 1 ? held : length + 1;
+    }
+    FIELD(self, 0x204, DWORD) = b;
+    FIELD(self, 0x208, DWORD) = c;
+    FIELD(self, EDIT_SCROLL, int) = 0;
+    FIELD(self, 0x1EC, DWORD) = 0;
+    FIELD(self, CTL_LENGTH, int) = 0;
+    FIELD(self, EDIT_CARET_X, int) = 0;
+    FIELD(self, EDIT_ALLOWED, char*) = NULL;
+    FIELD(self, EDIT_CARET_PEN, HBRUSH) = NULL;
+    FIELD(self, 0x228, DWORD) = 0;
+    FIELD(self, 0x22C, DWORD) = 0;
+    if (!text)
+        FIELD(self, CTL_TEXT, char*) = game_FUN_004a4410(FIELD(self, EDIT_CAPACITY, int),
+                                                         GAMEUI_CPP, 0x15C7);
+    FIELD(self, CTL_TEXT, char*)[0] = 0;
+    return self;
+}
+
+void __fastcall edit_commit(BYTE* self, void* edx_unused, BOOL out);
+
+PORT(0x004746A0)
+void __fastcall edit_destruct(BYTE* self)
+{
+    *(void***) self = UIEDIT_VTABLE;
+    if (FIELD(self, EDIT_BOUND, char*))
+        edit_commit(self, NULL, TRUE);
+    if (FIELD(self, CTL_TEXT, char*)) {
+        game_FUN_004a4450(FIELD(self, CTL_TEXT, char*), GAMEUI_CPP, 0x15D2);
+        FIELD(self, CTL_TEXT, char*) = NULL;
+    }
+    if (FIELD(self, EDIT_ALLOWED, char*))
+        game_FUN_004a4450(FIELD(self, EDIT_ALLOWED, char*), GAMEUI_CPP, 0x15D6);
+    if (FIELD(self, EDIT_CARET_PEN, HBRUSH))
+        DeleteObject(FIELD(self, EDIT_CARET_PEN, HBRUSH));
+    control_destruct(self);
+}
+
+PORT(0x00474680)
+BYTE* __fastcall edit_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    edit_destruct(self);
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Edit `buffer`, of `size` bytes. */
+PORT(0x00474750)
+void __fastcall edit_bind(BYTE* self, void* edx_unused, char* buffer, int size)
+{
+    (void) edx_unused;
+    control_set_1b4(self, NULL, (DWORD) buffer);
+    FIELD(self, EDIT_BOUND_SIZE, int) = size;
+}
+
+/* Vtable slot 59: copy the text out to the bound buffer, or (`out` FALSE) take it from there. */
+PORT(0x00474770)
+void __fastcall edit_commit(BYTE* self, void* edx_unused, BOOL out)
+{
+    char* bound = FIELD(self, EDIT_BOUND, char*);
+    int size = FIELD(self, EDIT_BOUND_SIZE, int);
+
+    (void) edx_unused;
+    if (!bound || !size)
+        return;
+    if (out) {
+        game__strncpy(bound, FIELD(self, CTL_TEXT, char*), size);
+        FIELD(self, EDIT_BOUND, char*)[FIELD(self, EDIT_BOUND_SIZE, int) - 1] = 0;
+    } else {
+        game_FUN_00474d40(self, NULL, bound);
+    }
+}
+
+/* Vtable slot 38: control_needs_redraw, but an empty box keeps counting down. */
+PORT(0x004747D0)
+void __fastcall edit_needs_redraw(BYTE* self)
+{
+    BOOL empty = !FIELD(self, CTL_TEXT, char*) || !FIELD(self, CTL_LENGTH, int);
+    BYTE* last = control_chain_end(self, NULL, NULL);
+
+    if (FIELD(self, 0x70, int) && !empty && chain_settled(last))
+        return;
+    if (--FIELD(self, 0x1BC, int) < 0) {
+        FIELD(self, 0x1BC, int) = 0;
+        FIELD(self, 0x1C0, DWORD) = 1;
+    }
+}
+
+/*
+    Vtable slot 40: render. The picture as control_render draws it, but over the whole rectangle;
+    then the text, top left in a box padded by 0xE8/0xEC and scrolled by its alignment so the
+    caret shows. While it has capture the caret is framed on the last pass, and an open IME's
+    composition window is moved to it. It keeps being redrawn while it has capture.
+*/
+PORT(0x00474840)
+int __fastcall edit_render(BYTE* self)
+{
+    int width = VIRTUAL(self, 0xF4, method_0)(self);
+    int redraws = FIELD(self, 0x1BC, int);
+    int kept = -1;
+    BYTE* picture;
+    RECT area;
+    HDC dc;
+    DWORD more;
+
+    if (!FIELD(self, CTL_TEXT, char*))
+        game_FUN_00474d40(self, NULL, EMPTY_TEXT);
+
+    picture = FIELD(self, 0x1CC, BYTE*);
+    if (picture) {
+        BYTE* background = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*);
+        DWORD flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
+
+        if (background) {
+            background_draw(background, NULL, picture, &FIELD(self, CTL_RECT, RECT), self + 0x4C,
+                            flags, FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
+                            &FIELD(self, 0x1BC, int), 0);
+            kept = FIELD(self, 0x1BC, int);
+        } else {
+            VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL,
+                                                           &FIELD(self, CTL_RECT, RECT), picture,
+                                                           self + 0x4C, flags);
+        }
+    }
+    FIELD(self, 0x1BC, int) = redraws;
+
+    do {
+        const RECT* box = &FIELD(self, CTL_RECT, RECT);
+        DWORD align = FIELD(self, CTL_ALIGN, DWORD);
+        int caret = FIELD(self, EDIT_CARET_X, int);
+        int scroll;
+        LONG top;
+
+        if (align & 1) {
+            scroll = width - caret < 0 ? width - caret : 0;
+        } else if (align & 2) {
+            if (VIRTUAL(self, 0xF4, method_0)(self) > caret)
+                scroll = width / 2 - caret / 2;
+            else
+                scroll = width - caret;
+        } else if (align & 4) {
+            scroll = width - caret;
+        } else {
+            scroll = width - caret < 0 ? width - caret : 0;
+        }
+        FIELD(self, EDIT_SCROLL, int) = scroll;
+
+        if (align & 8)
+            top = box->top;
+        else if (align & 0x10)
+            top = (box->bottom - box->top) / 2 - FIELD(self, 0x160, LONG) / 2 + box->top;
+        else if (align & 0x20)
+            top = box->bottom - FIELD(self, 0x160, LONG);
+        else
+            top = box->top;
+        area.left = box->left + scroll + FIELD(self, 0xE8, LONG);
+        area.top = top + FIELD(self, 0xEC, LONG);
+        area.right = box->right - FIELD(self, 0xE8, LONG);
+        area.bottom = box->bottom - FIELD(self, 0xEC, LONG);
+
+        if (!dialog_begin_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, &dc, (RECT*) box, &more,
+                                self))
+            continue;
+        if (FIELD(self, CTL_LENGTH, int))
+            dialog_draw_text(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc, &area,
+                             FIELD(self, CTL_TEXT, char*), FIELD(self, CTL_LENGTH, int),
+                             FIELD(self, CTL_COLOUR, COLORREF), FIELD(self, 0x160, int), NULL,
+                             FIELD(self, CTL_SHADOW, BOOL),
+                             FIELD(self, CTL_SHADOW_COLOUR, COLORREF), 9, TRUE, NULL);
+
+        if (!more && control_user(self)->capture == self) {
+            BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+            LONG last = FIELD(dialog, 0x160, LONG) + box->left + width - 1;
+            LONG height = FIELD(self, 0x160, LONG);
+            HBRUSH pen = FIELD(self, EDIT_CARET_PEN, HBRUSH);
+
+            area.left += caret;
+            if (area.left > last)
+                area.left = last;
+            area.top++;
+            area.right = area.left + 1;
+            if (!height)
+                height = FIELD(dialog, 0xDC, LONG);
+            area.bottom = area.top + height + 1;
+            FIELD(self, EDIT_CARET, RECT) = area;
+            FrameRect(dc, &area, pen ? pen : (HBRUSH) GetStockObject(WHITE_BRUSH));
+        }
+        dialog_end_paint(FIELD(self, CTL_DIALOG, BYTE*), NULL, dc);
+
+        if (ime_in_use() && control_user(self)->capture == self) {
+            BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+            HIMC context;
+
+            if (dialog && FIELD(dialog, DLG_BACKGROUND, BYTE*))
+                background_release_dc(FIELD(dialog, DLG_BACKGROUND, BYTE*));
+            context = ImmGetContext(FIELD(game_main, 0x31C, HWND));
+            if (ImmGetOpenStatus(context)) {
+                COMPOSITIONFORM form;
+
+                form.dwStyle = CFS_FORCE_POSITION;
+                form.ptCurrentPos.x = FIELD(self, EDIT_CARET, RECT).left;
+                form.ptCurrentPos.y = FIELD(self, EDIT_CARET, RECT).top;
+                ImmSetCompositionWindow(context, &form);
+            }
+            if (context)
+                ImmReleaseContext(FIELD(game_main, 0x31C, HWND), context);
+        }
+    } while (more);
+
+    if (kept >= 0)
+        FIELD(self, 0x1BC, int) = kept;
+    if (control_user(self)->capture == self) {
+        control_redraw(self);
+        return 1;
+    }
+    FIELD(self, 0x1C0, DWORD) = 1;
+    return 1;
 }
