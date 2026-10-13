@@ -1401,6 +1401,74 @@ void __fastcall records_filter_show(BYTE* self, void* edx_unused, int kind)
     gui_manager_open(session_gui, NULL, panel, 0, 1, (DWORD) &area, self, 0, 0, 1);
 }
 
+/*
+    The record screen: TabLeft shows the ghost filter, TabRight the replay filter (shown at
+    first). Start takes the open panel's track; Back closes the panels and goes to screen 100.
+*/
+#define TAB_LEFT    NAME(0x00570018)    /* "TabLeft" */
+#define TAB_RIGHT   NAME(0x0057000C)    /* "TabRight" */
+#define HELP        NAME(0x0056F8A8)    /* "Help" */
+#define HELP_TOPIC  NAME(0x0056F560)    /* "MCM2HELP" */
+#define TAB_CONTROL 4
+
+/* Out of line: the original calls these. */
+__declspec(noinline) void __fastcall records_filter_show(BYTE* self, void* edx_unused, int kind);
+__declspec(noinline) void __fastcall track_choose(BYTE* self);
+__declspec(noinline) void __fastcall track_choose_set(BYTE* self);
+
+int  __fastcall option_load_text(BYTE* self, void* edx_unused, int index, HINSTANCE module,
+                                 UINT id);
+BOOL __fastcall radio_set(BYTE* self, void* edx_unused, int number);
+void __fastcall game_FUN_00529380(char* profile, void* edx_unused, const char* topic, DWORD a);
+
+static void tab_setup(BYTE* self, const char* name, UINT id)
+{
+    BYTE* tab = dialog_find_control(self, NULL, name, TAB_CONTROL);
+
+    option_load_text(tab, NULL, 0, game_language, id);
+    option_load_text(tab, NULL, 1, game_language, id);
+    control_set_align(tab, NULL, 0x22);
+}
+
+PORT(0x00454C10)
+void __fastcall records_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, NAME(0x0056F8CC))) {                                 /* "Back" */
+            if (FIELD(self, 0x7F58, BYTE*))
+                filter_close(self, 0x7F58);
+            if (FIELD(self, 0x7F5C, BYTE*))
+                filter_close(self, 0x7F5C);
+            dialog_end(event_dialog(event), NULL, 0);
+            event->e = 1;
+            go_to(100);
+        } else if (clicked(event, TAB_LEFT)) {
+            records_filter_show(self, NULL, FILTER_GHOSTS);
+        } else if (clicked(event, TAB_RIGHT)) {
+            records_filter_show(self, NULL, FILTER_REPLAYS);
+        } else if (clicked(event, HELP)) {
+            game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
+        } else if (clicked(event, START)) {
+            if (FIELD(self, 0x7F58, BYTE*)) {
+                track_choose(FIELD(self, 0x7F58, BYTE*));
+                dialog_end(self, NULL, 0);
+                return;
+            }
+            if (FIELD(self, 0x7F5C, BYTE*))
+                track_choose_set(FIELD(self, 0x7F5C, BYTE*));
+            dialog_end(self, NULL, 0);
+        }
+    } else if (event->type == EVENT_OPEN) {
+        FIELD(self, 0x7F58, BYTE*) = NULL;
+        FIELD(self, 0x7F5C, BYTE*) = NULL;
+        tab_setup(self, TAB_LEFT, 0x143A);
+        tab_setup(self, TAB_RIGHT, 0x1439);
+        records_filter_show(self, NULL, FILTER_REPLAYS);
+        radio_set(dialog_find_control(self, NULL, TAB_RIGHT, TAB_CONTROL), NULL, 0);
+    }
+}
+
 /* ---- Replays ---- */
 
 void __fastcall game_FUN_0045ddd0(BYTE* events, void* edx_unused, DWORD a);

@@ -43,10 +43,23 @@ def code(image, layout, start, end):
     return b""
 
 
+JUMP_TABLE = re.compile(r"\[\w+\*4 \+ (0x[0-9a-f]+)\]")
+
+
 def pops(data, address):
-    """The set of byte counts the function's `ret`s pop."""
+    """The set of byte counts the function's `ret`s pop.
+
+    A switch's jump table can follow the code, and its addresses can decode as `ret n`, so
+    decoding stops at the first table the code indexes.
+    """
+    decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    end = address + len(data)
+    for insn in decoder.disasm(data, address):
+        table = JUMP_TABLE.search(insn.op_str) if insn.mnemonic == "jmp" else None
+        if table and address < int(table.group(1), 16) < end:
+            end = int(table.group(1), 16)
     found = set()
-    for insn in capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32).disasm(data, address):
+    for insn in decoder.disasm(data[:end - address], address):
         if insn.mnemonic == "ret":
             found.add(int(insn.op_str, 16) if insn.op_str else 0)
     return found
