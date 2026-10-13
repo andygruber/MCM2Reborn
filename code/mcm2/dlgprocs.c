@@ -21,6 +21,8 @@ void        __fastcall control_show(BYTE* self, void* edx_unused, DWORD shown, B
 void        __fastcall dialog_end(BYTE* self, void* edx_unused, DWORD code);
 BYTE*       __fastcall dialog_construct(BYTE* self, void* edx_unused, DWORD flag, const char* name);
 int         __fastcall dialog_tick(BYTE* self, void* edx_unused, float seconds);
+int         __fastcall dialog_release(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg);
+int         __fastcall list_select_all(BYTE* self, void* edx_unused, int index);
 BOOL        __fastcall game_FUN_004a3ef0(void* stream);                 /* start a movie */
 BYTE*       __fastcall gui_manager_open(gui_manager* self, void* edx_unused, BYTE* dialog, DWORD a,
                                         DWORD flags, DWORD area, BYTE* parent, DWORD arg, DWORD c,
@@ -402,4 +404,136 @@ void __fastcall sp_show_page(BYTE* self, void* edx_unused, int page)
     FIELD(self, SP_PAGES + 4 * page, BYTE*) = dialog;
     gui_manager_open(FIELD(FIELD(game_main, 0x56C, BYTE*), 0x2C, gui_manager*), NULL, dialog, 0, 1,
                      (DWORD) &area, self, 0, 0, 1);
+}
+
+/* ---- Loading screens ---- */
+
+/* loading.dtm, named for the event it loads (the name it reads its sections by). */
+static BYTE* loading_construct(BYTE* self, DWORD flag, void** vtable, const char* name)
+{
+    dialog_construct(self, NULL, flag, NAME(0x0056FD04));                   /* loading.dtm */
+    *(void***) self = vtable;
+    text_copy((char*) self + 0x38, name);
+    return self;
+}
+
+PORT(0x00451C50)
+BYTE* __fastcall loading_supercross_construct(BYTE* self, void* edx_unused, DWORD flag)
+{
+    (void) edx_unused;
+    return loading_construct(self, flag, (void**) 0x00556EF8, NAME(0x0056FCF8));   /* LoadSX.dtm */
+}
+
+PORT(0x00451CA0)
+BYTE* __fastcall loading_enduro_construct(BYTE* self, void* edx_unused, DWORD flag)
+{
+    (void) edx_unused;
+    return loading_construct(self, flag, (void**) 0x00556F7C, NAME(0x0056FD2C));   /* LoadEnd.dtm */
+}
+
+PORT(0x00451CF0)
+BYTE* __fastcall loading_quarry_construct(BYTE* self, void* edx_unused, DWORD flag)
+{
+    (void) edx_unused;
+    return loading_construct(self, flag, (void**) 0x00557000, NAME(0x0056FD54));   /* LoadQuar.dtm */
+}
+
+PORT(0x00451D40)
+BYTE* __fastcall loading_national_construct(BYTE* self, void* edx_unused, DWORD flag)
+{
+    (void) edx_unused;
+    return loading_construct(self, flag, (void**) 0x00557084, NAME(0x0056FD88));   /* LoadNat.dtm */
+}
+
+PORT(0x00451D90)
+BYTE* __fastcall loading_tag_construct(BYTE* self, void* edx_unused, DWORD flag)
+{
+    (void) edx_unused;
+    return loading_construct(self, flag, (void**) 0x00557108, NAME(0x0056FDB4));   /* LoadTag.dtm */
+}
+
+PORT(0x00451DE0)
+BYTE* __fastcall loading_baja_construct(BYTE* self, void* edx_unused, DWORD flag)
+{
+    (void) edx_unused;
+    return loading_construct(self, flag, (void**) 0x0055718C, NAME(0x0056FDDC));   /* LoadBaja.dtm */
+}
+
+/* ---- Ghost races ---- */
+
+/*
+    The ghost race picker keeps the recordings it found: the one chosen (0x7F58), and an array
+    of 0x7F64 paths (0x7F60), all on the game's heap.
+*/
+#define GHOST_CHOSEN 0x7F58
+#define GHOST_PATHS  0x7F60
+#define GHOST_COUNT  0x7F64
+
+void __fastcall game_FUN_0044fb30(BYTE* self, void* edx_unused, const char* path);  /* add one */
+
+PORT(0x0044FDB0)
+void __fastcall ghosts_free(BYTE* self)
+{
+    if (FIELD(self, GHOST_CHOSEN, void*))
+        game_FUN_004a4450(FIELD(self, GHOST_CHOSEN, void*), DLGPROCS_CPP, 0x77A);
+    if (FIELD(self, GHOST_PATHS, char**)) {
+        int i;
+
+        for (i = 0; i < FIELD(self, GHOST_COUNT, int); i++)
+            game_FUN_004a4450(FIELD(self, GHOST_PATHS, char**)[i], DLGPROCS_CPP, 0x77E);
+        game_FUN_004a4450(FIELD(self, GHOST_PATHS, char**), DLGPROCS_CPP, 0x780);
+    }
+    FIELD(self, GHOST_CHOSEN, void*) = NULL;
+    FIELD(self, GHOST_PATHS, char**) = NULL;
+    FIELD(self, GHOST_COUNT, int) = 0;
+    FIELD(self, 0x7F5C, DWORD) = 0;
+}
+
+/* DDLGhostRaces: "none" (string 5319), then each Record\*.gho there is. */
+PORT(0x0044FA20)
+void __fastcall ghosts_fill(BYTE* self)
+{
+    BYTE* list;
+    char none[0x80];
+    char path[0x104];
+    WIN32_FIND_DATAA found;
+    HANDLE search;
+
+    ghosts_free(self);
+    list = FIELD(dialog_find_control(self, NULL, NAME(0x0056F9CC), 6), 0x1FC, BYTE*);
+    list_clear(list);
+    game_FUN_00526fc0(game_main, NULL, 0x14C7, none, sizeof none);
+    list_add_text(list, NULL, none, (DWORD) -1, 0);
+    list_select_all(list, NULL, 0);
+    search = FindFirstFileA(NAME(0x0056FB6C), &found);                      /* Record\*.gho */
+    if (search == INVALID_HANDLE_VALUE)
+        return;
+    do {
+        game_FUN_0053a11f(path, NAME(0x0056C7DC), NAME(0x0056FB64), found.cFileName);  /* %s\%s */
+        game_FUN_0044fb30(self, NULL, path);
+    } while (FindNextFileA(search, &found));
+    FindClose(search);
+}
+
+/* ---- Odds and ends ---- */
+
+/* Slot 0 of a dialog kind that frees nothing of its own. */
+PORT(0x0044E810)
+BYTE* __fastcall bare_dialog_delete(BYTE* self, void* edx_unused, BYTE flags)
+{
+    (void) edx_unused;
+    *(void***) self = (void**) 0x00556CD8;
+    if (flags & 1)
+        game_delete(self);
+    return self;
+}
+
+/* Vtable slot 22: the first mouse button released ends the hold (0x7F7C). */
+PORT(0x004508E0)
+int __fastcall hold_release(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg)
+{
+    (void) edx_unused;
+    if (key[1] == 1 && key[0] == 0)
+        FIELD(self, 0x7F7C, DWORD) = 0;
+    return dialog_release(self, NULL, key, arg);
 }
