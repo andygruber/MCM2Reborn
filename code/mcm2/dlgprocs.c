@@ -4390,3 +4390,32 @@ int __fastcall preview_tick(BYTE* self, void* edx_unused, float seconds)
                                &FIELD(self, BR_VIEW, RECT));
     return dialog_tick(self, NULL, seconds);
 }
+
+/*
+    Vtable slot 31: the page's choice into the game's rider settings (out only): the bike's
+    maker and model, then the rider, each of at most 63 characters; the profile is saved.
+*/
+#define RIDER_TEXT_LENGTH 0x3F
+
+PORT(0x004513F0)
+void __fastcall bike_rider_sync(BYTE* self, void* edx_unused, DWORD out)
+{
+    BYTE* bike;
+
+    (void) edx_unused;
+    if (!out)
+        return;
+    text_copy((char*) game_main + 0x1EEC, NO_TEXT);
+    bike = FIELD(game_session, 0x50, BYTE*)
+           + list_data(combo_list(self, LIST_BIKES), NULL, -1) * BIKE_SIZE;
+    text_copy_most((char*) game_main + 0x1EEC,
+                   (const char*) session_players + FIELD(bike, 0, int) * RIDER_SIZE + 0x40,
+                   RIDER_TEXT_LENGTH);
+    text_copy_most((char*) game_main + 0x1F2C, (const char*) bike + 0x48, RIDER_TEXT_LENGTH);
+    text_copy_most((char*) game_main + 0x1F6C, NO_TEXT, RIDER_TEXT_LENGTH);
+    text_copy_most((char*) game_main + 0x1F6C,
+                   FIELD(game_session, 0x58, char*)
+                   + list_data(combo_list(self, LIST_RIDERS), NULL, -1) * RIDER_SIZE + 0x40,
+                   RIDER_TEXT_LENGTH);
+    game_FUN_00528bb0(game_profile);
+}
