@@ -761,6 +761,11 @@ void __fastcall text_entry_setup_ids(BYTE* self, void* edx_unused, const char* t
 }
 
 /* The prompt's title and text, and the buttons' words; a button given none is hidden. */
+__declspec(noinline) void __fastcall prompt_setup(BYTE* self, void* edx_unused,
+                                                  const char* title, const char* prompt,
+                                                  const char* left, const char* middle,
+                                                  const char* right);
+
 static void set_or_hide(BYTE* control, const char* text)
 {
     if (text && *text)
@@ -779,6 +784,71 @@ void __fastcall prompt_setup(BYTE* self, void* edx_unused, const char* title, co
     set_or_hide(dialog_find_control(self, NULL, BUTTON_LEFT, 0), left);
     set_or_hide(dialog_find_control(self, NULL, BUTTON_MIDDLE, 0), middle);
     set_or_hide(dialog_find_control(self, NULL, BUTTON_RIGHT, 0), right);
+}
+
+/* The same, each text given by a string id where that is not 0. */
+PORT(0x00456700)
+void __fastcall prompt_setup_ids(BYTE* self, void* edx_unused, const char* title, UINT title_id,
+                                 const char* prompt, UINT prompt_id, const char* left,
+                                 UINT left_id, const char* middle, UINT middle_id,
+                                 const char* right, UINT right_id)
+{
+    char texts[5][0x80];
+
+    (void) edx_unused;
+    if (title_id)
+        game_FUN_00526fc0(game_main, NULL, title_id, texts[0], sizeof texts[0]);
+    if (prompt_id)
+        game_FUN_00526fc0(game_main, NULL, prompt_id, texts[1], sizeof texts[1]);
+    if (left_id)
+        game_FUN_00526fc0(game_main, NULL, left_id, texts[2], sizeof texts[2]);
+    if (middle_id)
+        game_FUN_00526fc0(game_main, NULL, middle_id, texts[3], sizeof texts[3]);
+    if (right_id)
+        game_FUN_00526fc0(game_main, NULL, right_id, texts[4], sizeof texts[4]);
+    prompt_setup(self, NULL, title_id ? texts[0] : title, prompt_id ? texts[1] : prompt,
+                 left_id ? texts[2] : left, middle_id ? texts[3] : middle,
+                 right_id ? texts[4] : right);
+}
+
+/*
+    Asks about the thing named in the event's parameter: left ends with 31, right with 0.
+    The title reads 'name' and string 0x13CF.
+*/
+#define QUOTED_NAME NAME(0x0056FF60)    /* "'%s' %s" */
+
+PORT(0x00453180)
+void __fastcall named_choice_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        DWORD code;
+
+        if (clicked(event, BUTTON_LEFT))
+            code = 0x1F;
+        else if (clicked(event, BUTTON_RIGHT))
+            code = 0;
+        else
+            return;
+        dialog_end(event_dialog(event), NULL, code);
+        event->e = 1;
+    } else if (event->type == EVENT_OPEN) {
+        BYTE* title = dialog_find_control(self, NULL, TITLE_TEXT, 12);
+        BYTE* button = dialog_find_control(self, NULL, BUTTON_LEFT, 1);
+        char what[0x80];
+        char text[0x100];
+
+        control_load_text(button, NULL, game_language, 0x13EC);
+        FIELD(button, 0x1D8, DWORD) = 0;
+        button = dialog_find_control(self, NULL, BUTTON_RIGHT, 1);
+        control_load_text(button, NULL, game_language, 0x13EB);
+        FIELD(button, 0x1D8, DWORD) = 0;
+        control_show(dialog_find_control(self, NULL, BUTTON_MIDDLE, 1), NULL, FALSE, TRUE);
+        game_FUN_00526fc0(game_main, NULL, 0x13CF, what, sizeof what);
+        game_FUN_0053a11f(text, QUOTED_NAME, (const char*) event->param, what);
+        control_set_text(title, NULL, text);
+        load_prompt(self, 0x1403);
+    }
 }
 
 /* ---- Leaving ---- */
@@ -858,6 +928,11 @@ static void open_next(size_t size, int line, const char* name, void* vtable)
     gui_manager_open(session_gui, NULL, dialog, 0, 2, 0, NULL, 0, 0, 0);
 }
 
+/*
+    The intro's screens open one another as each closes: intro, intro2, intro3, then the
+    intro video, and the menus after it. A key skips them (see wait_skipped).
+*/
+
 /* Without the cursor; a key skips it unless the game asks otherwise (0xC44). Then intro2. */
 PORT(0x00454240)
 void __fastcall intro_handle(BYTE* self, void* edx_unused, ui_event* event)
@@ -872,9 +947,9 @@ void __fastcall intro_handle(BYTE* self, void* edx_unused, ui_event* event)
     }
 }
 
-/* Then the intro video. */
+/* intro3.dtm: then the intro video. */
 PORT(0x00454590)
-void __fastcall intro2_handle(BYTE* self, void* edx_unused, ui_event* event)
+void __fastcall intro3_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
     (void) edx_unused;
     if (event->type == EVENT_OPEN) {
@@ -883,6 +958,92 @@ void __fastcall intro2_handle(BYTE* self, void* edx_unused, ui_event* event)
         game_FUN_00469760(game_main);
     } else if (event->type == EVENT_CLOSE && !cursors_locked) {
         open_next(0x7F60, 0x106F, NAME(0x0056FFFC), (void*) 0x0055739C);     /* IntroVid.dtm */
+    }
+}
+
+/* intro2.dtm: then intro3, or the menus when skipped. */
+PORT(0x004543B0)
+void __fastcall intro2_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_OPEN) {
+        FIELD(self, 0x7F60, DWORD) = 0;
+        FIELD(self, 0x7F5C, DWORD) = 0;
+        FIELD(self, 0x7F58, DWORD) = 0;
+        game_FUN_00469760(game_main);
+    } else if (event->type == EVENT_CLOSE && !cursors_locked) {
+        if (!wait_skipped) {
+            open_next(0x7F60, 0x1041, NAME(0x0056FFD0), (void*) 0x00557318);   /* intro3.dtm */
+        } else {
+            go_to(100);
+            gui_manager_show_cursors(session_gui, NULL, TRUE);
+        }
+    }
+}
+
+/* ---- Movies ---- */
+
+BYTE* __fastcall movie_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
+                                 BYTE* dialog);
+BOOL  __fastcall movie_open(BYTE* self, void* edx_unused, const char* file, BOOL play, DWORD a,
+                            DWORD b);
+BYTE* __fastcall dialog_add(BYTE* self, void* edx_unused, BYTE* control, DWORD id, DWORD keep);
+int   __fastcall game_FUN_0046a0d0(void* self);                 /* unlink from its parent */
+#define object_unlink game_FUN_0046a0d0
+
+#define MOVIE_ENDED 0x0044C1C0      /* what the movie calls when it ends */
+
+/* A movie filling the 640x480 screen, added to it. */
+static BYTE* movie_add(BYTE* self, int line)
+{
+    RECT area = { 0, 0, 640, 480 };
+    BYTE* movie = game_new(0x200, DLGPROCS_CPP, line);
+
+    if (movie)
+        movie = movie_construct(movie, NULL, 0, &area, self);
+    return movie;
+}
+
+/* IntroVid.dtm: ui\Intro.avi, unless skipped; the menus once it closes. */
+PORT(0x004540D0)
+void __fastcall intro_video_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_OPEN) {
+        gui_manager_show_cursors(session_gui, NULL, FALSE);
+        if (!wait_skipped) {
+            FIELD(self, 0x7F5C, BYTE*) = movie_add(self, 0xFEF);
+            dialog_add(self, NULL, FIELD(self, 0x7F5C, BYTE*), 0, 1);
+            if (movie_open(FIELD(self, 0x7F5C, BYTE*), NULL, NAME(0x0056FF80), TRUE, MOVIE_ENDED,
+                           (DWORD) self))
+                return;
+        }
+        dialog_end(self, NULL, 0);
+    } else if (event->type == EVENT_CLOSE && !cursors_locked) {
+        go_to(100);
+        gui_manager_show_cursors(session_gui, NULL, TRUE);
+    }
+}
+
+/* The credits: ui\Credits.avi behind the Back button; the menus once it closes. */
+PORT(0x00453F80)
+void __fastcall credits_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_CLICK) {
+        if (clicked(event, NAME(0x0056F8CC)))                                 /* "Back" */
+            dialog_end(self, NULL, 0);
+    } else if (event->type == EVENT_OPEN) {
+        FIELD(self, 0x7F58, BYTE*) = movie_add(self, 0xFAD);
+        dialog_add(self, NULL, FIELD(self, 0x7F58, BYTE*), 0, 1);
+        object_unlink(FIELD(self, 0x7F58, BYTE*));
+        object_move_before(FIELD(self, 0x7F58, BYTE*), NULL,
+                           dialog_find_control(self, NULL, NAME(0x0056F8CC), 0), -1);
+        if (!movie_open(FIELD(self, 0x7F58, BYTE*), NULL, NAME(0x0056FF70), TRUE, MOVIE_ENDED,
+                        (DWORD) self))
+            dialog_end(self, NULL, 0);
+    } else if (event->type == EVENT_CLOSE && !cursors_locked) {
+        go_to(100);
     }
 }
 
