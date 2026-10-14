@@ -3948,7 +3948,6 @@ static void live_menu_show(void)
         dialog_end(live_controls, NULL, 0);
         live_controls = NULL;
     }
-    live_mute();
     session_show_cursors(game_session);
     go_to(100);
     dev_trace("menus", "live background: running");
@@ -3969,7 +3968,9 @@ void live_menu_tick(void)
         live_state = LIVE_OFF;
         return;
     }
-    if (++live_frames % 30 == 0)        /* sounds the race makes later */
+    /* Not at once: the loading screen just closed is still among the objects, half gone. Then
+       again now and then, for the sounds the race makes later. */
+    if (++live_frames % 30 == 3)
         live_mute();
     if (FIELD(race, REPLAY_SEEK, float) < 0.0f && replay_length(race) > 2.0f
         && FIELD(race, REPLAY_TIME, float) > replay_length(race) - 1.0f)
