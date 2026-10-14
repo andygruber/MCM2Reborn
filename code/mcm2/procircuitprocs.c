@@ -1097,8 +1097,6 @@ static const char** next_track(BYTE* net)
 
 int   __fastcall game_vf_26_46A1F0(void* self);
 int   __fastcall dialog_press(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg);
-int   __fastcall option_select(BYTE* self, void* edx_unused, int index);
-int   __fastcall edit_set_text(BYTE* self, void* edx_unused, const char* text);
 int   __fastcall control_set_colour(BYTE* self, void* edx_unused, COLORREF colour);
 int   __fastcall control_set_picture(BYTE* self, void* edx_unused, int state, DWORD picture);
 int   __fastcall control_load_picture(BYTE* self, void* edx_unused, int state, const char* file);

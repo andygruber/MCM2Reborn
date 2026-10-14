@@ -112,6 +112,10 @@ def main():
         if inside:
             pattern = re.compile("|".join(symbol(l) for l in inside))
             for n, line in enumerate(lines):
+                # A `push imm32` whose value merely equals an address inside (a colour such as
+                # 0x404040, say) is data, not a way in.
+                if n and lines[n - 1].strip() == "db 068h":
+                    continue
                 if (n < start or n >= extent) and pattern.search(line):
                     sys.exit("cannot port %s (0x%08X): line %d jumps inside it - %s"
                              % (name, address, n + 1, line.strip()))

@@ -216,24 +216,25 @@ int  __fastcall game_vf_15_43FCE0(void* self);
 BYTE* __fastcall anim_next_picture(ui_anim* self);
 
 /*
-    BackgroundImage: the surface the menus are drawn on, with slots for the parts that change.
+    BackgroundImage: the surface the menus are drawn on, with slots for the parts that change
+    (backgroundimage.c).
 */
-void __fastcall game_FUN_00404cc0(BYTE* background);                          /* release its DC */
-void __fastcall game_FUN_00404de0(BYTE* background);                          /* redraw it */
-int  __fastcall game_FUN_00404130(BYTE* background, void* edx_unused, DWORD keep);  /* new slot */
-void __fastcall game_FUN_00404240(BYTE* background, void* edx_unused, int slot);    /* free one */
-void __fastcall game_FUN_00404280(BYTE* background, void* edx_unused, int slot, RECT* area);
-void __fastcall game_FUN_00404cf0(BYTE* background, void* edx_unused, int slot);
-void __fastcall game_FUN_004044c0(BYTE* background, void* edx_unused, void* picture, RECT* area,
-                                  void* source, DWORD flags, int slot, DWORD a, int* redraws,
-                                  DWORD b);
-#define background_release_dc  game_FUN_00404cc0
-#define background_invalidate  game_FUN_00404de0
-#define background_new_slot    game_FUN_00404130
-#define background_free_slot   game_FUN_00404240
-#define background_slot_redraw game_FUN_00404280
-#define background_slot_clear  game_FUN_00404cf0
-#define background_draw        game_FUN_004044c0
+BYTE* __fastcall background_construct(BYTE* self, void* edx_unused, DWORD flag);
+void  __fastcall background_set_picture(BYTE* self, void* edx_unused, void* picture);
+int   __fastcall background_new_slot(BYTE* self, void* edx_unused, DWORD keep);
+void  __fastcall background_free_slot(BYTE* self, void* edx_unused, int slot);
+void  __fastcall background_slot_redraw(BYTE* self, void* edx_unused, int slot, RECT* area);
+int   __fastcall background_draw(BYTE* self, void* edx_unused, void* picture, RECT* area,
+                                 RECT* source, DWORD flags, int slot, DWORD lasting,
+                                 int* passes, DWORD blend);
+int   __fastcall background_draw_at(BYTE* self, void* edx_unused, void* picture, int x, int y,
+                                    RECT* source, DWORD flags, int slot, DWORD lasting,
+                                    int* passes, DWORD blend);
+int   __fastcall background_get_dc(BYTE* self, void* edx_unused, HDC* dc, RECT* area, int slot,
+                                   DWORD lasting, int* passes, int* again, RECT* clip);
+int   __fastcall background_release_dc(BYTE* self);
+void  __fastcall background_slot_clear(BYTE* self, void* edx_unused, int slot);
+void  __fastcall background_invalidate(BYTE* self);
 
 /* The screen's own draw: vtable slot 3 of object_screen(). */
 typedef int (__fastcall* screen_draw)(void* screen, void* edx_unused, RECT* area, void* picture,
@@ -283,7 +284,6 @@ void* __fastcall gui_manager_capture_screen(gui_manager* self, void* edx_unused,
                                             const RECT* area);
 void  __fastcall gui_user_set_ime(gui_user* self, void* edx_unused, BOOL on);
 void  __fastcall gui_input_reset(gui_input* self);
-void* __fastcall game_FUN_00403d80(void* self, void* edx_unused, DWORD flag);
 void  __fastcall game_vf_28_483430(gui_manager* self);
 
 void __fastcall gui_manager_drop_backdrop(gui_manager* self);
