@@ -8,6 +8,78 @@
 
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
+
+#define BLUR_W 48       /* the side fill is the picture shrunk to this and stretched back */
+#define BLUR_H 36
+
+static GLuint g_blur_fbo, g_blur_colour;
+
+/* Darken the window's part from `left` to `right` (black at `alpha`). */
+static void darken(LONG left, LONG right, LONG width, LONG height, GLfloat alpha)
+{
+    GLfloat quad[4][2] = {
+        { (GLfloat) left, 0 }, { (GLfloat) right, 0 },
+        { (GLfloat) right, (GLfloat) height }, { (GLfloat) left, (GLfloat) height },
+    };
+
+    gl.ActiveTexture(GL_TEXTURE0 + 1);
+    gl.Disable(GL_TEXTURE_2D);
+    gl.ActiveTexture(GL_TEXTURE0);
+    gl.Disable(GL_TEXTURE_2D);
+    gl.Disable(GL_DEPTH_TEST);
+    gl.Disable(GL_CULL_FACE);
+    gl.Disable(GL_FOG);
+    gl.Disable(GL_ALPHA_TEST);
+    gl.Enable(GL_BLEND);
+    gl.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    gl.Viewport(0, 0, width, height);
+    gl.MatrixMode(GL_PROJECTION);
+    gl.LoadIdentity();
+    gl.Ortho(0, width, height, 0, -1, 1);
+    gl.MatrixMode(GL_MODELVIEW);
+    gl.LoadIdentity();
+    gl.DisableClientState(GL_COLOR_ARRAY);
+    gl.DisableClientState(GL_FOG_COORD_ARRAY);
+    gl.ClientActiveTexture(GL_TEXTURE0 + 1);
+    gl.DisableClientState(GL_TEXTURE_COORD_ARRAY);
+    gl.ClientActiveTexture(GL_TEXTURE0);
+    gl.DisableClientState(GL_TEXTURE_COORD_ARRAY);
+    gl.EnableClientState(GL_VERTEX_ARRAY);
+    gl.VertexPointer(2, GL_FLOAT, sizeof quad[0], quad[0]);
+    gl.Color4f(0, 0, 0, alpha);
+    gl.DrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    gl.Color4f(1, 1, 1, 1);
+    gl.Disable(GL_BLEND);
+}
+
+/*
+    Behind a picture narrower than the window: the picture covering the window, blurred by
+    shrinking it to BLUR_W x BLUR_H and stretching it back, and the sides darkened.
+*/
+static void fill_sides(surface* target, LONG width, LONG height, LONG left, LONG right)
+{
+    LONG cover_h = width * (LONG) target->desc.dwHeight / (LONG) target->desc.dwWidth;
+    LONG cover_y = (height - cover_h) / 2;
+
+    if (!g_blur_fbo) {
+        gl.GenFramebuffers(1, &g_blur_fbo);
+        gl.GenRenderbuffers(1, &g_blur_colour);
+        gl.BindRenderbuffer(GL_RENDERBUFFER, g_blur_colour);
+        gl.RenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, BLUR_W, BLUR_H);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, g_blur_fbo);
+        gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, g_blur_colour);
+    }
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, target->fbo);
+    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, g_blur_fbo);
+    gl.BlitFramebuffer(0, 0, target->desc.dwWidth, target->desc.dwHeight, 0, 0, BLUR_W, BLUR_H,
+                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, g_blur_fbo);
+    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    gl.BlitFramebuffer(0, 0, BLUR_W, BLUR_H, 0, cover_y, width, cover_y + cover_h,
+                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    darken(0, left, width, height, 0.55f);
+    darken(right, width, width, height, 0.55f);
+}
 #endif
 
 BOOL g_state_lost = TRUE;
@@ -83,6 +155,10 @@ static void present(surface* target)
     gl.Viewport(0, 0, w, h);
     gl.ClearColor(0, 0, 0, 1);
     gl.Clear(GL_COLOR_BUFFER_BIT);
+#ifdef OPENMCM2_DEV
+    if (dev_settings.menus_fill_sides && fit_w < w)
+        fill_sides(target, w, h, x, x + fit_w);
+#endif
     gl.BindFramebuffer(GL_READ_FRAMEBUFFER, target->fbo);
     gl.BlitFramebuffer(0, 0, target->desc.dwWidth, target->desc.dwHeight, x, y, x + fit_w, y + fit_h,
                        GL_COLOR_BUFFER_BIT, GL_LINEAR);

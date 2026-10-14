@@ -15,6 +15,9 @@
         [menus]
         widescreen=1      the menus at the display mode the races use, their 640x480
                           scaled evenly to fit and centred, the backgrounds filling the screen
+                          (experimental: the start of the modern menus)
+        fill_sides=1      a picture narrower than the screen, such as the 640x480 menus, gets
+                          a blurred, darkened copy of itself behind its side bars
 
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider
@@ -33,6 +36,7 @@ typedef struct dev_switches {
     BOOL trace_files;
     BOOL trace_display;
     BOOL menus_widescreen;
+    BOOL menus_fill_sides;
     BOOL fix_last_pick;
 } dev_switches;
 
