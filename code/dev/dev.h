@@ -12,6 +12,10 @@
         display=1         every display mode set and every surface made that is not a
                           texture, with the address of the game code that asked
 
+        [menus]
+        widescreen=1      the menus at the display mode the races use, their 640x480
+                          scaled evenly to fit and centred, the backgrounds filling the screen
+
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider
 
@@ -28,6 +32,7 @@ typedef struct dev_switches {
     BOOL trace_events;
     BOOL trace_files;
     BOOL trace_display;
+    BOOL menus_widescreen;
     BOOL fix_last_pick;
 } dev_switches;
 

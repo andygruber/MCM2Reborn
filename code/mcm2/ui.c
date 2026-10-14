@@ -14,6 +14,33 @@
 
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
+
+/*
+    Widescreen menus: the 640x480 the menus were made for, scaled evenly to fit `screen` and
+    centred on it. The scale, with the area's top left in `left` and `top`.
+*/
+static float menu_fit(BYTE* screen, int* left, int* top)
+{
+    int width = FIELD(screen, 0xC, int);
+    int height = FIELD(screen, 0x10, int);
+    float scale = width * 480 < height * 640 ? width / 640.0f : height / 480.0f;
+
+    *left = (int) ((width - 640 * scale) / 2);
+    *top = (int) ((height - 480 * scale) / 2);
+    return scale;
+}
+
+/* A 640x480 area moved onto the screen's centred one. */
+static void menu_place(BYTE* screen, RECT* area)
+{
+    int left, top;
+    float scale = menu_fit(screen, &left, &top);
+
+    area->left = left + (int) (area->left * scale);
+    area->top = top + (int) (area->top * scale);
+    area->right = left + (int) (area->right * scale);
+    area->bottom = top + (int) (area->bottom * scale);
+}
 #endif
 
 /* UIDialog fields, by offset. */
@@ -678,6 +705,16 @@ BYTE* __fastcall dialog_open(BYTE* self, void* edx_unused, void* screen, const R
         FIELD(self, 0x168, LONG) = FIELD(object_screen(self), 0xC, LONG);
         FIELD(self, 0x16C, LONG) = FIELD(object_screen(self), 0x10, LONG);
     }
+#ifdef OPENMCM2_DEV
+    /* The areas given are 640x480's; the whole screen becomes the centred 640x480. */
+    if (dev_settings.menus_widescreen) {
+        RECT* placed = &FIELD(self, 0x160, RECT);
+
+        if (!area)
+            SetRect(placed, 0, 0, 640, 480);
+        menu_place(object_screen(self), placed);
+    }
+#endif
     FIELD(self, DLG_PARENT, BYTE*) = parent;
     FIELD(self, DLG_MODAL, DWORD) = (flags & 6) ? 1 : 0;
     FIELD(self, DLG_MANAGER, gui_manager*) = manager;
@@ -8562,6 +8599,13 @@ static void reader_info(dialog_reader* r)
 
     reader_int(r, KEY(0x00571CDC), FIELD(screen, 0xC, int), &FIELD(self, DLG_DESIGN_W, int));
     reader_int(r, KEY(0x00571CCC), FIELD(screen, 0x10, int), &FIELD(self, DLG_DESIGN_H, int));
+#ifdef OPENMCM2_DEV
+    /* A dialog that names no size was made for the 640x480 the original always ran at. */
+    if (dev_settings.menus_widescreen) {
+        reader_int(r, KEY(0x00571CDC), 640, &FIELD(self, DLG_DESIGN_W, int));
+        reader_int(r, KEY(0x00571CCC), 480, &FIELD(self, DLG_DESIGN_H, int));
+    }
+#endif
     reader_int(r, KEY(0x00571CC4), 0, &FIELD(self, DLG_SCALED, int));       /* NoScale */
     FIELD(self, DLG_SCALED, int) = !FIELD(self, DLG_SCALED, int);
     reader_int(r, KEY(0x00571CBC), 1, &FIELD(self, DLG_POPUP, int));        /* Popup */
@@ -8570,6 +8614,15 @@ static void reader_info(dialog_reader* r)
                                              / FIELD(self, DLG_DESIGN_W, int));
         FIELD(self, 0x9C8, float) = (float) ((double) FIELD(object_screen(self), 0x10, int)
                                              / FIELD(self, DLG_DESIGN_H, int));
+#ifdef OPENMCM2_DEV
+        /* Evenly, by the smaller, so nothing stretches. */
+        if (dev_settings.menus_widescreen) {
+            if (FIELD(self, 0x9C4, float) > FIELD(self, 0x9C8, float))
+                FIELD(self, 0x9C4, float) = FIELD(self, 0x9C8, float);
+            else
+                FIELD(self, 0x9C8, float) = FIELD(self, 0x9C4, float);
+        }
+#endif
     } else if (FIELD(self, DLG_DESIGN_W, int) * 2 > FIELD(object_screen(self), 0xC, int)
                || FIELD(self, DLG_DESIGN_H, int) * 2 > FIELD(object_screen(self), 0x10, int)) {
         FIELD(self, 0x9C8, float) = 1.0f;
@@ -9485,6 +9538,12 @@ int __fastcall dialog_read(BYTE* self, void* edx_unused, void* data, DWORD size)
             FIELD(backdrop, CTL_DESIGN, RECT) = FIELD(backdrop, CTL_RECT, RECT);
             FIELD(backdrop, 0x1CC, BYTE*) = VIRTUAL(backdrop, 0xC0, control_state_picture)(backdrop,
                                                                                          NULL, 0);
+#ifdef OPENMCM2_DEV
+            if (dev_settings.menus_widescreen) {
+                width = (int) (width * FIELD(self, 0x9C4, float));
+                height = (int) (height * FIELD(self, 0x9C8, float));
+            }
+#endif
             FIELD(self, DLG_AREA, RECT).right = FIELD(self, DLG_AREA, RECT).left + width;
             FIELD(self, DLG_AREA, RECT).bottom = FIELD(self, DLG_AREA, RECT).top + height;
             VIRTUAL(backdrop, 0x9C, method_0)(backdrop);
