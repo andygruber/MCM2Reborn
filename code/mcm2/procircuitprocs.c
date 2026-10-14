@@ -79,9 +79,9 @@ BOOL  __fastcall game_FUN_004d8850(BYTE* self, void* edx_unused, const char* pat
 BOOL  __fastcall game_FUN_004d88a0(BYTE* self, void* edx_unused, const char* path);
 
 /* This file's second half: the bike and rider page's rider and bike chosen, and the plates. */
-void __fastcall game_FUN_004dc0c0(BYTE* page);
-void __fastcall game_FUN_004dc100(BYTE* page);
-void __fastcall game_FUN_004db940(BYTE* page, void* edx_unused, DWORD plate);
+void __fastcall pc_rider_choose(BYTE* self);
+void __fastcall pc_bike_choose(BYTE* self);
+void __fastcall pc_players_set(BYTE* self, void* edx_unused, DWORD value);
 
 #define PROCIRCUIT_CPP NAME(0x00577B20)     /* "...\ProCircuitProcs.cpp" */
 #define TWO_STRINGS    NAME(0x0056ED34)     /* "%s%s" */
@@ -948,9 +948,9 @@ static void central_bike_rider_open(BYTE* self)
     squared = (float) (dy * dy + dx * dx + dz * dz);
     FIELD(self, BR_DISTANCE, float) = x87_equal(squared, 1.0f) ? 1.0f : game_FUN_00461ac0(squared);
 
-    game_FUN_004dc0c0(self);
-    game_FUN_004dc100(self);
-    game_FUN_004db940(self, NULL, FIELD(game_main, 0x2144, DWORD));
+    pc_rider_choose(self);
+    pc_bike_choose(self);
+    pc_players_set(self, NULL, FIELD(game_main, 0x2144, DWORD));
     game_FUN_0053a27e(game_FUN_004c41d0());
     if (FIELD(self, 0x110, BYTE*))
         FIELD(self, BR_SLOT, int) = background_new_slot(FIELD(self, 0x110, BYTE*), NULL, 0);
@@ -973,11 +973,11 @@ void __fastcall central_bike_rider_handle(BYTE* self, void* edx_unused, ui_event
         break;
     case EVENT_SELECT:
         if (clicked(event, LIST_BIKES))
-            game_FUN_004dc100(self);
+            pc_bike_choose(self);
         else if (clicked(event, LIST_RIDERS))
-            game_FUN_004dc0c0(self);
+            pc_rider_choose(self);
         else if (clicked(event, LIST_ENGINE_SIZE))
-            game_FUN_004dc100(self);
+            pc_bike_choose(self);
         break;
     case EVENT_CLICK:
         if (clicked(event, NAME(0x0056FBB4)))                                  /* "BikeLeft" */
@@ -1009,7 +1009,7 @@ void __fastcall central_bike_rider_handle(BYTE* self, void* edx_unused, ui_event
         FIELD(game_main, 0x2144, int) = plate;
         game_FUN_0054aaa5(plate, number, 10);
         edit_set_text((BYTE*) event->c, NULL, number);
-        game_FUN_004db940(self, NULL, plate);
+        pc_players_set(self, NULL, plate);
         break;
     case EVENT_EDIT_CHANGED:
         if (!clicked(event, EDIT_PLATE))
@@ -1017,7 +1017,7 @@ void __fastcall central_bike_rider_handle(BYTE* self, void* edx_unused, ui_event
         edit_get_text((BYTE*) event->c, NULL, number, 9);
         plate = game_FUN_0053b6c7(number);
         if (plate >= 100 && plate <= 999) {
-            game_FUN_004db940(self, NULL, plate);
+            pc_players_set(self, NULL, plate);
             FIELD(game_main, 0x2144, int) = plate;
         }
         break;
@@ -1097,8 +1097,6 @@ static const char** next_track(BYTE* net)
 
 int   __fastcall game_vf_26_46A1F0(void* self);
 int   __fastcall dialog_press(BYTE* self, void* edx_unused, const DWORD* key, DWORD arg);
-int   __fastcall option_select(BYTE* self, void* edx_unused, int index);
-int   __fastcall edit_set_text(BYTE* self, void* edx_unused, const char* text);
 int   __fastcall control_set_colour(BYTE* self, void* edx_unused, COLORREF colour);
 int   __fastcall control_set_picture(BYTE* self, void* edx_unused, int state, DWORD picture);
 int   __fastcall control_load_picture(BYTE* self, void* edx_unused, int state, const char* file);
@@ -1107,7 +1105,7 @@ void  __fastcall list_set_compare(BYTE* self, void* edx_unused, entry_compare co
 int   __fastcall dialog_draw_over(BYTE* self);
 void  __fastcall session_hide_scene(BYTE* self);
 void  __fastcall game_FUN_004d88f0(BYTE* net);
-void  __cdecl    game_FUN_004d92f0(void);
+void __cdecl circuit_screen_open(void);
 BOOL  __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* text, int size);
 void  __fastcall game_FUN_004eebc0(BYTE* resources, void* edx_unused, const char* file,
                                    const char* kind, DWORD a);      /* load a scn file */
@@ -1638,7 +1636,7 @@ void __fastcall pc_race_results_handle(BYTE* self, void* edx_unused, ui_event* e
                                  pc_dialog_new(0x7F58, 0x567, PCTRANS_DTM, 0x0055C528), 0, 2, 0, NULL, 0, 0, 1);
             }
         } else {
-            game_FUN_004d92f0();
+            circuit_screen_open();
         }
         dialog_end(self, NULL, 0);
     } else if (event->type == EVENT_OPEN) {
@@ -1955,7 +1953,7 @@ void __fastcall pc_champion_handle(BYTE* self, void* edx_unused, ui_event* event
             VIRTUAL(self, 0x68, method_0)(self);
         } else if (clicked(event, BUTTON_DECLINE)) {
             game_FUN_004d88f0(net);
-            game_FUN_004d92f0();
+            circuit_screen_open();
             dialog_end(self, NULL, 0);
         }
     }

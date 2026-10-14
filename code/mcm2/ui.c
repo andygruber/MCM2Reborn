@@ -101,9 +101,6 @@ void __fastcall dialog_track_pointer(BYTE* self);
 void __fastcall dialog_remove_timer(BYTE* self, void* edx_unused, DWORD id);
 void __fastcall dialog_tell_parent(BYTE* self, void* edx_unused, DWORD sound, DWORD kind);
 void __fastcall control_show(BYTE* self, void* edx_unused, DWORD shown, BOOL animate);
-void  __fastcall game_FUN_004040f0(BYTE* background, void* edx_unused, DWORD slot);
-int   __fastcall game_FUN_00404a10(BYTE* background, void* edx_unused, HDC* dc, const RECT* area,
-                                   DWORD slot, DWORD a, void* b, void* out, RECT* clip);
 const char* __fastcall control_get_name(BYTE* self);
 
 typedef int (__fastcall* dialog_handle)(void* self, void* edx_unused, ui_event* event);
@@ -248,7 +245,7 @@ void __fastcall dialog_destruct(BYTE* self)
 
     if (!(FIELD(game_main, 0x2D5, BYTE) & 2) && FIELD(self, 0x7F10, int) && FIELD(self, 0x9B8, int)) {
         object_destroy(FIELD(FIELD(self, DLG_BACKGROUND, BYTE*), 0x2C, void*));
-        game_FUN_004040f0(FIELD(self, DLG_BACKGROUND, BYTE*), NULL, FIELD(self, 0x9B8, DWORD));
+        background_set_picture(FIELD(self, DLG_BACKGROUND, BYTE*), NULL, FIELD(self, 0x9B8, void*));
     }
     parent = FIELD(self, DLG_PARENT, BYTE*);
     if (!(FIELD(game_main, 0x2D5, BYTE) & 2) && parent && FIELD(parent, DLG_BACKGROUND, BYTE*))
@@ -526,15 +523,15 @@ int __fastcall dialog_begin_paint(BYTE* self, void* edx_unused, HDC* dc, RECT* a
         paint_clip = &paint_area;
         paint_area = *area;
         if (control) {
-            paint_result = game_FUN_00404a10(FIELD(self, DLG_BACKGROUND, BYTE*), NULL, dc, area,
-                                             FIELD(control, 0x1B8, DWORD),
-                                             FIELD(control, 0x1C0, DWORD), control + 0x1BC, out,
-                                             &paint_area);
+            paint_result = background_get_dc(FIELD(self, DLG_BACKGROUND, BYTE*), NULL, dc, area,
+                                             FIELD(control, 0x1B8, int),
+                                             FIELD(control, 0x1C0, DWORD), &FIELD(control, 0x1BC, int),
+                                             out, &paint_area);
         } else {
-            DWORD whole = 1;
+            int whole = 1;
 
-            paint_result = game_FUN_00404a10(FIELD(self, DLG_BACKGROUND, BYTE*), NULL, dc, area,
-                                             (DWORD) -1, 0, &whole, out, &paint_area);
+            paint_result = background_get_dc(FIELD(self, DLG_BACKGROUND, BYTE*), NULL, dc, area, -1,
+                                             0, &whole, out, &paint_area);
         }
     } else {
         void* surface = FIELD(object_screen(self), 0x48, void*);
@@ -2455,7 +2452,7 @@ int __fastcall control_render(BYTE* self)
         background = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*);
         if (background) {
             picture = FIELD(self, 0x1CC, BYTE*);
-            background_draw(background, NULL, picture, &area, self + 0x4C,
+            background_draw(background, NULL, picture, &area, &FIELD(self, 0x4C, RECT),
                             FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000,
                             FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
                             &FIELD(self, 0x1BC, int), 0);
@@ -4009,7 +4006,8 @@ int __fastcall edit_render(BYTE* self)
         DWORD flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
 
         if (background) {
-            background_draw(background, NULL, picture, &FIELD(self, CTL_RECT, RECT), self + 0x4C,
+            background_draw(background, NULL, picture, &FIELD(self, CTL_RECT, RECT),
+                            &FIELD(self, 0x4C, RECT),
                             flags, FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
                             &FIELD(self, 0x1BC, int), 0);
             kept = FIELD(self, 0x1BC, int);
@@ -6411,7 +6409,8 @@ int __fastcall list_render(BYTE* self)
         DWORD flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
 
         if (background) {
-            background_draw(background, NULL, picture, &FIELD(self, CTL_RECT, RECT), self + 0x4C,
+            background_draw(background, NULL, picture, &FIELD(self, CTL_RECT, RECT),
+                            &FIELD(self, 0x4C, RECT),
                             flags, FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
                             &FIELD(self, 0x1BC, int), 0);
             FIELD(self, 0x1BC, int) = redraws;

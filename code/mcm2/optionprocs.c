@@ -9,6 +9,7 @@
 */
 
 #include "gui.h"
+#include "dirlist.h"
 
 BYTE* __fastcall dialog_find_control(BYTE* self, void* edx_unused, const char* name, int type);
 BYTE* __fastcall dialog_construct(BYTE* self, void* edx_unused, DWORD flag, const char* name);
@@ -88,10 +89,6 @@ BOOL  __fastcall game_FUN_00449c50(BYTE* controls, void* edx_unused, int action,
 void  __fastcall game_FUN_00449e20(BYTE* controls, void* edx_unused, const char* path, int a);
 
 /* The directory lister (dirlist.cpp) at game_main + 0x3338. */
-void  __fastcall game_FUN_0044b160(BYTE* files, void* edx_unused, const char* folder);
-void  __fastcall game_FUN_0044b1b0(BYTE* files, void* edx_unused, const char* pattern, DWORD a);
-BOOL  __fastcall game_FUN_0044b4f0(BYTE* files, void* edx_unused, char* name);
-BOOL  __fastcall game_FUN_0044b460(BYTE* files, void* edx_unused, char* name);
 
 /* The game's settings, by vtable slot of game_main: numbers, texts, and DriverInfo numbers. */
 typedef DWORD (__fastcall* setting_number)(void* game, void* edx_unused, const char* name,
@@ -120,7 +117,7 @@ typedef int  (__fastcall* input_moved)(BYTE* device, void* edx_unused, int input
 #define game_profile    ((char*) game_main + 0x578)
 #define game_session    FIELD(game_main, 0x56C, BYTE*)
 #define session_gui     FIELD(game_session, 0x2C, gui_manager*)
-#define game_files      FIELD(game_main, 0x3338, BYTE*)
+#define game_files      FIELD(game_main, 0x3338, dir_list*)
 #define game_controls   FIELD(game_main, 0x33FC, BYTE*)
 #define controls_device (*(int*) game_controls)
 #define game_joystick   FIELD(game_inputs, 0xC, BYTE*)
@@ -1383,15 +1380,15 @@ void __fastcall restore_fill_profiles(BYTE* self)
     int count = 0;
 
     list_clear(list);
-    game_FUN_0044b160(game_files, NULL, PROFILE_FOLDER);
-    game_FUN_0044b1b0(game_files, NULL, PROFILE_FILES, 0);
+    dir_list_set_folder(game_files, NULL, PROFILE_FOLDER);
+    dir_list_set_pattern(game_files, NULL, PROFILE_FILES, 0);
     VIRTUAL(game_files, 4, method_0)(game_files);
-    game_FUN_0044b4f0(game_files, NULL, name);
+    dir_list_current_title(game_files, NULL, name);
     if (name[0] && game_FUN_0053b910(game_profile, name)) {    /* inlined strcmp in the original */
         list_add_text(list, NULL, name, 0, 0);
         count = 1;
     }
-    while (game_FUN_0044b460(game_files, NULL, name)) {
+    while (dir_list_next_title(game_files, NULL, name)) {
         if (name[0] && game_FUN_0053b910(game_profile, name)) {
             list_add_text(list, NULL, name, 0, 0);
             count++;

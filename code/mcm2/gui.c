@@ -410,7 +410,7 @@ void __fastcall gui_manager_make_background(gui_manager* self)
         return;
     background = game_new(0x74, GUIMANAGER_CPP, 0x2A0);
     if (background)
-        background = game_FUN_00403d80(background, NULL, 1);
+        background = background_construct(background, NULL, 1);
     /* Slot 8, GameObject's set-up: it takes the screen alone. The original pushes the -1 before
        it, but that is object_add_child's. */
     background = VIRTUAL(background, 0x20, void* (__fastcall*)(void*, void*, void*))(

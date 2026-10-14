@@ -7,6 +7,7 @@
 */
 
 #include "menus.h"
+#include "dirlist.h"
 #include <imm.h>
 
 /* The controls and lists these use, ported in ui.c. */
@@ -47,11 +48,7 @@ char* __cdecl   game__strncpy(char* to, const char* from, size_t count);
 char* __cdecl   game_FUN_0054aaa5(int value, char* text, int radix);   /* _itoa */
 
 /* The directory lister (dirlist.cpp) at game_main + 0x3338, and its calls. */
-#define game_files FIELD(game_main, 0x3338, BYTE*)
-void __fastcall game_FUN_0044b160(BYTE* files, void* edx_unused, const char* folder);
-void __fastcall game_FUN_0044b1b0(BYTE* files, void* edx_unused, const char* pattern, DWORD a);
-BOOL __fastcall game_FUN_0044b4f0(BYTE* files, void* edx_unused, char* name);   /* the first */
-BOOL __fastcall game_FUN_0044b460(BYTE* files, void* edx_unused, char* name);   /* the next */
+#define game_files FIELD(game_main, 0x3338, dir_list*)
 
 #define LIST_PROFILES   NAME(0x0056F3E8)    /* "LstProfiles" */
 #define PROFILE_FOLDER  NAME(0x0056F548)    /* "ui\profile" */
@@ -141,13 +138,13 @@ void __fastcall profiles_fill(BYTE* self)
     char name[0x104];
 
     list_clear(list);
-    game_FUN_0044b160(game_files, NULL, PROFILE_FOLDER);
-    game_FUN_0044b1b0(game_files, NULL, PROFILE_FILES, 0);
+    dir_list_set_folder(game_files, NULL, PROFILE_FOLDER);
+    dir_list_set_pattern(game_files, NULL, PROFILE_FILES, 0);
     VIRTUAL(game_files, 4, method_0)(game_files);
-    game_FUN_0044b4f0(game_files, NULL, name);
+    dir_list_current_title(game_files, NULL, name);
     if (name[0])
         list_add_text(list, NULL, name, 0, 0);
-    while (game_FUN_0044b460(game_files, NULL, name)) {
+    while (dir_list_next_title(game_files, NULL, name)) {
         if (name[0])
             list_add_text(list, NULL, name, 0, 0);
     }
@@ -1304,7 +1301,7 @@ void __fastcall players_set(BYTE* self, void* edx_unused, DWORD value)
 int  __fastcall game_FUN_0045d930(BYTE* events);
 void __fastcall game_FUN_004b0f20(BYTE* net, void* edx_unused, DWORD type, void* data, DWORD size,
                                   DWORD to, DWORD flags);
-void __cdecl    game_FUN_004b3610(void);                 /* leave the network game */
+void __cdecl net_leave(void);                 /* leave the network game */
 void __fastcall session_show_cursors(BYTE* self);
 void __fastcall player_clear_c8(BYTE* self);
 void __fastcall dialog_add_timer(BYTE* self, void* edx_unused, DWORD id, DWORD period,
@@ -1331,7 +1328,7 @@ int __fastcall race_start_tick(BYTE* self, void* edx_unused, float seconds)
                 DWORD message[2] = { 0, FIELD(net, 0xC, DWORD) };
 
                 game_FUN_004b0f20(net, NULL, 0xCC, message, sizeof message, message[1], 0);
-                game_FUN_004b3610();
+                net_leave();
             }
             session_show_cursors(game_session);
             go_to(100);
@@ -1878,7 +1875,7 @@ static void race_leave(void)
     if (FIELD(game_main, 0x8, BYTE*)) {
         game_FUN_004b0c00(FIELD(game_main, 0x8, BYTE*), NULL, 1);
         if (FIELD(game_main, 0x2D70, int) == 2) {
-            game_FUN_004b3610();
+            net_leave();
             game_FUN_0045f720(FIELD(game_main, 0x570, BYTE*), NULL, 100);
         } else {
             game_FUN_0045f720(FIELD(game_main, 0x570, BYTE*), NULL, 0x867);
@@ -2088,12 +2085,11 @@ int  __fastcall option_current_index(BYTE* self);
 void __fastcall edit_set_allowed(BYTE* self, void* edx_unused, const char* allowed);
 int  __fastcall list_find_data(BYTE* self, void* edx_unused, DWORD data);
 BOOL __fastcall list_remove(BYTE* self, void* edx_unused, int index);
-void __cdecl    game_FUN_004f7f20(DWORD a, const char* picture, const char* list, DWORD b,
-                                  BYTE* dialog, DWORD append);       /* the kind's tracks */
+void __cdecl tracks_fill(BOOL big, const char* picture_name, const char* list_name, int* chosen, BYTE* dialog, BOOL keep);       /* the kind's tracks */
 
 static void tracks_list(BYTE* self, DWORD append)
 {
-    game_FUN_004f7f20(1, SP_PICTURE, LIST_TEXT_BOX, 0, self, append);
+    tracks_fill(1, SP_PICTURE, LIST_TEXT_BOX, 0, self, append);
 }
 
 /* Out of line, as the original calls them. */
@@ -2452,7 +2448,7 @@ void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
 
 int  __fastcall dialog_show(void* dialog, void* edx_unused, DWORD shown);
 void __fastcall session_hide_scene(BYTE* self);
-void __fastcall game_FUN_004fdaf0(BYTE* page);        /* the rider to be dressed again (0x7F88) */
+void __fastcall rider_mark_changed(BYTE* self);        /* the rider to be dressed again (0x7F88) */
 void __fastcall bike_choose(BYTE* self);        /* the bike chosen */
 
 /* Out of line, as the original calls them. */
@@ -2582,7 +2578,7 @@ void __fastcall sp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
         } else if (event->a == 0x51 && FIELD(self, SP_PAGES + 4, BYTE*)) {
             dialog_notify_controls(FIELD(self, SP_PAGES + 4, BYTE*), NULL, 0);
             choices_fill(FIELD(self, SP_PAGES + 4, BYTE*));
-            game_FUN_004fdaf0(FIELD(self, SP_PAGES + 4, BYTE*));
+            rider_mark_changed(FIELD(self, SP_PAGES + 4, BYTE*));
             bike_choose(FIELD(self, SP_PAGES + 4, BYTE*));
         }
         break;
@@ -2848,7 +2844,6 @@ void __fastcall race_info_handle(BYTE* self, void* edx_unused, ui_event* event)
 #define OK_BUTTON_WORDS NAME(0x0056FF54)     /* "OKButton": OkButton too, names being matched by _stricmp */
 #define profile_asking  FIELD(game_session, 0x4B0, DWORD)
 
-BOOL __fastcall game_FUN_0044b8b0(BYTE* files, void* edx_unused, const char* name);  /* listed */
 void __fastcall profile_defaults(char* self);       /* the profile's defaults */
 void __fastcall profile_load_controls(char* self);
 void __fastcall game_FUN_00449e20(BYTE* controls, void* edx_unused, const char* path, int a);
@@ -2874,7 +2869,7 @@ void __cdecl profile_create(ui_event* event)
     edit_get_text(dialog_find_control(event_dialog(event), NULL, EDIT_BOX, 0), NULL, name, 0x10);
     if (!name[0])
         return;
-    if (game_FUN_0044b8b0(game_files, NULL, name)) {
+    if (dir_list_has(game_files, NULL, name)) {
         BYTE* prompt = dialog_new(0x7F58, 0xCF9, NAME(0x0056F734),            /* messbox2.dtm */
                                   PROFILE_PROMPT_VTABLE);
 
@@ -3020,7 +3015,7 @@ void __fastcall profile_name_handle(BYTE* self, void* edx_unused, ui_event* even
 #define PROVIDER_MODEM  (*(const GUID*) 0x0055BA90)    /* DPSPGUID_MODEM */
 #define game_net        FIELD(game_main, 0x8, BYTE*)
 
-void __cdecl    game_FUN_004b2ae0(const void* from, DWORD* to);
+void __cdecl serial_address(const int* settings, DWORD* address);
 BOOL __fastcall game_FUN_004b0600(BYTE* net, void* edx_unused, GUID provider, const char* address,
                                   const char* b, void* settings, void** data, DWORD* size);
 int  __fastcall game_FUN_004b04e0(BYTE* net, void* edx_unused, void* data, DWORD size, DWORD flags);
@@ -3070,7 +3065,7 @@ void __cdecl result_confirm(int code, ui_event* event)
         go_to(0x68);
         break;
     case 0xD8:
-        game_FUN_004b2ae0(serial_settings, address);    /* a DPCOMPORTADDRESS */
+        serial_address(serial_settings, address);    /* a DPCOMPORTADDRESS */
         if (!game_FUN_004b0600(game_net, NULL, PROVIDER_SERIAL, NO_TEXT, NO_TEXT, address, &data,
                                &size)) {
             end = 0xD;
@@ -3352,13 +3347,12 @@ __declspec(noinline) void __fastcall profile_show(BYTE* self);
 void __fastcall game_FUN_004d8140(BYTE* object);                    /* frees what it holds */
 void __fastcall game_FUN_004a3f30(void* video);                     /* stop the movie */
 /* the network, made if need be */
-int  __cdecl    game_FUN_004b3670(void);
+BOOL __cdecl net_make(void);
 void __stdcall  game_FUN_0053b88e(void* array, size_t size, int count, DWORD construct,
                                   DWORD destruct);                  /* construct an array */
 void __stdcall  game_FUN_0053b7b0(void* array, size_t size, int count, DWORD destruct);
 int  __fastcall game_FUN_004b2420(BYTE* net, void* edx_unused, BYTE* connections, int* count);
 void __fastcall session_quit(BYTE* self);                   /* close the game's window */
-BOOL __fastcall game_FUN_0044b900(BYTE* files, void* edx_unused, const char* folder);  /* delete */
 
 static BOOL service_is(const BYTE* connection, const GUID* service)
 {
@@ -3390,7 +3384,7 @@ static void panel_close(BYTE* self, int panel, int open)
 static void multi_close(BYTE* self)
 {
     panel_close(self, MENU_MULTI, MENU_MULTI_OPEN);
-    game_FUN_004b3610();
+    net_leave();
     session_connecting = 0;
 }
 
@@ -3426,7 +3420,7 @@ static void menu_open(BYTE* self, const ui_event* event)
     profiles_fill(self);
     profile_show(self);
 
-    if (FIELD(game_files, 0x4, int) < 1 || !FIELD(game_session, 0x48C, DWORD)) {
+    if (game_files->count < 1 || !FIELD(game_session, 0x48C, DWORD)) {
         go_to(0xBBA);
     } else if (event->param == 99) {
         gui_manager_open(session_gui, NULL,
@@ -3471,7 +3465,7 @@ static void multi_open(BYTE* self)
     control_enable(dialog_find_control(self, NULL, BUT_CABLE, 1), FALSE);
     control_enable(dialog_find_control(self, NULL, BUT_MODEM, 1), FALSE);
     FIELD(game_main, 0x3170, DWORD) = 0;
-    if (game_FUN_004b3670()) {
+    if (net_make()) {
         game_FUN_0053b88e(connections, CONNECTION_SIZE, CONNECTION_COUNT, CONNECTION_CONSTRUCT,
                           CONNECTION_DESTRUCT);
         game_FUN_004b2420(game_net, NULL, connections[0], &count);
@@ -3607,7 +3601,7 @@ static void menu_click(BYTE* self, ui_event* event)
         if (FIELD(self, MENU_MULTI_OPEN, int)) {
             multi_open(self);
         } else {
-            game_FUN_004b3610();
+            net_leave();
             session_connecting = 0;
         }
     } else if (clicked(event, NAME(0x0056F6BC))                             /* "MenuUserProfile" */
@@ -3690,7 +3684,7 @@ static void profile_remove(BYTE* list)
 
     text_copy_most(name, list_text(list, NULL, profile_removing), PROFILE_LENGTH);
     game_FUN_0053a11f(path, NAME(0x0056C7DC), PROFILE_FOLDER, name);        /* %s\%s */
-    if (game_FUN_0044b900(game_files, NULL, path)) {
+    if (dir_list_remove_folder(game_files, NULL, path)) {
         VIRTUAL(game_files, 4, method_0)(game_files);
         list_remove(list, NULL, profile_removing);
     }
@@ -3955,7 +3949,7 @@ static void bike_rider_open(BYTE* self)
     squared = (float) (dy * dy + dx * dx + dz * dz);
     FIELD(self, BR_DISTANCE, float) = x87_equal(squared, 1.0f) ? 1.0f : game_FUN_00461ac0(squared);
 
-    game_FUN_004fdaf0(self);
+    rider_mark_changed(self);
     bike_choose(self);
     players_set(self, NULL, FIELD(game_main, 0x2144, DWORD));
     game_FUN_0053a27e(game_FUN_004c41d0());
@@ -3978,7 +3972,7 @@ void __fastcall bike_rider_handle(BYTE* self, void* edx_unused, ui_event* event)
         if (clicked(event, LIST_BIKES))
             bike_choose(self);
         else if (clicked(event, LIST_RIDERS))
-            game_FUN_004fdaf0(self);
+            rider_mark_changed(self);
         else if (clicked(event, LIST_ENGINE_SIZE))
             bike_choose(self);
         break;

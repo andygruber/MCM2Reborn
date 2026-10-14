@@ -8,12 +8,13 @@
 */
 
 #include "gui.h"
+#include "dirlist.h"
+#include <float.h>
+#include <shellapi.h>
 
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
 #endif
-#include <float.h>
-#include <shellapi.h>
 
 #define NAME(address) ((const char*) (address))
 #define UIINFO_CPP      NAME(0x0057B8D4)    /* "D:\aardvark\VC\krusty2\uiinfo.cpp" */
@@ -128,7 +129,7 @@ void __stdcall game_FUN_0053b88e(void* array, size_t size, int count, DWORD cons
 void __stdcall game_FUN_0053b7b0(void* array, size_t size, int count, DWORD destruct);
 
 BOOL  __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* text, int size);
-void* __fastcall game_FUN_00402ac0(void* self);                       /* the drive list's */
+drive_list* __fastcall game_FUN_00402ac0(void* self);                 /* the drive list's */
 void  __fastcall game_FUN_004c3060(BYTE* sound, void* edx_unused, DWORD rate, DWORD a,
                                    DWORD bits);
 
@@ -139,14 +140,6 @@ void __fastcall game_FUN_0044a1b0(BYTE* controls);
 void __fastcall game_FUN_00449e20(BYTE* controls, void* edx_unused, const char* path, int a);
 
 /* dirlist.cpp: the drives (8 bytes) and the directory lists. */
-BOOL  __fastcall game_FUN_0044ae00(BYTE* drives);                                   /* list them */
-BOOL  __fastcall game_thunk_FUN_0044ae00(BYTE* drives);                     /* a jump to it */
-void  __fastcall game_FUN_0044af90(BYTE* drives);
-BOOL  __fastcall game_FUN_0044afa0(BYTE* drives, void* edx_unused, const char* label, int* index,
-                                   UINT type);
-BOOL  __fastcall game_FUN_0044b040(BYTE* drives, void* edx_unused, int index, char* root);
-BYTE* __fastcall game_FUN_0044b0c0(BYTE* self);                                     /* 0x21C */
-BYTE* __fastcall game_FUN_0044bab0(BYTE* self);                                     /* 0x424 */
 
 /* The game's file object (308 bytes) on its resources. */
 void* __fastcall game_FUN_00461c80(void* self, void* edx_unused, void* resources);
@@ -230,7 +223,7 @@ char* __fastcall profile_construct(char* self)
         NAME(0x0057B8C4),   /* "Teraform Tag" */
         NAME(0x0056CB5C),   /* "Teraform Enduro" */
     };
-    BYTE* drives;
+    drive_list* drives;
     int i;
 
     game_FUN_0053b88e(self + P_ENTRIES, ENTRY_SIZE, ENTRY_COUNT, ENTRY_CONSTRUCT, ENTRY_DESTRUCT);
@@ -250,17 +243,17 @@ char* __fastcall profile_construct(char* self)
     text_copy(self + P_CD_ROOT, NO_TEXT);
     text_copy(self + P_CD_DRIVE, NO_TEXT);
 
-    FIELD(self, P_DRIVES, BYTE*) = NULL;
+    FIELD(self, P_DRIVES, drive_list*) = NULL;
     drives = game_new(8, UIINFO_CPP, 0x47);
-    FIELD(self, P_DRIVES, BYTE*) = drives = drives ? game_FUN_00402ac0(drives) : NULL;
+    FIELD(self, P_DRIVES, drive_list*) = drives = drives ? game_FUN_00402ac0(drives) : NULL;
     /* Listed even when out of memory (kept). */
-    if (!game_thunk_FUN_0044ae00(drives)) {
-        drives = FIELD(self, P_DRIVES, BYTE*);
+    if (!drives_scan_entry(drives)) {
+        drives = FIELD(self, P_DRIVES, drive_list*);
         if (drives) {
-            game_FUN_0044af90(drives);
+            drives_destruct(drives);
             game_delete(drives);
         }
-        FIELD(self, P_DRIVES, BYTE*) = NULL;
+        FIELD(self, P_DRIVES, drive_list*) = NULL;
     }
 
     for (i = 0; i < 3; i++)
@@ -516,16 +509,16 @@ void __fastcall profile_clear_flags(char* self)
 PORT(0x00528330)
 BOOL __fastcall profile_make_lists(char* self)
 {
-    BYTE* list;
+    void* list;
 
     profile_pick_mode(self, NULL, NULL, (int*) (self + P_DISPLAY));
     list = game_new(0x21C, UIINFO_CPP, 0x17F);
-    FIELD(self, P_LISTS, BYTE*) = list ? game_FUN_0044b0c0(list) : NULL;
+    FIELD(self, P_LISTS, dir_list*) = list ? dir_list_construct(list) : NULL;
     list = game_new(0x424, UIINFO_CPP, 0x180);
-    FIELD(self, P_LISTS + 4, BYTE*) = list ? game_FUN_0044bab0(list) : NULL;
+    FIELD(self, P_LISTS + 4, merged_list*) = list ? merged_list_construct(list) : NULL;
     list = game_new(0x424, UIINFO_CPP, 0x181);
-    FIELD(self, P_LISTS + 8, BYTE*) = list ? game_FUN_0044bab0(list) : NULL;
-    return FIELD(self, P_DRIVES, BYTE*) && FIELD(self, P_LISTS + 4, BYTE*)
+    FIELD(self, P_LISTS + 8, merged_list*) = list ? merged_list_construct(list) : NULL;
+    return FIELD(self, P_DRIVES, drive_list*) && FIELD(self, P_LISTS + 4, BYTE*)
         && FIELD(self, P_LISTS + 8, BYTE*);
 }
 
@@ -851,12 +844,12 @@ BOOL __fastcall profile_find_cd(char* self)
 
     if (FIELD(self, P_INSTALL, int) == 2)
         return TRUE;
-    if (!FIELD(self, P_DRIVES, BYTE*))
+    if (!FIELD(self, P_DRIVES, drive_list*))
         return FALSE;
-    game_FUN_0044ae00(FIELD(self, P_DRIVES, BYTE*));
-    if (!game_FUN_0044afa0(FIELD(self, P_DRIVES, BYTE*), NULL, CD_LABEL, &index, DRIVE_CDROM))
+    drives_scan(FIELD(self, P_DRIVES, drive_list*));
+    if (!drives_find(FIELD(self, P_DRIVES, drive_list*), NULL, CD_LABEL, &index, DRIVE_CDROM))
         return FALSE;
-    if (!game_FUN_0044b040(FIELD(self, P_DRIVES, BYTE*), NULL, index, self + P_CD_DRIVE))
+    if (!drives_root(FIELD(self, P_DRIVES, drive_list*), NULL, index, self + P_CD_DRIVE))
         return FALSE;
     game_FUN_0053a11f(self + P_CD_ROOT, JOINED, self + P_CD_DRIVE, CD_GAME_FOLDER);
     return TRUE;
