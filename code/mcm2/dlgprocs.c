@@ -3819,9 +3819,10 @@ static void live_settings_back(void)
 
 void __fastcall game_FUN_00469cb0(void* object, void* edx_unused, const char* class_name);
 
+/* As the pause does: the race's sounds, under the game's 0x34, stopped. */
 static void live_mute(void)
 {
-    game_FUN_00469cb0(game_main, NULL, RACE_SOUND);
+    game_FUN_00469cb0(FIELD(game_main, 0x34, void*), NULL, RACE_SOUND);
 }
 
 BOOL live_menu_start(void)
