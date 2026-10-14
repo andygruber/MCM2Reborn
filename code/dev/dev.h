@@ -61,9 +61,9 @@ void dev_trace_event(DWORD type, const char* control, const void* dialog);
 
 /*
     The live background ([menus] live_background), in dlgprocs.c. live_menu_start starts it
-    instead of opening the main menu (TRUE when it did); live_menu_takes keeps the race's own
-    dialog from opening (TRUE when it took it); live_menu_tick runs each frame.
+    instead of opening the main menu (TRUE when it did); live_menu_opening sees each dialog
+    opened, for the race's own; live_menu_tick runs each frame.
 */
 BOOL live_menu_start(void);
-BOOL live_menu_takes(BYTE* dialog);
+void live_menu_opening(BYTE* dialog);
 void live_menu_tick(void);

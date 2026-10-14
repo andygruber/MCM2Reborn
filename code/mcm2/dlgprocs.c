@@ -16,6 +16,7 @@
 /* The live background's progress, and its steps that the ported code below calls. */
 enum { LIVE_OFF, LIVE_LOADING, LIVE_READY, LIVE_SHOWN };
 static int live_state;
+static BYTE* live_credits;          /* the demo's credits, closed once the race runs */
 static void live_menu_show(void);
 static BOOL live_menu_leaving(BYTE* menu, ui_event* event);
 #endif
@@ -1851,6 +1852,12 @@ void __fastcall back_restore_handle(BYTE* self, void* edx_unused, ui_event* even
         if (clicked(event, NAME(0x0056F8CC)))                                 /* "Back" */
             dialog_end(self, NULL, 0);
     } else if (event->type == EVENT_CLOSE && !cursors_locked) {
+#ifdef OPENMCM2_DEV
+        if (self == live_credits) {     /* closed for the main menu: the race goes on */
+            live_credits = NULL;
+            return;
+        }
+#endif
         game_FUN_0045ddd0(FIELD(game_main, 0x570, BYTE*), NULL, 2);
         __movsd((unsigned long*) (game_main + 0x2D70), (unsigned long*) (game_main + 0x2F5C), 0x7B);
         __movsd((unsigned long*) (game_main + 0x1550), (unsigned long*) (game_main + 0x15AC), 0x17);
@@ -3777,7 +3784,7 @@ void __fastcall main_menu_handle(BYTE* self, void* edx_unused, ui_event* event)
 
     Started where the main menu would open: the replay's race settings become the game's (those
     there kept, as Back keeps them), and the race loads as any does, behind its loading screen.
-    The credits it would open are dropped, and the main menu opens once the race runs. A button
+    The credits it opens close, the race going on, as the main menu opens once the race runs. A button
     that leaves the main menu stops the race, brings back the plain menus as the credits' Back
     does, and is clicked again on their main menu.
 */
@@ -3811,6 +3818,7 @@ BOOL live_menu_start(void)
         dev_trace("menus", "live background: the replay did not load");
         live_state = LIVE_OFF;
         live_given_up = TRUE;
+        live_credits = NULL;
         settings_restore();
         game_FUN_0045f720(race_events, NULL, 100);
         return TRUE;
@@ -3851,13 +3859,13 @@ BOOL live_menu_start(void)
     return TRUE;
 }
 
-BOOL live_menu_takes(BYTE* dialog)
+void live_menu_opening(BYTE* dialog)
 {
-    if (live_state != LIVE_LOADING || FIELD(dialog, 0, DWORD) != CREDITS_VTABLE)
-        return FALSE;
-    object_destroy(dialog);
-    live_state = LIVE_READY;
-    return TRUE;
+    if (live_state == LIVE_LOADING && FIELD(dialog, 0, DWORD) == CREDITS_VTABLE) {
+        live_credits = dialog;
+        live_state = LIVE_READY;
+        dev_trace("menus", "live background: the race is loaded");
+    }
 }
 
 /* The race runs: the main menu over it. */
@@ -3865,6 +3873,8 @@ static void live_menu_show(void)
 {
     live_state = LIVE_SHOWN;
     live_frames = 0;
+    if (live_credits)
+        dialog_end(live_credits, NULL, 0);
     live_mute();
     session_show_cursors(game_session);
     go_to(100);
@@ -3920,6 +3930,7 @@ static BOOL live_menu_leaving(BYTE* menu, ui_event* event)
     dev_trace("menus", "live background: stopped for %s", control);
     live_state = LIVE_OFF;
     live_skip = TRUE;
+    live_credits = NULL;
 
     dialog_end(menu, NULL, 0);
     event->e = 1;

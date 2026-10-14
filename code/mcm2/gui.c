@@ -313,8 +313,7 @@ BYTE* __fastcall gui_manager_open(gui_manager* self, void* edx_unused, BYTE* dia
 {
     (void) edx_unused;
 #ifdef OPENMCM2_DEV
-    if (live_menu_takes(dialog))
-        return NULL;
+    live_menu_opening(dialog);
 #endif
     if (!(flags & 4) && !(flags & 2)) {
         if (!gui_manager_active_dialog(self) || !FIELD(gui_manager_active_dialog(self), 0x148, int))
