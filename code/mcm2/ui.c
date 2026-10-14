@@ -8627,6 +8627,25 @@ static void reader_info(dialog_reader* r)
         FIELD(self, 0x9C8, float) = 1.0f;
         FIELD(self, 0x9C4, float) = 1.0f;
     }
+#ifdef OPENMCM2_DEV
+    /* NoScale is 1:1 on the 640x480 the menus were made for: in widescreen, the menus' scale. */
+    if (dev_settings.menus_widescreen && !FIELD(self, DLG_SCALED, int)) {
+        int left, top;
+        float scale = menu_fit(object_screen(self), &left, &top);
+
+        FIELD(self, 0x9C4, float) = scale;
+        FIELD(self, 0x9C8, float) = scale;
+    }
+
+    if (dev_settings.trace_display)
+        dev_trace("dialog", "%s: screen %dx%d, made for %dx%d, scaled %d by %d/1000 x %d/1000, "
+                  "area %d,%d-%d,%d", (char*) self + DLG_NAME, FIELD(object_screen(self), 0xC, int),
+                  FIELD(object_screen(self), 0x10, int), FIELD(self, DLG_DESIGN_W, int),
+                  FIELD(self, DLG_DESIGN_H, int), FIELD(self, DLG_SCALED, int),
+                  (int) (FIELD(self, 0x9C4, float) * 1000), (int) (FIELD(self, 0x9C8, float) * 1000),
+                  FIELD(self, DLG_AREA, RECT).left, FIELD(self, DLG_AREA, RECT).top,
+                  FIELD(self, DLG_AREA, RECT).right, FIELD(self, DLG_AREA, RECT).bottom);
+#endif
 
     if (FIELD(self, DLG_POPUP, int)) {
         DWORD align;
