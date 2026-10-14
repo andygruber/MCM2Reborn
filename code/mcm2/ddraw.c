@@ -721,6 +721,11 @@ static HRESULT blit(surface* to, const RECT* to_rect, surface* from, const RECT*
 {
     RECT t = whole_or(to, to_rect), f = whole_or(from, from_rect);
 
+    /* DirectDraw draws nothing from a source rectangle that leaves its surface. */
+    if (f.left < 0 || f.top < 0 || f.left >= f.right || f.top >= f.bottom
+        || f.right > (LONG) from->desc.dwWidth || f.bottom > (LONG) from->desc.dwHeight)
+        return DDERR_INVALIDRECT;
+
     /* The primary is the window: drawing a render target onto it presents it. */
     if (is_primary(to))
     {
