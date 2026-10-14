@@ -326,3 +326,20 @@ typedef struct ui_event {
 } ui_event;
 
 _Static_assert(sizeof(ui_event) == 0x24, "the event is 36 bytes");
+
+/* What an event is (its `type`). */
+enum {
+    EVENT_CLICK = 1,
+    EVENT_SELECT = 2,           /* a list's selection moved; c is the list */
+    EVENT_SLIDE = 3,            /* a slider moved */
+    EVENT_OPEN = 5,
+    EVENT_CLOSE = 6,
+    EVENT_TIMER = 7,
+    EVENT_CHILD_ENDED = 9,      /* a dialog this one opened ended, its code in a */
+    EVENT_EDIT_DONE = 10,
+    EVENT_KEY = 11,
+    EVENT_KEY_UP = 12,
+    EVENT_SLIDE_END = 16,       /* a slider let go */
+    EVENT_SLIDE_HOLD = 17,      /* the pointer rested on a slider */
+    EVENT_EDIT_CHANGED = 19,
+};

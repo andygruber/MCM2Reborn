@@ -23,6 +23,11 @@
 // function's body, so it is excluded by the same test. It is also why a direct-call search found
 // nothing: these are reached through tables, never by a `call rel32` the analyser could follow.
 //
+// The same holds for code that hands a function over rather than storing it: a `push imm32` or a
+// `mov ..., imm32` whose value is a .text address passes a callback - a qsort comparator, an atexit
+// handler - and no data dword ever names it. Those immediates are candidates too, except the
+// exception handler every framed function pushes just after `push -1`.
+//
 // Run with `apply` to create them. Without it the script only reports, so the evidence can be read
 // before the database is written to.
 //
@@ -36,10 +41,12 @@ import java.util.List;
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.lang.OperandType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.scalar.Scalar;
 
 public class FindFuncs extends GhidraScript {
 
@@ -48,6 +55,18 @@ public class FindFuncs extends GhidraScript {
     void say(String s) {
         println(s);
         out.append(s).append('\n');
+    }
+
+    /* A `push -1` among the three instructions before this one. */
+    static boolean followsPushMinusOne(Instruction insn) {
+        Instruction before = insn.getPrevious();
+        for (int i = 0; i < 3 && before != null; i++, before = before.getPrevious()) {
+            if (before.getMnemonicString().equalsIgnoreCase("PUSH") && before.getScalar(0) != null
+                    && before.getScalar(0).getSignedValue() == -1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -90,6 +109,33 @@ public class FindFuncs extends GhidraScript {
                 }
             }
         }
+        // ---- every push or mov of an immediate that is a .text address ----
+        long immediates = 0;
+        for (Instruction insn : listing.getInstructions(text.getStart(), true)) {
+            String m = insn.getMnemonicString();
+            if (!m.equalsIgnoreCase("PUSH") && !m.equalsIgnoreCase("MOV")) {
+                continue;
+            }
+            // `push -1; push handler` opens every function with an exception frame, sometimes
+            // with a scheduled instruction between: that handler is the compiler's unwind code,
+            // not a callback.
+            if (m.equalsIgnoreCase("PUSH") && followsPushMinusOne(insn)) {
+                continue;
+            }
+            for (int i = 0; i < insn.getNumOperands(); i++) {
+                Scalar s = insn.getScalar(i);
+                if (s == null || (insn.getOperandType(i) & OperandType.SCALAR) == 0) {
+                    continue;   // a memory operand's displacement is an address read, not passed
+                }
+                long v = s.getUnsignedValue();
+                if (v >= tlo && v <= thi) {
+                    candidates.add(v);
+                    immediates++;
+                }
+            }
+        }
+        say(String.format("immediates into .text     : %d", immediates));
+
         Collections.sort(candidates);
         List<Long> uniq = new ArrayList<>();
         long prev = -1;

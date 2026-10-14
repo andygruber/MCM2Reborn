@@ -28,13 +28,6 @@
 #define lobby_y    (*(vector3*) 0x006825A0)
 #define lobby_z    (*(vector3*) 0x00682540)
 
-static void set_vector(vector3* v, float x, float y, float z)
-{
-    v->x = x;
-    v->y = y;
-    v->z = z;
-}
-
 /* Out of line, so the entries below stay jumps to them as in the original. */
 __declspec(noinline) void __cdecl lobby_init_zero(void);
 __declspec(noinline) void __cdecl lobby_init_x(void);

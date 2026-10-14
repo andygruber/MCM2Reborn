@@ -57,13 +57,13 @@ void  __fastcall edit_bind(BYTE* self, void* edx_unused, char* buffer, int size)
 int   __cdecl    game_FUN_0053b6e0(const char* a, const char* b);               /* _stricmp */
 int   __cdecl    game_FUN_0054cd80(const char* a, const char* b, size_t count); /* strncmp */
 int   __cdecl    game_FUN_0053a11f(char* to, const char* format, ...);          /* sprintf */
-void  __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* text, int size);
+BOOL  __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* text, int size);
 BOOL  __fastcall game_FUN_00527300(BYTE* game);                 /* no Restore button */
-void  __fastcall game_FUN_00527a70(char* profile);              /* the profile's defaults */
-void  __fastcall game_FUN_00528630(char* profile);
-void  __fastcall game_FUN_00528bb0(char* profile);
-void  __fastcall game_FUN_00528820(char* profile);              /* save (dlgprocs) / load it */
-void  __fastcall game_FUN_00529380(char* profile, void* edx_unused, const char* topic, DWORD a);
+void __fastcall profile_defaults(char* self);              /* the profile's defaults */
+void __fastcall profile_load_controls(char* self);
+void __fastcall profile_save(char* self);
+BOOL __fastcall profile_load(char* self);              /* save (dlgprocs) / load it */
+BOOL __fastcall profile_open_help(char* self, void* edx_unused, const char* topic, const char* parameters);
 
 /* The sound system: a sound's volume, play and stop, and loading a bank. */
 void  __fastcall game_FUN_004c1330(void* sound, void* edx_unused, DWORD volume, DWORD a);
@@ -110,12 +110,6 @@ typedef void (__fastcall* control_bind)(BYTE* control, void* edx_unused, void* v
 typedef void (__fastcall* list_moved)(BYTE* list, void* edx_unused, int* done);
 typedef int  (__fastcall* input_moved)(BYTE* device, void* edx_unused, int input, DWORD mask,
                                        DWORD a);
-
-enum {
-    EVENT_CLICK = 1, EVENT_SELECT = 2, EVENT_SLIDE = 3, EVENT_OPEN = 5, EVENT_CLOSE = 6,
-    EVENT_TIMER = 7, EVENT_CHILD_ENDED = 9, EVENT_KEY = 11, EVENT_KEY_UP = 12,
-    EVENT_SLIDE_END = 16, EVENT_SLIDE_HOLD = 17,
-};
 
 #define NAME(address) ((const char*) (address))
 #define OPTIONPROCS_CPP NAME(0x005756BC)    /* "D:\aardvark\VC\krusty2\OptionProcs.cpp" */
@@ -516,7 +510,7 @@ void __fastcall advanced_graphics_handle(BYTE* self, void* edx_unused, ui_event*
             setting_set(USE_LAST_CONTROLLER, !option_current_index((BYTE*) event->c));
             setting_set(PRESET_SELECTED, 0);
         } else if (named(event, HELP)) {
-            game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
+            profile_open_help(game_profile, NULL, HELP_TOPIC, 0);
         }
         break;
     case EVENT_OPEN:
@@ -1306,7 +1300,7 @@ static void options_click(BYTE* self, ui_event* event)
         box_open(event->manager, self,
                  dialog_new(0x7F58, 0x3B5, NAME(0x005756B0), (void*) 0x0055A898)); /* GlobSet.dtm */
     } else if (named(event, HELP)) {
-        game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
+        profile_open_help(game_profile, NULL, HELP_TOPIC, 0);
     } else if (named(event, NAME(0x005756A4))) {                                    /* Advanced */
         if (pages[1])
             dialog_notify_controls(pages[1], NULL, 1);
@@ -1426,20 +1420,20 @@ static void restore_apply(BYTE* self)
 
     text_copy(own, game_profile);
     if (from == 1) {
-        game_FUN_00527a70(game_profile);
+        profile_defaults(game_profile);
         /* ui\preset.ctl */
         game_FUN_0053a11f(preset, NAME(0x0056C7DC), NAME(0x0056FE48), NAME(0x0056FE4C));
         game_FUN_0053a11f(controls, PATH_3, PROFILE_FOLDER, own, CONTROL_FILE);
         CopyFileA(preset, controls, FALSE);
-        game_FUN_00528630(game_profile);
-        game_FUN_00528bb0(game_profile);
+        profile_load_controls(game_profile);
+        profile_save(game_profile);
         game_FUN_00449e20(game_controls, NULL, controls, -1);
     } else if (from == 2) {
         BYTE* list = find(self, LIST_PROFILES, 3);
         int index = list_selected(list);
 
         text_copy(game_profile, FIELD(FIELD(list, 0x214, BYTE*) + index * 0x38, 0x14, const char*));
-        game_FUN_00528820(game_profile);
+        profile_load(game_profile);
     }
     text_copy(game_profile, own);
     dialog_end(self, NULL, 0x51);
