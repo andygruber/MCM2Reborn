@@ -36,16 +36,14 @@ BOOL __fastcall pcgame_display_start(BYTE* self)
     int height = 480;
 
 #ifdef OPENMCM2_DEV
-    /* The widescreen menus start in the races' mode, once the options have chosen one. */
+    /*
+        The widescreen menus come up at the desktop's size, which the display always offers:
+        the profile, and so the options' mode, is not loaded yet, and switching later would leave
+        the background and the dialogs made for the old size.
+    */
     if (dev_settings.menus_widescreen) {
-        BYTE* modes = FIELD(FIELD(self, PCGAME_CARD, BYTE*), 0x10, BYTE*);
-        int chosen = FIELD(self, 0xFC4, int);
-
-        if (modes && chosen >= 0 && chosen < FIELD(FIELD(self, PCGAME_CARD, BYTE*), 0x8, int)
-            && FIELD(modes + chosen * 0x24, 0, int) >= 640) {
-            width = FIELD(modes + chosen * 0x24, 0, int);
-            height = FIELD(modes + chosen * 0x24, 4, int);
-        }
+        width = GetSystemMetrics(SM_CXSCREEN);
+        height = GetSystemMetrics(SM_CYSCREEN);
     }
 #endif
     GetWindowRect(FIELD(self, PCGAME_WINDOW, HWND), &FIELD(self, PCGAME_WINDOW_AT, RECT));

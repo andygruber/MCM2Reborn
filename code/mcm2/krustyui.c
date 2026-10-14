@@ -144,7 +144,6 @@ gui_manager* __fastcall gui_manager_setup(gui_manager* self, void* edx_unused, v
                                           void* font_object, const char* name, short font_size,
                                           const char* cursor_image, int c);
 void  __fastcall gui_manager_make_background(gui_manager* self);
-void  __fastcall gui_manager_drop_background(gui_manager* self);
 void  __fastcall gui_manager_set_folder(gui_manager* self, void* edx_unused, const char* folder);
 void  __fastcall gui_manager_set_wait_image(gui_manager* self, void* edx_unused, const char* image);
 void  __fastcall gui_manager_show_cursors(gui_manager* self, void* edx_unused, BOOL show);
@@ -713,31 +712,6 @@ static void screen_open(BYTE* self, BYTE* dialog, int id, DWORD flags, BOOL over
     gui_manager_open(session_gui(self), NULL, dialog, id, flags, 0, parent, 0, 0, 1);
 }
 
-#ifdef OPENMCM2_DEV
-/*
-    Widescreen menus: the display put in the profile's mode (0x578 + 0xA4C, game_main + 0xFC4)
-    as the main menu opens, as the game itself does coming back from a race. The profile is not
-    loaded yet when the display first comes up, so that is still 640x480.
-*/
-static void menus_take_profile_mode(BYTE* self)
-{
-    BYTE* card = FIELD(game_main, 0xC, BYTE*);
-    int chosen = FIELD(game_main, 0xFC4, int);
-
-    if (!dev_settings.menus_widescreen || !card || chosen < 0 || chosen >= FIELD(card, 0x8, int)
-        || chosen == FIELD(card, 0xC, int))
-        return;
-    /* The background's copy is the old mode's size. It is remade, not replaced: the dialog
-       closing still holds the background, so freeing it would leave that dangling. */
-    dev_trace("display", "menus to the profile's mode %d", chosen);
-    if (session_gui(self)->background)
-        background_release_dc(session_gui(self)->background);
-    VIRTUAL(game_main, 0x4C, method_1)(game_main, NULL, chosen);
-    if (session_gui(self)->background)
-        background_resize(session_gui(self)->background);
-}
-#endif
-
 /* The menus' screen numbered `screen`: the bases, their pop-ups and the message boxes. */
 PORT(0x0049AAA0)
 void __fastcall session_go_to(BYTE* self, void* edx_unused, int screen)
@@ -748,8 +722,6 @@ void __fastcall session_go_to(BYTE* self, void* edx_unused, int screen)
 #ifdef OPENMCM2_DEV
     if (dev_settings.trace_screens)
         dev_trace("screen", "go to %d (0x%X)", screen, screen);
-    if (screen == 100)
-        menus_take_profile_mode(self);
 #endif
     if (screen == 0xD0)
         session_before_d0(self) = session_showing(self);

@@ -319,39 +319,6 @@ failed:
     return NULL;
 }
 
-#ifdef OPENMCM2_DEV
-/*
-    The widescreen menus' mode switch: the copy made again at the new screen's size, and the
-    background drawn whole. The object stays, so the dialogs that hold it keep a live one.
-*/
-void __fastcall background_resize(BYTE* self)
-{
-    BYTE desc[DESC_SIZE];
-    void* copy = FIELD(self, BG_COPY, void*);
-    void* back;
-    void* ddraw;
-
-    background_release_dc(self);
-    object_screen(self) = FIELD(game_main, 0x10, BYTE*);      /* the screen the switch made */
-    back = FIELD(object_screen(self), SCREEN_SURFACE, void*);
-    ddraw = FIELD(FIELD(object_screen(self), SCREEN_VIDEO, BYTE*), 0x190, void*);
-    if (copy) {
-        VIRTUAL(copy, 0x08, com_release)(copy);
-        FIELD(self, BG_COPY, void*) = NULL;
-    }
-    __stosd((unsigned long*) desc, 0, DESC_SIZE / 4);
-    FIELD(desc, 0, DWORD) = DESC_SIZE;
-    FIELD(desc, DESC_FLAGS, DWORD) = DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT;
-    if (VIRTUAL(back, 0x58, surface_get_desc)(back, desc))
-        return;
-    FIELD(desc, DESC_FLAGS, DWORD) = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT;
-    FIELD(desc, DESC_CAPS, DWORD) = DDSCAPS_SYSTEMMEMORY | DDSCAPS_OWNDC;
-    VIRTUAL(ddraw, 0x18, ddraw_create_surface)(ddraw, desc, &FIELD(self, BG_COPY, void*), NULL);
-    FIELD(self, BG_COPY_LIVE, DWORD) = 0;
-    background_invalidate(self);
-}
-#endif
-
 PORT(0x00404050)
 void __fastcall background_destruct(BYTE* self)
 {

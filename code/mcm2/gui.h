@@ -235,9 +235,6 @@ int   __fastcall background_get_dc(BYTE* self, void* edx_unused, HDC* dc, RECT* 
 int   __fastcall background_release_dc(BYTE* self);
 void  __fastcall background_slot_clear(BYTE* self, void* edx_unused, int slot);
 void  __fastcall background_invalidate(BYTE* self);
-#ifdef OPENMCM2_DEV
-void  __fastcall background_resize(BYTE* self);         /* the widescreen menus' mode switch */
-#endif
 
 /* The screen's own draw: vtable slot 3 of object_screen(). */
 typedef int (__fastcall* screen_draw)(void* screen, void* edx_unused, RECT* area, void* picture,
