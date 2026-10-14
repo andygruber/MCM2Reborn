@@ -680,6 +680,42 @@ static void file_delete(void* file)
     `file`, or after the dialog without its extension), or failing that from the resources. With
     a user that has no pointing device, the first control gets focus. NULL when it cannot load.
 */
+#ifdef OPENMCM2_DEV
+/*
+    The modern menus: the "modern" folder inside `folder` when it has this dialog's layout -
+    its resources (name.dat) or a loose layout (name.dtm) - else `folder` itself.
+*/
+static BOOL file_exists(const char* path)
+{
+    WIN32_FIND_DATAA found;
+    HANDLE search = FindFirstFileA(path, &found);
+
+    if (search == INVALID_HANDLE_VALUE)
+        return FALSE;
+    FindClose(search);
+    return TRUE;
+}
+
+static const char* modern_folder(const char* folder, const char* dialog_name, char* modern)
+{
+    char path[0x100];
+    const char* dot = game__strrchr(dialog_name, '.');
+    int length = dot ? (int) (dot - dialog_name) : (int) text_length(dialog_name);
+
+    if (!dev_settings.menus_modern || !folder || !dialog_name[0])
+        return folder;
+    game_FUN_0053a11f(modern, "%smodern\\", folder);
+    game_FUN_0053a11f(path, "%s%.*s.dat", modern, length, dialog_name);
+    if (!file_exists(path)) {
+        game_FUN_0053a11f(path, PATH_FORMAT, modern, dialog_name);
+        if (!file_exists(path))
+            return folder;
+    }
+    dev_trace("menus", "%s from %s", dialog_name, modern);
+    return modern;
+}
+#endif
+
 PORT(0x0046B230)
 BYTE* __fastcall dialog_open(BYTE* self, void* edx_unused, void* screen, const RECT* area, DWORD a,
                              DWORD flags, void* font_object, DWORD b, const char* folder,
@@ -749,6 +785,11 @@ BYTE* __fastcall dialog_open(BYTE* self, void* edx_unused, void* screen, const R
     event.manager = FIELD(self, DLG_MANAGER, gui_manager*);
     VIRTUAL(self, 0x74, dialog_handle)(self, NULL, &event);
 
+#ifdef OPENMCM2_DEV
+    char modern[0x100];
+
+    folder = modern_folder(folder, dialog_name, modern);
+#endif
     if (dialog_name[0]) {
         char* dot = game__strrchr(dialog_name, '.');
         void* data;

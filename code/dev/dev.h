@@ -18,6 +18,9 @@
                           (experimental: the start of the modern menus)
         fill_sides=1      a picture narrower than the screen, such as the 640x480 menus, gets
                           a blurred, darkened copy of itself behind its side bars
+        modern=1          the modern menus: widescreen, and each screen's layout taken from the
+                          folder's modern\ when one is there (ui\modern\mainmenu.dat, or a loose
+                          mainmenu.dtm), else the original's, scaled
 
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider
@@ -37,6 +40,7 @@ typedef struct dev_switches {
     BOOL trace_display;
     BOOL menus_widescreen;
     BOOL menus_fill_sides;
+    BOOL menus_modern;
     BOOL fix_last_pick;
 } dev_switches;
 
