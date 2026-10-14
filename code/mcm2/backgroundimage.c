@@ -17,6 +17,10 @@
 
 #include "gui.h"
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 #define BACKGROUNDIMAGE_CPP ((const char*) 0x0056C978)  /* "...\BackgroundImage.cpp" */
 #define BACKGROUND_VTABLE   ((void**) 0x005556D8)
 
@@ -241,6 +245,22 @@ int __fastcall background_draw_picture(BYTE* self)
         whole.top = 0;
         whole.right = FIELD(picture, 0x14, LONG);
         whole.bottom = FIELD(picture, 0x18, LONG);
+#ifdef OPENMCM2_DEV
+        /* The widescreen menus' backdrop covers the screen, centred, its overhang cut off. */
+        if (dev_settings.menus_widescreen && whole.right > 0 && whole.bottom > 0) {
+            LONG width = FIELD(object_screen(self), SCREEN_WIDTH, LONG);
+            LONG height = FIELD(object_screen(self), SCREEN_HEIGHT, LONG);
+            LONG fit_w = width;
+            LONG fit_h = width * whole.bottom / whole.right;
+
+            if (fit_h < height) {
+                fit_h = height;
+                fit_w = height * whole.right / whole.bottom;
+            }
+            SetRect(&whole, (width - fit_w) / 2, (height - fit_h) / 2, (width + fit_w) / 2,
+                    (height + fit_h) / 2);
+        }
+#endif
         background_draw(self, NULL, picture, &whole, NULL, DDBLT_WAIT,
                         FIELD(self, BG_PICTURE_SLOT, int), FIELD(self, BG_PICTURE_DRAWN, DWORD),
                         &FIELD(self, BG_PICTURE_PASSES, int), 0);
