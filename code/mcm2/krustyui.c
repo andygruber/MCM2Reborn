@@ -729,6 +729,10 @@ void __fastcall session_go_to(BYTE* self, void* edx_unused, int screen)
 
     switch (screen) {
     case 100:
+#ifdef OPENMCM2_DEV
+        if (live_menu_start())
+            break;
+#endif
         screen_open(self, dialog_new(0x7F80, 0x2B8, MAIN_MENU, 0x0055A070), screen, 2, FALSE);
         game_FUN_00469760(game_main);
         break;

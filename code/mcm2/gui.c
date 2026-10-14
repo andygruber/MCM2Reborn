@@ -13,6 +13,10 @@
 #include "gui.h"
 #include <imm.h>
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 /* Two strings, equal: the game inlines strcmp() == 0 like this. */
 static BOOL text_equal(const char* a, const char* b)
 {
@@ -178,6 +182,9 @@ int __fastcall gui_manager_tick(gui_manager* self, void* edx_unused, DWORD time)
 
     (void) edx_unused;
     game_vf_10_46A300(self, NULL, time);
+#ifdef OPENMCM2_DEV
+    live_menu_tick();
+#endif
     if (self->busy) {
         self->busy = 0;
         game_vf_28_483430(self);
@@ -305,6 +312,10 @@ BYTE* __fastcall gui_manager_open(gui_manager* self, void* edx_unused, BYTE* dia
                                   DWORD wait)
 {
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (live_menu_takes(dialog))
+        return NULL;
+#endif
     if (!(flags & 4) && !(flags & 2)) {
         if (!gui_manager_active_dialog(self) || !FIELD(gui_manager_active_dialog(self), 0x148, int))
             gui_manager_drop_backdrop(self);

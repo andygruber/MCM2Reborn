@@ -21,6 +21,9 @@
         modern=1          the modern menus: widescreen, and each screen's layout taken from the
                           folder's modern\ when one is there (ui\modern\mainmenu.dat, or a loose
                           mainmenu.dtm), else the original's, scaled
+        live_background=1 the main menu over a replay of ui\demo.rpl, its sound off, looping;
+                          a button that leaves the main menu stops it and goes on in the
+                          plain menus (a first version)
 
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider
@@ -41,6 +44,7 @@ typedef struct dev_switches {
     BOOL menus_widescreen;
     BOOL menus_fill_sides;
     BOOL menus_modern;
+    BOOL menus_live;
     BOOL fix_last_pick;
 } dev_switches;
 
@@ -54,3 +58,12 @@ void dev_trace(const char* area, const char* fmt, ...);
 
 /* An event a control is about to send its dialog (when events are traced). */
 void dev_trace_event(DWORD type, const char* control, const void* dialog);
+
+/*
+    The live background ([menus] live_background), in dlgprocs.c. live_menu_start starts it
+    instead of opening the main menu (TRUE when it did); live_menu_takes keeps the race's own
+    dialog from opening (TRUE when it took it); live_menu_tick runs each frame.
+*/
+BOOL live_menu_start(void);
+BOOL live_menu_takes(BYTE* dialog);
+void live_menu_tick(void);

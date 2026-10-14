@@ -29,15 +29,17 @@ void dev_install(void)
         dev_settings.menus_widescreen = read_switch(read, "menus", "widescreen");
         dev_settings.menus_fill_sides = read_switch(read, "menus", "fill_sides");
         dev_settings.menus_modern = read_switch(read, "menus", "modern");
+        dev_settings.menus_live = read_switch(read, "menus", "live_background");
         /* The modern menus are drawn at the screen's size. */
         dev_settings.menus_widescreen |= dev_settings.menus_modern;
         dev_settings.fix_last_pick = read_switch(read, "fixes", "last_pick");
     }
     log_line("dev build: trace screens %d, events %d, files %d, display %d; "
-             "menus widescreen %d, fill sides %d, modern %d; fixes: last pick %d",
+             "menus widescreen %d, fill sides %d, modern %d, live %d; fixes: last pick %d",
              dev_settings.trace_screens, dev_settings.trace_events, dev_settings.trace_files,
              dev_settings.trace_display, dev_settings.menus_widescreen,
-             dev_settings.menus_fill_sides, dev_settings.menus_modern, dev_settings.fix_last_pick);
+             dev_settings.menus_fill_sides, dev_settings.menus_modern, dev_settings.menus_live,
+             dev_settings.fix_last_pick);
 }
 
 void dev_trace(const char* area, const char* fmt, ...)

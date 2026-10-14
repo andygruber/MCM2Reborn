@@ -10,6 +10,16 @@
 #include "dirlist.h"
 #include <imm.h>
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+
+/* The live background's progress, and its steps that the ported code below calls. */
+enum { LIVE_OFF, LIVE_LOADING, LIVE_READY, LIVE_SHOWN };
+static int live_state;
+static void live_menu_show(void);
+static BOOL live_menu_leaving(BYTE* menu, ui_event* event);
+#endif
+
 /* The controls and lists these use, ported in ui.c. */
 BYTE*       __fastcall dialog_find_control(BYTE* self, void* edx_unused, const char* name,
                                            int type);
@@ -1424,6 +1434,10 @@ void __fastcall loading_handle(BYTE* self, void* edx_unused, ui_event* event)
                     game_FUN_004e6c70(FIELD(game_main, 0x568, BYTE*));
             }
             game_FUN_0045e280(FIELD(game_main, 0x570, BYTE*));
+#ifdef OPENMCM2_DEV
+            if (live_state == LIVE_READY)
+                live_menu_show();
+#endif
         }
         loading_ticks++;
     }
@@ -2033,6 +2047,10 @@ void __cdecl race_start_loading(void)
 
     FIELD(game_session, 0x4AC, DWORD) = 1;
     FIELD(game_session, 0x4A8, DWORD) = 0;
+#ifdef OPENMCM2_DEV
+    if (live_state == LIVE_LOADING)
+        FIELD(game_session, 0x4A8, DWORD) = 1;
+#endif
     session_drop_scene(game_session);
     gui_manager_drop_background(session_gui);
     if (FIELD(FIELD(game_main, 0xC, BYTE*), 0x6C, int))
@@ -2058,6 +2076,9 @@ void __cdecl race_start_loading(void)
     FIELD(game_session, 0x494, HIMC) = ImmAssociateContext(game_window, NULL);
     if (session_gui->background)
         background_release_dc(session_gui->background);
+#ifdef OPENMCM2_DEV
+    if (live_state != LIVE_LOADING)             /* the flyby stays in the menus' mode */
+#endif
     if (FIELD(game_main, 0xFC4, DWORD) != FIELD(FIELD(game_main, 0xC, BYTE*), 0xC, DWORD))
         VIRTUAL(game_main, 0x4C, method_1)(game_main, NULL, FIELD(game_main, 0xFC4, DWORD));
     if (race_mode == GHOST_RACE) {
@@ -3581,6 +3602,10 @@ static void user_panel_after_profile(BYTE* self)
 
 static void menu_click(BYTE* self, ui_event* event)
 {
+#ifdef OPENMCM2_DEV
+    if (live_menu_leaving(self, event))
+        return;
+#endif
     if (clicked(event, NAME(0x0056F708))) {                                 /* "MenuSingle" */
         panel_toggle(self, MENU_SINGLE, MENU_SINGLE_OPEN);
         FIELD(self, MENU_MOVIE_READY, DWORD) = 1;
@@ -3743,6 +3768,178 @@ void __fastcall main_menu_handle(BYTE* self, void* edx_unused, ui_event* event)
         break;
     }
 }
+
+#ifdef OPENMCM2_DEV
+/*
+    The live background: the main menu over a race of ui\demo.rpl. The race setup has a demo of
+    its own, unused - that replay with the credits over it - and this is it with the main menu in
+    the credits' place. Its race sound is off and it goes back to the start before it ends.
+
+    Started where the main menu would open: the replay's race settings become the game's (those
+    there kept, as Back keeps them), and the race loads as any does, behind its loading screen.
+    The credits it would open are dropped, and the main menu opens once the race runs. A button
+    that leaves the main menu stops the race, brings back the plain menus as the credits' Back
+    does, and is clicked again on their main menu.
+*/
+#define DEMO_REPLAY     NAME(0x0056DCA4)    /* "ui\demo.rpl" */
+#define RACE_SOUND      NAME(0x0057B88C)    /* "RaceSound" */
+#define CREDITS_VTABLE  0x00555ED0          /* the demo's credits */
+#define MAIN_MENU_VTABLE 0x0055A070
+#define REPLAY_TIME     0x1B8               /* the race's: where the replay is (float) */
+#define REPLAY_SEEK     0x1C4               /* where to go (float), -1 when not going */
+#define replay_length(race) FIELD(FIELD(race, 0x1A0, BYTE*), 0x10C, float)
+
+static BOOL live_given_up;                  /* it would not load: the plain menus from now */
+static BOOL live_skip;                      /* the next main menu is a plain one */
+static int  live_frames;
+
+void __fastcall game_FUN_00469cb0(void* object, void* edx_unused, const char* class_name);
+
+static void live_mute(void)
+{
+    game_FUN_00469cb0(game_main, NULL, RACE_SOUND);
+}
+
+BOOL live_menu_start(void)
+{
+    BYTE record[RECORD_SIZE];
+    void* file;
+    int i;
+
+    if (live_state == LIVE_LOADING || live_state == LIVE_READY) {
+        /* The race did not load, and the loading screen came back here. */
+        dev_trace("menus", "live background: the replay did not load");
+        live_state = LIVE_OFF;
+        live_given_up = TRUE;
+        settings_restore();
+        game_FUN_0045f720(race_events, NULL, 100);
+        return TRUE;
+    }
+    if (live_skip) {
+        live_skip = FALSE;
+        return FALSE;
+    }
+    if (!dev_settings.menus_live || live_given_up || live_state != LIVE_OFF
+        || FIELD(game_main, 0x8, BYTE*) || FIELD(game_main, 0x18, int) != 1)
+        return FALSE;
+
+    for (i = 0; i < 8; i++) {           /* the record's member constructors */
+        FIELD(record, 0x180 + i * 8, DWORD) = 0;
+        record[0x184 + i * 8] = 0;
+    }
+    file = game_FUN_0053a35b(DEMO_REPLAY, NAME(0x0056C66C));                  /* "rb" */
+    if (!file) {
+        live_given_up = TRUE;
+        return FALSE;
+    }
+    i = (int) game_FUN_0053a5d5(record, RECORD_SIZE, 1, file);
+    game_FUN_0053a2ad(file);
+    if (!i) {
+        live_given_up = TRUE;
+        return FALSE;
+    }
+
+    settings_save();
+    __movsd((unsigned long*) race_settings, (unsigned long*) (record + 0x34), 0x7B);
+    FIELD(game_main, 0x3428, DWORD) = 1;
+    FIELD(game_main, 0x342C, DWORD) = 1;
+    FIELD(game_main, 0x1550, DWORD) = FIELD(record, 0x33C, DWORD);
+    FIELD(game_main, 0x1554, DWORD) = FIELD(record, 0x340, DWORD);
+    live_state = LIVE_LOADING;
+    dev_trace("menus", "live background: loading %s, event kind %d", DEMO_REPLAY, race_kind);
+    race_start_loading();
+    return TRUE;
+}
+
+BOOL live_menu_takes(BYTE* dialog)
+{
+    if (live_state != LIVE_LOADING || FIELD(dialog, 0, DWORD) != CREDITS_VTABLE)
+        return FALSE;
+    object_destroy(dialog);
+    live_state = LIVE_READY;
+    return TRUE;
+}
+
+/* The race runs: the main menu over it. */
+static void live_menu_show(void)
+{
+    live_state = LIVE_SHOWN;
+    live_frames = 0;
+    live_mute();
+    session_show_cursors(game_session);
+    go_to(100);
+    dev_trace("menus", "live background: running");
+}
+
+void live_menu_tick(void)
+{
+    BYTE* race;
+
+    if (live_state != LIVE_SHOWN || !race_events)
+        return;
+    race = game_FUN_0045e300(race_events);
+    if (!race) {                        /* it ended some other way */
+        live_state = LIVE_OFF;
+        return;
+    }
+    if (++live_frames % 30 == 0)        /* sounds the race makes later */
+        live_mute();
+    if (FIELD(race, REPLAY_SEEK, float) < 0.0f && replay_length(race) > 2.0f
+        && FIELD(race, REPLAY_TIME, float) > replay_length(race) - 1.0f)
+        FIELD(race, REPLAY_SEEK, float) = 0.0f;
+}
+
+/* The main menu's buttons that stay on it: the panels, the help and quitting. */
+static BOOL live_click_stays(const ui_event* event)
+{
+    static const char* const staying[] = {
+        NAME(0x0056F708),               /* "MenuSingle" */
+        NAME(0x0056F6FC),               /* "MenuMulti" */
+        NAME(0x0056F6BC),               /* "MenuUserProfile" */
+        NAME(0x0056F6A8),               /* "ButCancelProfile" */
+        NAME(0x0056F56C),               /* "MenuHelp" */
+        NAME(0x0056F554),               /* "MenuExit" */
+    };
+    int i;
+
+    for (i = 0; i < (int) (sizeof staying / sizeof *staying); i++)
+        if (clicked(event, staying[i]))
+            return TRUE;
+    return FALSE;
+}
+
+static BOOL live_menu_leaving(BYTE* menu, ui_event* event)
+{
+    char control[0x40];
+    ui_event again;
+    BYTE* plain;
+
+    if (live_state != LIVE_SHOWN || live_click_stays(event))
+        return FALSE;
+    text_copy_most(control, (const char*) event->b, sizeof control - 1);
+    dev_trace("menus", "live background: stopped for %s", control);
+    live_state = LIVE_OFF;
+    live_skip = TRUE;
+
+    dialog_end(menu, NULL, 0);
+    event->e = 1;
+    settings_restore();
+    game_FUN_0045ddd0(race_events, NULL, 2);
+    game_FUN_0045f720(race_events, NULL, 100);
+    gui_manager_show_cursors(session_gui, NULL, TRUE);
+
+    plain = gui_manager_active_dialog(session_gui);
+    if (plain && FIELD(plain, 0, DWORD) == MAIN_MENU_VTABLE) {
+        again = *event;
+        again.c = 0;                    /* the control was the old menu's */
+        again.e = 0;
+        again.b = (DWORD) control;
+        again.sender = plain;
+        main_menu_handle(plain, NULL, &again);
+    }
+    return TRUE;
+}
+#endif
 
 /* ---- Numbers ---- */
 
