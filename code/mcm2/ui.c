@@ -8678,6 +8678,19 @@ static void reader_info(dialog_reader* r)
         FIELD(self, 0x9C8, float) = scale;
     }
 
+    /* A screen made wider than 4:3 (the modern menus' 1920x1080) is its own area, centred. */
+    if (dev_settings.menus_widescreen && FIELD(self, DLG_SCALED, int) && !FIELD(self, DLG_POPUP, int)
+        && FIELD(self, DLG_DESIGN_W, int) * 3 > FIELD(self, DLG_DESIGN_H, int) * 4) {
+        RECT* area = &FIELD(self, DLG_AREA, RECT);
+        int across = (int) (FIELD(self, DLG_DESIGN_W, int) * FIELD(self, 0x9C4, float));
+        int down = (int) (FIELD(self, DLG_DESIGN_H, int) * FIELD(self, 0x9C8, float));
+
+        area->left = (FIELD(object_screen(self), 0xC, int) - across) / 2;
+        area->top = (FIELD(object_screen(self), 0x10, int) - down) / 2;
+        area->right = area->left + across;
+        area->bottom = area->top + down;
+    }
+
     if (dev_settings.trace_display)
         dev_trace("dialog", "%s: screen %dx%d, made for %dx%d, scaled %d by %d/1000 x %d/1000, "
                   "area %d,%d-%d,%d", (char*) self + DLG_NAME, FIELD(object_screen(self), 0xC, int),

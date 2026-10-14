@@ -3452,6 +3452,27 @@ static void menu_open(BYTE* self, const ui_event* event)
         FIELD(game_main, 0x3440, BYTE*) = NULL;
     }
 
+#ifdef OPENMCM2_DEV
+    /*
+        The movie plays where ScreenOverCtl's window is: on the single-player panel, which its
+        place is relative to - the original's numbers for the original's layout, and the modern
+        layout's own.
+    */
+    if (dev_settings.menus_modern) {
+        BYTE* frame = dialog_find_control(self, NULL, NAME(0x0056F724), 0);     /* ScreenOverCtl */
+        BYTE* panel = FIELD(self, MENU_SINGLE, BYTE*);
+
+        if (frame && panel) {
+            const RECT* at = &FIELD(panel, 0x3C, RECT);
+
+            area = FIELD(frame, 0x3C, RECT);
+            area.left += at->left;
+            area.right += at->left;
+            area.top += at->top;
+            area.bottom += at->top;
+        }
+    }
+#endif
     movie = game_new(0x200, DLGPROCS_CPP, 0xBA);
     if (movie)
         movie = movie_construct(movie, NULL, 0, &area, self);
