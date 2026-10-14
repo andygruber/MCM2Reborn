@@ -710,14 +710,14 @@ int __fastcall wait_key_when_shown(BYTE* self, void* edx_unused, const DWORD* ke
 */
 #define WAIT_SECONDS 3.0
 
-void __fastcall game_FUN_00499ca0(BYTE* session, void* edx_unused, int stage);
+void __fastcall session_build_scene(BYTE* self, void* edx_unused, int stage);
 
 PORT(0x00454350)
 int __fastcall wait_stage_tick(BYTE* self, void* edx_unused, float seconds)
 {
     (void) edx_unused;
     if (++FIELD(self, 0x7F58, int) == 3) {
-        game_FUN_00499ca0(FIELD(game_main, 0x56C, BYTE*), NULL, 1);
+        session_build_scene(FIELD(game_main, 0x56C, BYTE*), NULL, 1);
         dialog_end(self, NULL, 0);
     }
     return dialog_tick(self, NULL, seconds);
@@ -745,7 +745,7 @@ int __fastcall wait_stage_timed_tick(BYTE* self, void* edx_unused, float seconds
 
     (void) edx_unused;
     if (++FIELD(self, 0x7F58, int) == 3)
-        game_FUN_00499ca0(FIELD(game_main, 0x56C, BYTE*), NULL, 2);
+        session_build_scene(FIELD(game_main, 0x56C, BYTE*), NULL, 2);
     waited = (double) seconds + FIELD(self, 0x7F5C, float);
     FIELD(self, 0x7F60, int) = 1;
     FIELD(self, 0x7F5C, float) = (float) waited;
@@ -1015,13 +1015,13 @@ void __fastcall quoted_choice_handle(BYTE* self, void* edx_unused, ui_event* eve
 /* ---- Leaving ---- */
 
 void __fastcall game_FUN_0045f530(BYTE* events);
-void __fastcall game_FUN_0049aaa0(BYTE* session, void* edx_unused, int screen);
+void __fastcall session_go_to(BYTE* self, void* edx_unused, int screen);
 void __fastcall game_FUN_00526eb0(BYTE* game, void* edx_unused, DWORD a, DWORD b, DWORD c);
 
 /* The session's next screen. */
 static void go_to(int screen)
 {
-    game_FUN_0049aaa0(FIELD(game_main, 0x56C, BYTE*), NULL, screen);
+    session_go_to(FIELD(game_main, 0x56C, BYTE*), NULL, screen);
 }
 
 /*
@@ -1334,7 +1334,7 @@ int  __fastcall game_FUN_0045d930(BYTE* events);
 void __fastcall game_FUN_004b0f20(BYTE* net, void* edx_unused, DWORD type, void* data, DWORD size,
                                   DWORD to, DWORD flags);
 void __cdecl    game_FUN_004b3610(void);                 /* leave the network game */
-void __fastcall game_FUN_0049aa80(BYTE* session);
+void __fastcall session_show_cursors(BYTE* self);
 void __fastcall game_FUN_00527680(BYTE* player);
 void __fastcall dialog_add_timer(BYTE* self, void* edx_unused, DWORD id, DWORD period,
                                  BYTE* target);
@@ -1362,7 +1362,7 @@ int __fastcall race_start_tick(BYTE* self, void* edx_unused, float seconds)
                 game_FUN_004b0f20(net, NULL, 0xCC, message, sizeof message, message[1], 0);
                 game_FUN_004b3610();
             }
-            game_FUN_0049aa80(game_session);
+            session_show_cursors(game_session);
             go_to(100);
             return 1;
         }
@@ -1392,7 +1392,7 @@ void  __fastcall control_set_name(BYTE* self, void* edx_unused, const char* name
 int   __fastcall dialog_find(void* dialog, void* edx_unused, const char* name);
 BYTE* __fastcall anim_picture(ui_anim* self);
 void  __fastcall dialog_remove_timer(BYTE* self, void* edx_unused, DWORD id);
-void  __fastcall game_FUN_0049aa90(BYTE* session);
+void __fastcall session_hide_cursors(BYTE* self);
 void  __fastcall game_FUN_00528bb0(char* profile);
 void  __fastcall game_FUN_004b0fc0(BYTE* net, void* edx_unused, DWORD a, DWORD b);
 void  __fastcall game_FUN_0045e280(BYTE* events);       /* start the race */
@@ -1417,7 +1417,7 @@ static void loading_open(BYTE* self)
     control_show(place, NULL, FALSE, TRUE);
 
     FIELD(game_session, 0x490, BYTE*) = self;
-    game_FUN_0049aa90(game_session);
+    session_hide_cursors(game_session);
     race_starting = 0;
     game_FUN_00528bb0(game_profile);
     if (FIELD(game_main, 0x8, BYTE*))
@@ -2063,7 +2063,7 @@ static void settings_restore(void)
 
 void __fastcall gui_manager_drop_background(gui_manager* self);
 BOOL __fastcall gui_manager_set_palette(gui_manager* self, void* edx_unused, DWORD palette);
-void __fastcall game_FUN_0049a960(BYTE* session);
+void __fastcall session_drop_scene(BYTE* self);
 BOOL __fastcall game_FUN_00527300(BYTE* game);
 
 typedef BYTE* (__fastcall* loading_constructor)(BYTE* self, void* edx_unused, DWORD flag);
@@ -2094,7 +2094,7 @@ void __cdecl race_start_loading(void)
 
     FIELD(game_session, 0x4AC, DWORD) = 1;
     FIELD(game_session, 0x4A8, DWORD) = 0;
-    game_FUN_0049a960(game_session);
+    session_drop_scene(game_session);
     gui_manager_drop_background(session_gui);
     if (FIELD(FIELD(game_main, 0xC, BYTE*), 0x6C, int))
         gui_manager_set_palette(session_gui, NULL, 0);
@@ -2594,9 +2594,9 @@ void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
 /* ---- Single player: the screen ---- */
 
 int  __fastcall dialog_show(void* dialog, void* edx_unused, DWORD shown);
-void __fastcall game_FUN_0049a9d0(BYTE* session);
+void __fastcall session_hide_scene(BYTE* self);
 void __fastcall game_FUN_004fdaf0(BYTE* page);        /* the rider to be dressed again (0x7F88) */
-void __fastcall game_FUN_00450f00(BYTE* page);        /* the bike chosen */
+void __fastcall bike_choose(BYTE* self);        /* the bike chosen */
 
 /* Out of line, as the original calls them. */
 __declspec(noinline) void __fastcall sp_show_page(BYTE* self, void* edx_unused, int page);
@@ -2688,7 +2688,7 @@ void __fastcall sp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
                                  1);
                 return;
             }
-            game_FUN_0049a9d0(game_session);
+            session_hide_scene(game_session);
             FIELD(race_settings, SET_28, DWORD) = 0;
             sp_pages_store(self, 3);
             FIELD(game_main, 0x342C, DWORD) = record_race && race_mode != GHOST_RACE;
@@ -2727,7 +2727,7 @@ void __fastcall sp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
             dialog_notify_controls(FIELD(self, SP_PAGES + 4, BYTE*), NULL, 0);
             choices_fill(FIELD(self, SP_PAGES + 4, BYTE*));
             game_FUN_004fdaf0(FIELD(self, SP_PAGES + 4, BYTE*));
-            game_FUN_00450f00(FIELD(self, SP_PAGES + 4, BYTE*));
+            bike_choose(FIELD(self, SP_PAGES + 4, BYTE*));
         }
         break;
     }
@@ -3000,17 +3000,6 @@ void __fastcall game_FUN_00528630(char* profile);
 void __fastcall game_FUN_00449e20(BYTE* controls, void* edx_unused, const char* path, int a);
 void __fastcall game_FUN_00527080(BYTE* game);
 void __fastcall game_FUN_004b0e10(BYTE* net, void* edx_unused, DWORD player, char* name);
-
-/* Copy at most `most` characters, as the game inlines it. */
-static void text_copy_most(char* to, const char* from, int most)
-{
-    int length = (int) text_length(from);
-
-    if (length > most)
-        length = most;
-    game__strncpy(to, from, length);
-    to[length] = 0;
-}
 
 /*
     A new profile named in EditBox (at most 15 characters): one already listed is asked about
@@ -3512,7 +3501,7 @@ void __stdcall  game_FUN_0053b88e(void* array, size_t size, int count, DWORD con
                                   DWORD destruct);                  /* construct an array */
 void __stdcall  game_FUN_0053b7b0(void* array, size_t size, int count, DWORD destruct);
 int  __fastcall game_FUN_004b2420(BYTE* net, void* edx_unused, BYTE* connections, int* count);
-void __fastcall game_FUN_0049b420(BYTE* session);                   /* close the game's window */
+void __fastcall session_quit(BYTE* self);                   /* close the game's window */
 BOOL __fastcall game_FUN_0044b900(BYTE* files, void* edx_unused, const char* folder);  /* delete */
 
 static BOOL service_is(const BYTE* connection, const GUID* service)
@@ -3817,7 +3806,7 @@ static void menu_click(BYTE* self, ui_event* event)
         FIELD(game_main, 0x343C, DWORD) = 1;
         dialog_end(event_dialog(event), NULL, 0);
         event->e = 1;
-        game_FUN_0049b420(game_session);
+        session_quit(game_session);
     } else if (clicked(event, BUT_CABLE)) {
         session_connecting = 1;
         go_to(0xD8);
@@ -3833,7 +3822,7 @@ static void menu_click(BYTE* self, ui_event* event)
     } else if (clicked(event, NAME(0x0056F56C))) {                          /* "MenuHelp" */
         game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
     } else if (clicked(event, NAME(0x0056F554))) {                          /* "MenuExit" */
-        game_FUN_0049b420(game_session);
+        session_quit(game_session);
     }
 }
 
@@ -3917,10 +3906,6 @@ char* __cdecl number_text(int value, char* text)
 /* ---- Startup ---- */
 
 /* The file's statics, set up by the runtime before main: unit vectors and two timers. */
-typedef struct vector3 {
-    float x, y, z;
-} vector3;
-
 #define vector_zero   (*(vector3*) 0x005A0F10)
 #define vector_x      (*(vector3*) 0x005A0F20)
 #define vector_y      (*(vector3*) 0x005A0F40)
@@ -4066,7 +4051,7 @@ void __fastcall game_FUN_004300b0(BYTE* camera, void* edx_unused, int x, int y, 
 typedef int (__fastcall* model_step)(void* model, void* edx_unused, float seconds, DWORD a,
                                      DWORD b);
 void __fastcall game_FUN_004aa170(BYTE* model, void* edx_unused, const char* animation);
-void __fastcall game_FUN_0049a9a0(BYTE* session, void* edx_unused, BYTE* dialog);  /* models in */
+void __fastcall session_show_scene(BYTE* self, void* edx_unused, BYTE* dialog);  /* models in */
 void __fastcall game_FUN_004eda80(BYTE* screen, void* edx_unused, BYTE* camera);
 
 /* Equal as `test ah, 40h` tests it (C3 set): unordered counts too. */
@@ -4209,7 +4194,7 @@ static void bike_rider_open(BYTE* self)
     list_add_text(list, NULL, NAME(0x0056FBE8), engine_class(600), 0);     /* "600cc 4-stroke" */
     list_select_data(list, NULL, engine_class(FIELD(game_main, 0x1550, int)));
     edit_set_allowed(dialog_find_control(self, NULL, EDIT_PLATE, 11), NULL, DIGITS);
-    game_FUN_0049a9a0(game_session, NULL, self);
+    session_show_scene(game_session, NULL, self);
 
     view->left = 91;
     view->right = 543;
@@ -4302,7 +4287,7 @@ void __fastcall bike_rider_handle(BYTE* self, void* edx_unused, ui_event* event)
         }
         break;
     case EVENT_CLOSE:
-        game_FUN_0049a9d0(game_session);
+        session_hide_scene(game_session);
         if (FIELD(self, 0x110, BYTE*))
             background_free_slot(FIELD(self, 0x110, BYTE*), NULL, FIELD(self, BR_SLOT, int));
         game_FUN_004eda80(object_screen(self), NULL, NULL);

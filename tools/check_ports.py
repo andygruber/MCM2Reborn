@@ -49,19 +49,41 @@ JUMP_TABLE = re.compile(r"\[\w+\*4 \+ (0x[0-9a-f]+)\]")
 def pops(data, address):
     """The set of byte counts the function's `ret`s pop.
 
-    A switch's jump table can follow the code, and its addresses can decode as `ret n`, so
-    decoding stops at the first table the code indexes.
+    Only the code reachable from the entry is read, following jumps and switch tables, so a
+    jump table after the code, or a static function the map does not name, is not taken for
+    part of it.
     """
     decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     end = address + len(data)
-    for insn in decoder.disasm(data, address):
-        table = JUMP_TABLE.search(insn.op_str) if insn.mnemonic == "jmp" else None
-        if table and address < int(table.group(1), 16) < end:
-            end = int(table.group(1), 16)
     found = set()
-    for insn in decoder.disasm(data[:end - address], address):
-        if insn.mnemonic == "ret":
-            found.add(int(insn.op_str, 16) if insn.op_str else 0)
+    seen = set()
+    todo = [address]
+    while todo:
+        at = todo.pop()
+        while address <= at < end and at not in seen:
+            seen.add(at)
+            insn = next(decoder.disasm(data[at - address:at - address + 16], at, 1), None)
+            if insn is None:
+                break
+            name = insn.mnemonic
+            if name == "ret":
+                found.add(int(insn.op_str, 16) if insn.op_str else 0)
+                break
+            if name == "jmp" or name.startswith("j") or name.startswith("loop"):
+                table = JUMP_TABLE.search(insn.op_str)
+                if table:
+                    entry = int(table.group(1), 16)
+                    while address <= entry and entry + 4 <= end:
+                        target, = struct.unpack_from("<I", data, entry - address)
+                        if not address <= target < end:
+                            break
+                        todo.append(target)
+                        entry += 4
+                elif insn.op_str.startswith("0x"):
+                    todo.append(int(insn.op_str, 16))
+                if name == "jmp":
+                    break
+            at += insn.size
     return found
 
 

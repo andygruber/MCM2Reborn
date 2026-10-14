@@ -8305,29 +8305,6 @@ int __fastcall option_render(BYTE* self)
     sections are read in four passes: the dialog, its anims, its sounds, then its controls.
 */
 
-/* Parameter.cpp's reader; its size is the room the original gives it. */
-typedef struct param_file {
-    BYTE opaque[0x6C4];
-} param_file;
-
-void __fastcall game_FUN_004bb880(param_file* self);
-void __fastcall game_FUN_004bb8e0(param_file* self);
-void __fastcall game_FUN_004bbef0(param_file* self, void* edx_unused, void* data, DWORD size,
-                                  BOOL scan);
-int  __fastcall game_FUN_004bc990(param_file* self, void* edx_unused, char* names, int size);
-BOOL __fastcall game_FUN_004bc040(param_file* self, void* edx_unused, const char* section);
-BOOL __fastcall game_FUN_004bc610(param_file* self, void* edx_unused, const char* key,
-                                  const char* fallback, char* value, int size);
-BOOL __fastcall game_FUN_004bc660(param_file* self, void* edx_unused, const char* key, int fallback,
-                                  int* value);
-BOOL __fastcall game_FUN_004bc690(param_file* self, void* edx_unused, const char* key,
-                                  float fallback, float* value);
-#define param_construct game_FUN_004bb880
-#define param_destruct  game_FUN_004bb8e0
-#define param_open      game_FUN_004bbef0
-#define param_sections  game_FUN_004bc990   /* the section names, each ended by "?" */
-#define param_select    game_FUN_004bc040
-
 /* A strtok that keeps its place in the object. */
 typedef struct text_tokens {
     char* token;

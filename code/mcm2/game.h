@@ -76,6 +76,48 @@ static __inline void text_append(char* to, const char* from)
     text_copy(to + text_length(to), from);
 }
 
+char* __cdecl game__strncpy(char* to, const char* from, size_t count);
+
+/* At most `most` characters of `from`, ended, as the game inlines its bounded copies. */
+static __inline void text_copy_most(char* to, const char* from, int most)
+{
+    int length = (int) text_length(from);
+
+    if (length > most)
+        length = most;
+    game__strncpy(to, from, length);
+    to[length] = 0;
+}
+
+typedef struct vector3 {
+    float x, y, z;
+} vector3;
+
+/* Parameter.cpp's reader; its size is the room the original gives it. */
+typedef struct param_file {
+    BYTE opaque[0x6C4];
+} param_file;
+
+void __fastcall game_FUN_004bb880(param_file* self);
+void __fastcall game_FUN_004bb8e0(param_file* self);
+void __fastcall game_FUN_004bbef0(param_file* self, void* edx_unused, void* data, DWORD size,
+                                  BOOL scan);
+int  __fastcall game_FUN_004bc990(param_file* self, void* edx_unused, char* names, int size);
+BOOL __fastcall game_FUN_004bc040(param_file* self, void* edx_unused, const char* section);
+BOOL __fastcall game_FUN_004bc610(param_file* self, void* edx_unused, const char* key,
+                                  const char* fallback, char* value, int size);
+BOOL __fastcall game_FUN_004bc660(param_file* self, void* edx_unused, const char* key, int fallback,
+                                  int* value);
+BOOL __fastcall game_FUN_004bc690(param_file* self, void* edx_unused, const char* key,
+                                  float fallback, float* value);
+#define param_construct game_FUN_004bb880
+#define param_destruct  game_FUN_004bb8e0
+#define param_open      game_FUN_004bbef0
+#define param_sections  game_FUN_004bc990   /* the section names, each ended by "?" */
+#define param_select    game_FUN_004bc040
+#define param_text      game_FUN_004bc610   /* `size` -1: the whole value */
+#define param_int       game_FUN_004bc660
+
 /* The device lists the game keeps: keyboard (0x34), mouse (0x30) and joysticks (at 0x10). */
 #define game_inputs FIELD(game_main, 0x14, BYTE*)
 
