@@ -21,9 +21,9 @@
         modern=1          the modern menus: widescreen, and each screen's layout taken from the
                           folder's modern\ when one is there (ui\modern\mainmenu.dat, or a loose
                           mainmenu.dtm), else the original's, scaled
-        live_background=1 the main menu over a replay of ui\demo.rpl, its sound off, looping;
-                          a button that leaves the main menu stops it and goes on in the
-                          plain menus (a first version)
+        live_background=1 the main menu over a replay - the newest in Record, else the last
+                          race's tape - its sound off, looping; a button that leaves the main
+                          menu stops it and goes on in the plain menus (a first version)
 
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider

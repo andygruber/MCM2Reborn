@@ -16,7 +16,7 @@
 /* The live background's progress, and its steps that the ported code below calls. */
 enum { LIVE_OFF, LIVE_WAITING, LIVE_LOADING, LIVE_READY, LIVE_SHOWN };
 static int live_state;
-static BYTE* live_credits;          /* the demo's credits, closed once the race runs */
+static BYTE* live_controls;         /* the replay's own controls, closed for the main menu */
 static void live_menu_show(void);
 static BOOL live_menu_leaving(BYTE* menu, ui_event* event);
 #endif
@@ -1852,12 +1852,6 @@ void __fastcall back_restore_handle(BYTE* self, void* edx_unused, ui_event* even
         if (clicked(event, NAME(0x0056F8CC)))                                 /* "Back" */
             dialog_end(self, NULL, 0);
     } else if (event->type == EVENT_CLOSE && !cursors_locked) {
-#ifdef OPENMCM2_DEV
-        if (self == live_credits) {     /* closed for the main menu: the race goes on */
-            live_credits = NULL;
-            return;
-        }
-#endif
         game_FUN_0045ddd0(FIELD(game_main, 0x570, BYTE*), NULL, 2);
         __movsd((unsigned long*) (game_main + 0x2D70), (unsigned long*) (game_main + 0x2F5C), 0x7B);
         __movsd((unsigned long*) (game_main + 0x1550), (unsigned long*) (game_main + 0x15AC), 0x17);
@@ -2054,10 +2048,6 @@ void __cdecl race_start_loading(void)
 
     FIELD(game_session, 0x4AC, DWORD) = 1;
     FIELD(game_session, 0x4A8, DWORD) = 0;
-#ifdef OPENMCM2_DEV
-    if (live_state == LIVE_LOADING)
-        FIELD(game_session, 0x4A8, DWORD) = 1;
-#endif
     session_drop_scene(game_session);
     gui_manager_drop_background(session_gui);
     if (FIELD(FIELD(game_main, 0xC, BYTE*), 0x6C, int))
@@ -3778,21 +3768,25 @@ void __fastcall main_menu_handle(BYTE* self, void* edx_unused, ui_event* event)
 
 #ifdef OPENMCM2_DEV
 /*
-    The live background: the main menu over a race of ui\demo.rpl. The race setup has a demo of
-    its own, unused - that replay with the credits over it - and this is it with the main menu in
-    the credits' place. Its race sound is off and it goes back to the start before it ends.
+    The live background: the main menu over a replay - the newest in Record, else the last race's
+    tape - played as the replay screens play one, its sound off, going back to the start before
+    it ends. (The race setup's own demo, ui\demo.rpl with the credits over it, is unused and
+    cannot load: it names a pre-release game's rider models.)
 
     Started where the main menu would open, a few frames on: the screen before it closes first,
     and it would still use the menus' background, which the race drops. The replay's race
     settings become the game's (those there kept, as Back keeps them), and the race loads as any
-    does, behind its loading screen.
-    The credits it opens close, the race going on, as the main menu opens once the race runs. A button
-    that leaves the main menu stops the race, brings back the plain menus as the credits' Back
-    does, and is clicked again on their main menu.
+    does, behind its loading screen. The replay's controls it opens close, the race going on, and
+    the main menu opens over it. A button that leaves the main menu stops the race, brings back
+    the plain menus as the controls' Exit does, and is clicked again on their main menu.
 */
-#define DEMO_REPLAY     NAME(0x0056DCA4)    /* "ui\demo.rpl" */
+#define RECORD_FOLDER   NAME(0x0056FB64)    /* "Record" */
+#define RECORD_REPLAYS  NAME(0x0056F848)    /* "Record\*.vcr" */
+#define LAST_RACE_TAPE  NAME(0x0056DC74)    /* "VCRtape.dat" */
+#define PATH_JOIN       NAME(0x0056C7DC)    /* "%s\%s" */
 #define RACE_SOUND      NAME(0x0057B88C)    /* "RaceSound" */
-#define CREDITS_VTABLE  0x00555ED0          /* the demo's credits */
+#define VCR_VTABLE      0x00555E4C          /* the replay's controls */
+#define VCR_LEAVING     0x7F58              /* theirs: closing keeps the cursor */
 #define MAIN_MENU_VTABLE 0x0055A070
 #define REPLAY_TIME     0x1B8               /* the race's: where the replay is (float) */
 #define REPLAY_SEEK     0x1C4               /* where to go (float), -1 when not going */
@@ -3803,6 +3797,7 @@ static BOOL live_skip;                      /* the next main menu is a plain one
 static int  live_frames;
 static const char* live_folder_before;      /* the game's event folder, put back after */
 static int live_event_before;               /* and the profile's event */
+static char live_replay[0x104];
 
 /* Each event kind's folder, as the main menu's buttons give them; the tag events have none. */
 static const char* const live_folders[6] = {
@@ -3836,7 +3831,7 @@ BOOL live_menu_start(void)
         dev_trace("menus", "live background: the replay did not load");
         live_state = LIVE_OFF;
         live_given_up = TRUE;
-        live_credits = NULL;
+        live_controls = NULL;
         live_settings_back();
         game_FUN_0045f720(race_events, NULL, 100);
         return TRUE;
@@ -3853,11 +3848,44 @@ BOOL live_menu_start(void)
     return TRUE;
 }
 
-/* The replay's settings, and its race loading; the plain main menu if it cannot be read. */
+static BOOL file_newer(const FILETIME* a, const FILETIME* b)
+{
+    return a->dwHighDateTime != b->dwHighDateTime ? a->dwHighDateTime > b->dwHighDateTime
+                                                  : a->dwLowDateTime > b->dwLowDateTime;
+}
+
+/* The replay to show: the newest in Record, else the last race's tape; FALSE if neither. */
+static BOOL live_find_replay(void)
+{
+    WIN32_FIND_DATAA found;
+    FILETIME newest = { 0, 0 };
+    HANDLE search = FindFirstFileA(RECORD_REPLAYS, &found);
+
+    live_replay[0] = 0;
+    if (search != INVALID_HANDLE_VALUE) {
+        do {
+            if (!live_replay[0] || file_newer(&found.ftLastWriteTime, &newest)) {
+                newest = found.ftLastWriteTime;
+                game_FUN_0053a11f(live_replay, PATH_JOIN, RECORD_FOLDER, found.cFileName);
+            }
+        } while (FindNextFileA(search, &found));
+        FindClose(search);
+    }
+    if (!live_replay[0]) {
+        search = FindFirstFileA(LAST_RACE_TAPE, &found);
+        if (search == INVALID_HANDLE_VALUE)
+            return FALSE;
+        FindClose(search);
+        text_copy_most(live_replay, LAST_RACE_TAPE, sizeof live_replay - 1);
+    }
+    return TRUE;
+}
+
+/* The replay's settings, and its race loading; the plain main menu if there is none to show. */
 static void live_menu_load(void)
 {
     BYTE record[RECORD_SIZE];
-    void* file;
+    void* file = NULL;
     size_t read = 0;
     int kind;
     int i;
@@ -3866,14 +3894,16 @@ static void live_menu_load(void)
         FIELD(record, 0x180 + i * 8, DWORD) = 0;
         record[0x184 + i * 8] = 0;
     }
-    file = game_FUN_0053a35b(DEMO_REPLAY, NAME(0x0056C66C));                  /* "rb" */
+    if (live_find_replay())
+        file = game_FUN_0053a35b(live_replay, NAME(0x0056C66C));              /* "rb" */
     if (file) {
         read = game_FUN_0053a5d5(record, RECORD_SIZE, 1, file);
         game_FUN_0053a2ad(file);
     }
     kind = FIELD(record, 0x34 + SET_EVENT, int);
-    if (!read || (unsigned) kind > 5 || !live_folders[kind]) {
-        dev_trace("menus", "live background: no %s, or not a race it can show", DEMO_REPLAY);
+    if (!read || FIELD(record, 0x34 + SET_MODE, int) == GHOST_RACE || (unsigned) kind > 5
+        || !live_folders[kind]) {
+        dev_trace("menus", "live background: no replay it can show (record a race to have one)");
         live_state = LIVE_OFF;
         live_given_up = TRUE;
         go_to(100);
@@ -3890,8 +3920,9 @@ static void live_menu_load(void)
     FIELD(game_main, 0x342C, DWORD) = 1;
     FIELD(game_main, 0x1550, DWORD) = FIELD(record, 0x33C, DWORD);
     FIELD(game_main, 0x1554, DWORD) = FIELD(record, 0x340, DWORD);
+    text_copy_most((char*) game_main + 0x2C6C, live_replay, TRACK_NAME_LENGTH);
     live_state = LIVE_LOADING;
-    dev_trace("menus", "live background: loading %s, event kind %d", DEMO_REPLAY, race_kind);
+    dev_trace("menus", "live background: loading %s, event kind %d", live_replay, race_kind);
     race_start_loading();
 }
 
@@ -3900,8 +3931,8 @@ void live_menu_opening(BYTE* dialog)
     if (live_state == LIVE_LOADING)
         dev_trace("menus", "live background: dialog %08X opens (vtable %08X)", (DWORD) dialog,
                   FIELD(dialog, 0, DWORD));
-    if (live_state == LIVE_LOADING && FIELD(dialog, 0, DWORD) == CREDITS_VTABLE) {
-        live_credits = dialog;
+    if (live_state == LIVE_LOADING && FIELD(dialog, 0, DWORD) == VCR_VTABLE) {
+        live_controls = dialog;
         live_state = LIVE_READY;
         dev_trace("menus", "live background: the race is loaded");
     }
@@ -3912,8 +3943,11 @@ static void live_menu_show(void)
 {
     live_state = LIVE_SHOWN;
     live_frames = 0;
-    if (live_credits)
-        dialog_end(live_credits, NULL, 0);
+    if (live_controls) {
+        FIELD(live_controls, VCR_LEAVING, DWORD) = 1;
+        dialog_end(live_controls, NULL, 0);
+        live_controls = NULL;
+    }
     live_mute();
     session_show_cursors(game_session);
     go_to(100);
@@ -3973,7 +4007,6 @@ static BOOL live_menu_leaving(BYTE* menu, ui_event* event)
     dev_trace("menus", "live background: stopped for %s", control);
     live_state = LIVE_OFF;
     live_skip = TRUE;
-    live_credits = NULL;
 
     dialog_end(menu, NULL, 0);
     event->e = 1;
