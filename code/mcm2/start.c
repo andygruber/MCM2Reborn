@@ -12,6 +12,10 @@
 #include "profile.h"
 #include "render.h"
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 void game_entry(void);
 void crash_install(void);
 
@@ -34,6 +38,9 @@ void open_start(void)
     log_line("OpenMCM2 starting");
     crash_install();
     profile_install();
+#ifdef OPENMCM2_DEV
+    dev_install();
+#endif
 
     if (has_switch("ddraw"))
         ddtrace_install();

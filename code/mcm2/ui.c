@@ -12,6 +12,10 @@
 #include "gui.h"
 #include <imm.h>
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 /* UIDialog fields, by offset. */
 #define DLG_PARENT        0x2C      /* the dialog it was opened over, or NULL */
 #define DLG_MANAGER       0x30      /* gui_manager* */
@@ -4917,6 +4921,9 @@ static void control_tell(BYTE* self, ui_event* event, DWORD type)
     dialog = FIELD(self, CTL_DIALOG, BYTE*);
     event->sender = dialog;
     event->c = (DWORD) self;
+#ifdef OPENMCM2_DEV
+    dev_trace_event(event->type, (const char*) event->b, dialog);
+#endif
     VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, event);
 }
 
@@ -6073,6 +6080,9 @@ static void list_tell(BYTE* self, ui_event* event, DWORD type)
     event->sender = dialog;
     event->c = (DWORD) self;
     event->manager = FIELD(dialog, 0x30, gui_manager*);
+#ifdef OPENMCM2_DEV
+    dev_trace_event(event->type, (const char*) event->b, dialog);
+#endif
     VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, event);
 }
 
@@ -7246,6 +7256,9 @@ static void combo_tell(BYTE* self, BYTE* combo, ui_event* event, DWORD type, gui
     event->sender = dialog;
     event->manager = manager;
     event->c = (DWORD) self;
+#ifdef OPENMCM2_DEV
+    dev_trace_event(event->type, (const char*) event->b, dialog);
+#endif
     VIRTUAL(dialog, 0x74, dialog_handle)(dialog, NULL, event);
 }
 

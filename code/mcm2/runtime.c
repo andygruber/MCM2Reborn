@@ -13,6 +13,13 @@ int _fltused = 0x9875;
 
 static HANDLE g_log = INVALID_HANDLE_VALUE;
 
+/* The dev build keeps a log of its own, so the two builds never overwrite each other's. */
+#ifdef OPENMCM2_DEV
+#define LOG_NAME "openmcm2-dev"
+#else
+#define LOG_NAME "openmcm2"
+#endif
+
 void log_open(void)
 {
     typedef BOOL (WINAPI *move_fn)(LPCSTR, LPCSTR, DWORD);
@@ -20,9 +27,9 @@ void log_open(void)
 
     /* The previous run's log is kept, so a quick relaunch cannot wipe what a long session found. */
     if (move)
-        move("openmcm2.log", "openmcm2.prev.log", MOVEFILE_REPLACE_EXISTING);
+        move(LOG_NAME ".log", LOG_NAME ".prev.log", MOVEFILE_REPLACE_EXISTING);
 
-    g_log = CreateFileA("openmcm2.log", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+    g_log = CreateFileA(LOG_NAME ".log", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
                         FILE_ATTRIBUTE_NORMAL, NULL);
 }
 

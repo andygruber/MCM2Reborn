@@ -8,6 +8,10 @@
 */
 
 #include "gui.h"
+
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
 #include <float.h>
 #include <shellapi.h>
 
@@ -742,6 +746,10 @@ BOOL __fastcall profile_find_file(char* self, void* edx_unused, const char* name
     void* file;
 
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (dev_settings.trace_files)
+        dev_trace("file", "find %s", name);
+#endif
     text_copy(path, NO_TEXT);
     skip = (int) text_length(root);
     if (!game_FUN_0054cd80(name, root, skip))

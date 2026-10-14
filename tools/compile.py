@@ -21,12 +21,14 @@ import coff
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SRC = os.path.join(ROOT, "code", "mcm2")
+# The dev build's own code: debugging tools and changes to the game, built with OPENMCM2_DEV.
+DEV = os.path.join(ROOT, "code", "dev")
 OBJ = os.path.join(ROOT, "build", "obj")
 
 # /arch:IA32: floating point on the x87, as the game's own code does it, so ported arithmetic
 # rounds as the original did instead of in SSE registers.
 FLAGS = ["/nologo", "/c", "/O2", "/W4", "/WX", "/GS-", "/Zl", "/Gy", "/std:c11", "/arch:IA32",
-         "/D_CRT_SECURE_NO_WARNINGS"]
+         "/D_CRT_SECURE_NO_WARNINGS", "/DOPENMCM2_DEV", "/I" + SRC]
 
 # Where each kind of section goes within .open. Section names are limited to eight characters,
 # so the compiler's own $ suffixes (.text$mn) are dropped.
@@ -54,7 +56,7 @@ def rename(name):
 
 
 def main():
-    sources = sorted(glob.glob(os.path.join(SRC, "*.c")))
+    sources = sorted(glob.glob(os.path.join(SRC, "*.c"))) + sorted(glob.glob(os.path.join(DEV, "*.c")))
     os.makedirs(OBJ, exist_ok=True)
     for stale in glob.glob(os.path.join(OBJ, "*.obj")):
         os.remove(stale)

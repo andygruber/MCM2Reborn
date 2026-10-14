@@ -9,6 +9,10 @@
 
 #include "gui.h"
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 #define NAME(address) ((const char*) (address))
 #define KRUSTYUI_CPP  NAME(0x005736FC)      /* "D:\aardvark\VC\krusty2\krustyui.cpp" */
 #define READ_MODE     NAME(0x0056CA38)      /* "r" */
@@ -715,6 +719,10 @@ void __fastcall session_go_to(BYTE* self, void* edx_unused, int screen)
     BYTE* net = FIELD(game_main, 0x3440, BYTE*);
 
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (dev_settings.trace_screens)
+        dev_trace("screen", "go to %d (0x%X)", screen, screen);
+#endif
     if (screen == 0xD0)
         session_before_d0(self) = session_showing(self);
     session_showing(self) = screen;
@@ -1102,6 +1110,11 @@ void __fastcall session_load_bikes(BYTE* self)
 /* A random index below `range` (rand / 32768 * range, cut): `range` itself never comes up. */
 static int random_index(int range)
 {
+#ifdef OPENMCM2_DEV
+    /* Every caller passes its count - 1, so the last one could never come up. */
+    if (dev_settings.fix_last_pick)
+        range++;
+#endif
     return (int) (game__rand() * (double) RAND_SCALE * range);
 }
 
