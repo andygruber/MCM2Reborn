@@ -3801,6 +3801,26 @@ void __fastcall main_menu_handle(BYTE* self, void* edx_unused, ui_event* event)
 static BOOL live_given_up;                  /* it would not load: the plain menus from now */
 static BOOL live_skip;                      /* the next main menu is a plain one */
 static int  live_frames;
+static const char* live_folder_before;      /* the game's event folder, put back after */
+static int live_event_before;               /* and the profile's event */
+
+/* Each event kind's folder, as the main menu's buttons give them; the tag events have none. */
+static const char* const live_folders[6] = {
+    NAME(0x0056F66C),                   /* Teraform\Quarries */
+    NAME(0x0056CB6C),                   /* Teraform\Baja */
+    NAME(0x0056F60C),                   /* Teraform\National */
+    NAME(0x0056F63C),                   /* Teraform\SX */
+    NULL,
+    NAME(0x0056CB5C),                   /* Teraform\Enduro */
+};
+
+/* The settings, event folder and profile event the flyby replaced, back. */
+static void live_settings_back(void)
+{
+    settings_restore();
+    FIELD(game_main, 0xC18, const char*) = live_folder_before;
+    profile_set_event(game_profile, NULL, live_event_before);
+}
 
 void __fastcall game_FUN_00469cb0(void* object, void* edx_unused, const char* class_name);
 
@@ -3817,7 +3837,7 @@ BOOL live_menu_start(void)
         live_state = LIVE_OFF;
         live_given_up = TRUE;
         live_credits = NULL;
-        settings_restore();
+        live_settings_back();
         game_FUN_0045f720(race_events, NULL, 100);
         return TRUE;
     }
@@ -3839,6 +3859,7 @@ static void live_menu_load(void)
     BYTE record[RECORD_SIZE];
     void* file;
     size_t read = 0;
+    int kind;
     int i;
 
     for (i = 0; i < 8; i++) {           /* the record's member constructors */
@@ -3850,8 +3871,9 @@ static void live_menu_load(void)
         read = game_FUN_0053a5d5(record, RECORD_SIZE, 1, file);
         game_FUN_0053a2ad(file);
     }
-    if (!read) {
-        dev_trace("menus", "live background: no %s", DEMO_REPLAY);
+    kind = FIELD(record, 0x34 + SET_EVENT, int);
+    if (!read || (unsigned) kind > 5 || !live_folders[kind]) {
+        dev_trace("menus", "live background: no %s, or not a race it can show", DEMO_REPLAY);
         live_state = LIVE_OFF;
         live_given_up = TRUE;
         go_to(100);
@@ -3859,6 +3881,10 @@ static void live_menu_load(void)
     }
 
     settings_save();
+    live_folder_before = FIELD(game_main, 0xC18, const char*);
+    FIELD(game_main, 0xC18, const char*) = live_folders[kind];
+    live_event_before = FIELD(game_profile, 0x2800, int);
+    profile_set_event(game_profile, NULL, kind);
     __movsd((unsigned long*) race_settings, (unsigned long*) (record + 0x34), 0x7B);
     FIELD(game_main, 0x3428, DWORD) = 1;
     FIELD(game_main, 0x342C, DWORD) = 1;
@@ -3951,7 +3977,7 @@ static BOOL live_menu_leaving(BYTE* menu, ui_event* event)
 
     dialog_end(menu, NULL, 0);
     event->e = 1;
-    settings_restore();
+    live_settings_back();
     game_FUN_0045ddd0(race_events, NULL, 2);
     game_FUN_0045f720(race_events, NULL, 100);
     gui_manager_show_cursors(session_gui, NULL, TRUE);
