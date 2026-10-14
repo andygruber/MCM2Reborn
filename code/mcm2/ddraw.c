@@ -6,6 +6,10 @@
 
 #include <intrin.h>
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 BOOL g_state_lost = TRUE;
 
 /* ------------------------------------------------------------------ the display */
@@ -1475,6 +1479,12 @@ static HRESULT WINAPI d_CreateSurface(IDirectDraw7* self, LPDDSURFACEDESC2 desc,
     (void) self; (void) outer;
     hr = create_surface(desc, &s);
     *out = SUCCEEDED(hr) ? &s->iface : NULL;
+#ifdef OPENMCM2_DEV
+    /* The size it got: a primary's request has none. */
+    if (dev_settings.trace_display && SUCCEEDED(hr) && !(desc->ddsCaps.dwCaps & DDSCAPS_TEXTURE))
+        dev_trace("display", "surface %ux%u, caps %08X, for %08X", s->desc.dwWidth,
+                  s->desc.dwHeight, s->desc.ddsCaps.dwCaps, (DWORD) _ReturnAddress());
+#endif
     return hr;
 }
 
@@ -1623,6 +1633,10 @@ static HRESULT WINAPI d_SetDisplayMode(IDirectDraw7* self, DWORD w, DWORD h, DWO
     (void) self; (void) bits; (void) refresh; (void) flags;
     g_mode_w = w;
     g_mode_h = h;
+#ifdef OPENMCM2_DEV
+    if (dev_settings.trace_display)
+        dev_trace("display", "mode %ux%u, %u bits, for %08X", w, h, bits, (DWORD) _ReturnAddress());
+#endif
     if (g_fullscreen)
         cover_monitor();
     log_line("render: the game's display mode is %ux%u", w, h);

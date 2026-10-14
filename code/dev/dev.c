@@ -25,11 +25,12 @@ void dev_install(void)
         dev_settings.trace_screens = read_switch(read, "trace", "screens");
         dev_settings.trace_events = read_switch(read, "trace", "events");
         dev_settings.trace_files = read_switch(read, "trace", "files");
+        dev_settings.trace_display = read_switch(read, "trace", "display");
         dev_settings.fix_last_pick = read_switch(read, "fixes", "last_pick");
     }
-    log_line("dev build: trace screens %d, events %d, files %d; fixes: last pick %d",
+    log_line("dev build: trace screens %d, events %d, files %d, display %d; fixes: last pick %d",
              dev_settings.trace_screens, dev_settings.trace_events, dev_settings.trace_files,
-             dev_settings.fix_last_pick);
+             dev_settings.trace_display, dev_settings.fix_last_pick);
 }
 
 void dev_trace(const char* area, const char* fmt, ...)
