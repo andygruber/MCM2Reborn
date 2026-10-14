@@ -10,7 +10,8 @@
 #include <imm.h>
 
 /* The controls and lists these use, ported in ui.c. */
-BYTE*       __fastcall dialog_find_control(BYTE* self, void* edx_unused, const char* name, int type);
+BYTE*       __fastcall dialog_find_control(BYTE* self, void* edx_unused, const char* name,
+                                           int type);
 int         __fastcall control_set_text(BYTE* self, void* edx_unused, const char* text);
 int         __fastcall control_load_text(BYTE* self, void* edx_unused, HINSTANCE module, UINT id);
 int         __fastcall list_selected(BYTE* self);
@@ -31,7 +32,8 @@ BYTE*       __fastcall gui_manager_open(gui_manager* self, void* edx_unused, BYT
 void        __fastcall list_sort(BYTE* self, void* edx_unused, BOOL outer);
 int         __fastcall list_select_text(BYTE* self, void* edx_unused, const char* text);
 int         __fastcall list_set_208(BYTE* self, void* edx_unused, DWORD value);
-int         __fastcall list_set_text_colour(BYTE* self, void* edx_unused, COLORREF colour, int index);
+int         __fastcall list_set_text_colour(BYTE* self, void* edx_unused, COLORREF colour,
+                                            int index);
 int         __fastcall list_set_colour_2(BYTE* self, void* edx_unused, COLORREF colour);
 DWORD       __fastcall list_data(BYTE* self, void* edx_unused, int index);
 
@@ -41,7 +43,7 @@ DWORD       __fastcall list_data(BYTE* self, void* edx_unused, int index);
 int  __cdecl    game_FUN_0053b6c7(const char* text);
 int  __cdecl    game_FUN_0053b6e0(const char* a, const char* b);           /* _stricmp */
 void __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* text, int size);
-void __fastcall game_FUN_00528820(char* profile);                         /* save it */
+BOOL __fastcall profile_load(char* self);
 int  __cdecl    game_FUN_0053a11f(char* to, const char* format, ...);      /* sprintf */
 char* __cdecl   game__strncpy(char* to, const char* from, size_t count);
 char* __cdecl   game_FUN_0054aaa5(int value, char* text, int radix);   /* _itoa */
@@ -139,7 +141,7 @@ BOOL __cdecl profile_choose(ui_event* event)
         length = PROFILE_LENGTH;
     game__strncpy(game_profile, name, length);
     game_profile[length] = 0;
-    game_FUN_00528820(game_profile);
+    profile_load(game_profile);
     return TRUE;
 }
 
@@ -1335,7 +1337,7 @@ void __fastcall game_FUN_004b0f20(BYTE* net, void* edx_unused, DWORD type, void*
                                   DWORD to, DWORD flags);
 void __cdecl    game_FUN_004b3610(void);                 /* leave the network game */
 void __fastcall session_show_cursors(BYTE* self);
-void __fastcall game_FUN_00527680(BYTE* player);
+void __fastcall player_clear_c8(BYTE* self);
 void __fastcall dialog_add_timer(BYTE* self, void* edx_unused, DWORD id, DWORD period,
                                  BYTE* target);
 
@@ -1368,7 +1370,7 @@ int __fastcall race_start_tick(BYTE* self, void* edx_unused, float seconds)
         }
         if (FIELD(game_main, 0x8, BYTE*))
             for (i = 0; i < FIELD(game_main, 0x2158, int); i++)
-                game_FUN_00527680(game_main + 0x215C + i * 0xF8);
+                player_clear_c8(game_main + 0x215C + i * 0xF8);
         race_starting = 1;
         dialog_add_timer(self, NULL, 0, 100, NULL);
     }
@@ -1393,7 +1395,7 @@ int   __fastcall dialog_find(void* dialog, void* edx_unused, const char* name);
 BYTE* __fastcall anim_picture(ui_anim* self);
 void  __fastcall dialog_remove_timer(BYTE* self, void* edx_unused, DWORD id);
 void __fastcall session_hide_cursors(BYTE* self);
-void  __fastcall game_FUN_00528bb0(char* profile);
+void __fastcall profile_save(char* self);
 void  __fastcall game_FUN_004b0fc0(BYTE* net, void* edx_unused, DWORD a, DWORD b);
 void  __fastcall game_FUN_0045e280(BYTE* events);       /* start the race */
 void  __fastcall game_FUN_00527090(BYTE* game);
@@ -1419,7 +1421,7 @@ static void loading_open(BYTE* self)
     FIELD(game_session, 0x490, BYTE*) = self;
     session_hide_cursors(game_session);
     race_starting = 0;
-    game_FUN_00528bb0(game_profile);
+    profile_save(game_profile);
     if (FIELD(game_main, 0x8, BYTE*))
         game_FUN_004b0fc0(FIELD(game_main, 0x8, BYTE*), NULL,
                           FIELD(FIELD(game_main, 0x570, BYTE*), 0x2C, DWORD),
@@ -1468,7 +1470,7 @@ void __fastcall loading_handle(BYTE* self, void* edx_unused, ui_event* event)
 #define TRACK_SIZE  0xEB0
 #define TRACK_NAME_LENGTH 0x103
 
-void __fastcall game_FUN_00529730(char* profile, void* edx_unused, DWORD track);
+char* __fastcall profile_set_event(char* self, void* edx_unused, int kind);
 __declspec(noinline) void __cdecl race_start_loading(void);     /* below */
 
 /* The track picked in the list (of those at 0x7F58): its settings become the race's. */
@@ -1507,7 +1509,7 @@ void __fastcall track_choose(BYTE* self)
 
     track_name_copy(self, list, (char*) game_main + 0x2B64);
     track_chosen(self);
-    game_FUN_00529730(game_profile, NULL, FIELD(track, 0x3C, DWORD));
+    profile_set_event(game_profile, NULL, FIELD(track, 0x3C, DWORD));
     race_start_loading();
 }
 
@@ -1518,7 +1520,7 @@ void __fastcall track_choose_set(BYTE* self)
     BYTE* list = dialog_find_control(self, NULL, LIST_TRACK, 3);
     BYTE* track = track_take(self, list);
 
-    game_FUN_00529730(game_profile, NULL, FIELD(track, 0x3C, DWORD));
+    profile_set_event(game_profile, NULL, FIELD(track, 0x3C, DWORD));
     FIELD(game_main, 0x3428, DWORD) = 1;
     FIELD(game_main, 0x342C, DWORD) = 1;
     FIELD(game_main, 0x1550, DWORD) = FIELD(track, 0x33C, DWORD);
@@ -1555,21 +1557,23 @@ BOOL __fastcall replay_record_add(BYTE* self, void* edx_unused, const char* path
 #define RECORD_RIDER_NAME   0x229
 #define NO_NAME             NAME(0x0057012C)    /* "no name": a track the scn file leaves unnamed */
 
-void __fastcall game_FUN_00529090(char* profile, void* edx_unused, DWORD folder, const char* file,
-                                  const char* kind, char* path);   /* a track file's path */
+/* A track file's path. */
+BOOL __fastcall profile_find_named_file(char* self, void* edx_unused, const char* folder,
+                                        const char* name, const char* ext, char* dir);
 void __fastcall game_FUN_004ee910(BYTE* resources, void* edx_unused, const char* path);
 void __fastcall game_FUN_004eeda0(BYTE* resources, void* edx_unused, char* text, const char* file,
                                   DWORD a, const char* kind, DWORD b, DWORD c);
-void __cdecl    game_FUN_00489b60(char* text, float seconds);       /* a time, as text */
+void __cdecl time_text(char* text, float seconds);       /* a time, as text */
 
 /* The record's track becomes the profile's, and its env file is loaded. */
 static void record_track_load(const BYTE* record)
 {
     char env_path[0x104];
 
-    game_FUN_00529730(game_profile, NULL, FIELD(record, RECORD_TRACK_ID, DWORD));
-    game_FUN_00529090(game_profile, NULL, FIELD(game_main, 0xC18, DWORD),
-                      (const char*) record + RECORD_TRACK_FILE, NAME(0x00570138), env_path);
+    profile_set_event(game_profile, NULL, FIELD(record, RECORD_TRACK_ID, DWORD));
+    profile_find_named_file(game_profile, NULL, FIELD(game_main, 0xC18, const char*),
+                            (const char*) record + RECORD_TRACK_FILE, NAME(0x00570138),
+                            env_path);
     game_FUN_004ee910(FIELD(game_main, 0x574, BYTE*), NULL, env_path);           /* "env" */
 }
 
@@ -1614,7 +1618,7 @@ BOOL __fastcall ghost_record_add(BYTE* self, void* edx_unused, const char* path)
             game_FUN_00526fc0(game_main, NULL, 0x143B, text, sizeof text);
         list_add_text(tracks, NULL, text, FIELD(self, 0x7F5C, int) - 1, 0);
 
-        game_FUN_00489b60(text, FIELD(record, RECORD_RUN_TIME, float));
+        time_text(text, FIELD(record, RECORD_RUN_TIME, float));
         list_add_text(lengths, NULL, text, 0, 0);
         list_add_text(descriptions, NULL, (const char*) record + RECORD_DESC, 0, 0);
         added = TRUE;
@@ -1687,7 +1691,7 @@ BOOL __fastcall replay_record_add(BYTE* self, void* edx_unused, const char* path
         }
         list_add_text(tracks, NULL, text, FIELD(self, 0x7F5C, int) - 1, 0);
 
-        game_FUN_00489b60(text, FIELD(record, RECORD_RUN_TIME, float));
+        time_text(text, FIELD(record, RECORD_RUN_TIME, float));
         list_add_text(lengths, NULL, text, 0, 0);
         list_add_text(descriptions, NULL, (const char*) record + RECORD_DESC, 0, 0);
         added = TRUE;
@@ -1803,7 +1807,8 @@ __declspec(noinline) void __fastcall track_choose_set(BYTE* self);
 int  __fastcall option_load_text(BYTE* self, void* edx_unused, int index, HINSTANCE module,
                                  UINT id);
 BOOL __fastcall radio_set(BYTE* self, void* edx_unused, int number);
-void __fastcall game_FUN_00529380(char* profile, void* edx_unused, const char* topic, DWORD a);
+BOOL __fastcall profile_open_help(char* self, void* edx_unused, const char* topic,
+                                  const char* parameters);
 
 static void tab_setup(BYTE* self, const char* name, UINT id)
 {
@@ -1832,7 +1837,7 @@ void __fastcall records_screen_handle(BYTE* self, void* edx_unused, ui_event* ev
         } else if (clicked(event, TAB_RIGHT)) {
             records_filter_show(self, NULL, FILTER_REPLAYS);
         } else if (clicked(event, HELP)) {
-            game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
+            profile_open_help(game_profile, NULL, HELP_TOPIC, 0);
         } else if (clicked(event, START)) {
             if (FIELD(self, 0x7F58, BYTE*)) {
                 track_choose(FIELD(self, 0x7F58, BYTE*));
@@ -2232,7 +2237,7 @@ void __fastcall sp_event_kind_set(BYTE* self)
     int ghost;
 
     race_kind = kind;
-    game_FUN_00529730(game_profile, NULL, kind);
+    profile_set_event(game_profile, NULL, kind);
     modes = combo_list(self, SP_RACE_MODE);
     ghost = list_find_data(modes, NULL, GHOST_RACE);
     if (!kind) {
@@ -2266,15 +2271,15 @@ void __fastcall sp_event_kind_set(BYTE* self)
 
     /* Read again: the profile's call may have changed it. */
     if (!race_kind) {
-        game_FUN_00529730(game_profile, NULL, 0);
+        profile_set_event(game_profile, NULL, 0);
         tracks_list(self, 0);
-        game_FUN_00529730(game_profile, NULL, 5);
+        profile_set_event(game_profile, NULL, 5);
         tracks_list(self, 1);
     } else {
         tracks_list(self, 0);
     }
     dialog_notify_controls(self, NULL, 0);
-    game_FUN_00529730(game_profile, NULL, kind);
+    profile_set_event(game_profile, NULL, kind);
     list_select_text(combo_list(self, LIST_TEXT_BOX), NULL,
                      (const char*) game_main + 0xC6C + kind * 0x80);
 }
@@ -2315,7 +2320,7 @@ void __fastcall sp_event_sync(BYTE* self, void* edx_unused, DWORD out)
             length = 0xFF;
         game__strncpy((char*) settings + SET_TRACK, name, length);
         settings[SET_TRACK + length] = 0;
-        game_FUN_00529730(game_profile, NULL,
+        profile_set_event(game_profile, NULL,
                           FIELD(FIELD(game_session, 0x60, BYTE*) + track, 0x8, DWORD));
         FIELD(settings, SET_TRACK_KIND, BYTE) =
             FIELD(FIELD(game_session, 0x60, BYTE*) + track, 0x4, BYTE);
@@ -2662,7 +2667,7 @@ void __fastcall sp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
         sp_tab_setup(self, SP_TAB_BIKE_RIDER, 0x13E4);
         sp_tab_setup(self, SP_TAB_RACE_INFO, 0x13E5);
         settings_restore();
-        game_FUN_00529730(game_profile, NULL, FIELD(race_settings, SET_EVENT, DWORD));
+        profile_set_event(game_profile, NULL, FIELD(race_settings, SET_EVENT, DWORD));
         if (FIELD(self, 0xC4, int) == SP_SCREEN_RACE_INFO) {
             radio_set(dialog_find_control(self, NULL, SP_TAB_RACE_INFO, TAB_CONTROL), NULL, 0);
             sp_show_page(self, NULL, 2);
@@ -2712,7 +2717,7 @@ void __fastcall sp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
         } else if (clicked(event, SP_JOYSTICK)) {
             options_open(self, self, 0x51B, 1);
         } else if (clicked(event, HELP)) {
-            game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
+            profile_open_help(game_profile, NULL, HELP_TOPIC, 0);
         }
         break;
     case EVENT_CLOSE:
@@ -2934,7 +2939,7 @@ static void replay_watch(BYTE* self, ui_event* event)
     game_FUN_0053a5d5(record, RECORD_SIZE, 1, file);       /* unchecked, as in the original */
     game_FUN_0053a2ad(file);
     __movsd((unsigned long*) race_settings, (unsigned long*) (record + 0x34), 0x7B);
-    game_FUN_00529730(game_profile, NULL, race_kind);
+    profile_set_event(game_profile, NULL, race_kind);
     FIELD(game_main, 0x3428, DWORD) = 1;
     FIELD(game_main, 0x342C, DWORD) = 1;
     FIELD(game_main, 0x1550, DWORD) = FIELD(record, 0x33C, DWORD);
@@ -2995,8 +3000,8 @@ void __fastcall race_info_handle(BYTE* self, void* edx_unused, ui_event* event)
 #define EVENT_EDIT_CHANGED  19
 
 BOOL __fastcall game_FUN_0044b8b0(BYTE* files, void* edx_unused, const char* name);  /* listed */
-void __fastcall game_FUN_00527a70(char* profile);       /* the profile's defaults */
-void __fastcall game_FUN_00528630(char* profile);
+void __fastcall profile_defaults(char* self);       /* the profile's defaults */
+void __fastcall profile_load_controls(char* self);
 void __fastcall game_FUN_00449e20(BYTE* controls, void* edx_unused, const char* path, int a);
 void __fastcall game_FUN_00527080(BYTE* game);
 void __fastcall game_FUN_004b0e10(BYTE* net, void* edx_unused, DWORD player, char* name);
@@ -3032,7 +3037,7 @@ void __cdecl profile_create(ui_event* event)
     if (!CreateDirectoryA(path, NULL))
         return;
 
-    game_FUN_00527a70(game_profile);
+    profile_defaults(game_profile);
     text_copy_most(game_profile, name, PROFILE_LENGTH);
     FIELD(game_main, 0x614, DWORD) = 1;
 
@@ -3068,9 +3073,9 @@ void __cdecl profile_create(ui_event* event)
     game_FUN_0053a11f(controls, NAME(0x0056FE30), PROFILE_FOLDER, name,
                       NAME(0x0056FE3C));                                          /* ...\control.ctl */
     CopyFileA(path, controls, FALSE);
-    game_FUN_00528630(game_profile);
+    profile_load_controls(game_profile);
     VIRTUAL(game_files, 4, method_0)(game_files);
-    game_FUN_00528bb0(game_profile);
+    profile_save(game_profile);
     game_FUN_00449e20(FIELD(game_main, 0x33FC, BYTE*), NULL, controls, -1);
     game_FUN_00527080(game_main);
     dialog_end(event_dialog(event), NULL, 0x1E);
@@ -3136,7 +3141,7 @@ void __fastcall profile_name_handle(BYTE* self, void* edx_unused, ui_event* even
         if (event->a == 0x1F) {
             edit_get_text(edit, NULL, text, sizeof text);
             text_copy_most(game_profile, text, PROFILE_LENGTH);
-            game_FUN_00528820(game_profile);
+            profile_load(game_profile);
             dialog_end(self, NULL, 0x1F);
         } else {
             edit_set_text(edit, NULL, NO_TEXT);
@@ -3310,7 +3315,8 @@ void __cdecl result_confirm(int code, ui_event* event)
 #define TRACK_AND_DESC      NAME(0x005700E4)    /* "%s, %s" */
 
 int    __cdecl game_FUN_0053a51c(void* file, long offset, int origin);                  /* fseek */
-size_t __cdecl game_FUN_0053a727(const void* data, size_t size, size_t count, void* file); /* fwrite */
+/* fwrite */
+size_t __cdecl game_FUN_0053a727(const void* data, size_t size, size_t count, void* file);
 
 /* Out of line, as the original calls them. */
 __declspec(noinline) void __fastcall prompt_setup_ids(BYTE* self, void* edx_unused,
@@ -3496,7 +3502,8 @@ __declspec(noinline) void __fastcall profile_show(BYTE* self);
 
 void __fastcall game_FUN_004d8140(BYTE* object);                    /* frees what it holds */
 void __fastcall game_FUN_004a3f30(void* video);                     /* stop the movie */
-int  __cdecl    game_FUN_004b3670(void);                            /* the network, made if need be */
+/* the network, made if need be */
+int  __cdecl    game_FUN_004b3670(void);
 void __stdcall  game_FUN_0053b88e(void* array, size_t size, int count, DWORD construct,
                                   DWORD destruct);                  /* construct an array */
 void __stdcall  game_FUN_0053b7b0(void* array, size_t size, int count, DWORD destruct);
@@ -3783,13 +3790,13 @@ static void menu_click(BYTE* self, ui_event* event)
         dialog_end(event_dialog(event), NULL, 0);
         event->e = 1;
     } else if (clicked(event, NAME(0x0056F5E0))) {                          /* "ButLoadProfile" */
-        game_FUN_00528bb0(game_profile);
+        profile_save(game_profile);
         if (profile_choose(event))
             game_FUN_00527080(game_main);
         profiles_focus(self);
         user_panel_after_profile(self);
     } else if (clicked(event, NAME(0x0056F5D0))) {                          /* "ButNewProfile" */
-        game_FUN_00528bb0(game_profile);
+        profile_save(game_profile);
         go_to(0xBB9);
         profiles_focus(self);
         profiles_fill(self);
@@ -3820,7 +3827,7 @@ static void menu_click(BYTE* self, ui_event* event)
     } else if (clicked(event, NAME(0x0056F578))) {                          /* "MenuCredits" */
         screen_open(self, 0x7F5C, 0x1E6, NAME(0x0056DC98), (void*) 0x005567B0, 0);   /* credits */
     } else if (clicked(event, NAME(0x0056F56C))) {                          /* "MenuHelp" */
-        game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
+        profile_open_help(game_profile, NULL, HELP_TOPIC, 0);
     } else if (clicked(event, NAME(0x0056F554))) {                          /* "MenuExit" */
         session_quit(game_session);
     }
@@ -4410,5 +4417,5 @@ void __fastcall bike_rider_sync(BYTE* self, void* edx_unused, DWORD out)
                    FIELD(game_session, 0x58, char*)
                    + list_data(combo_list(self, LIST_RIDERS), NULL, -1) * RIDER_SIZE + 0x40,
                    RIDER_TEXT_LENGTH);
-    game_FUN_00528bb0(game_profile);
+    profile_save(game_profile);
 }

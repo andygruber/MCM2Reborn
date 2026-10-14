@@ -187,8 +187,8 @@ __declspec(noinline) void __fastcall session_load_presets(BYTE* self);
 #define INTRO          NAME(0x005736B8)    /* "intro1.dtm" */
 #define SAVE_PROFILE   0x0049D370          /* the manager's callback: session_save_profile */
 
-void __fastcall game_FUN_005294a0(char* profile);                       /* reset it */
-void __fastcall game_FUN_00528820(char* profile);
+void __fastcall profile_load_bonus_tracks(char* self);
+BOOL __fastcall profile_load(char* self);
 void __fastcall game_FUN_004c8230(BYTE* input, void* edx_unused, DWORD filter);
 
 /* Equal as `test ah, 40h` tests it (C3 set): unordered counts too. */
@@ -255,10 +255,10 @@ BYTE* __fastcall session_setup(BYTE* self, void* edx_unused, BYTE* screen, BOOL 
     gui_manager_show_cursors(session_gui(self), NULL, FALSE);
     game_FUN_004eddc0(game_resources, NULL, UI_RESOURCES, 0);
 
-    game_FUN_005294a0(game_profile);
+    profile_load_bonus_tracks(game_profile);
     VIRTUAL(game_main, GAME_SETTING_TEXT, setting_text)(game_main, NULL, KEY_PROFILE, NO_TEXT,
                                                         game_profile, &profile_size);
-    game_FUN_00528820(game_profile);
+    profile_load(game_profile);
 
     session_gui(self)->unknown_ec = FIELD(game_main, 0xC40, int);
     if (!FIELD(game_main, 0xC4C, int))
@@ -323,7 +323,8 @@ typedef BYTE* (__fastcall* model_load)(void* model, void* edx_unused, BYTE* scre
 BOOL  __cdecl    game_FUN_0050ab20(BOOL unhook);        /* the keyboard hook: 1 removes it */
 BYTE* __fastcall game_FUN_004c34d0(BYTE* self, void* edx_unused, DWORD flag);     /* camera */
 BYTE* __fastcall game_FUN_0049f940(BYTE* self, void* edx_unused, DWORD flag);     /* lights */
-BYTE* __fastcall game_FUN_0049f460(BYTE* self, void* edx_unused, DWORD flag);     /* a light */
+/* lightemitter.c */
+BYTE* __fastcall light_construct(BYTE* self, void* edx_unused, DWORD flag);
 BYTE* __fastcall game_FUN_0049f7e0(BYTE* light, void* edx_unused, BYTE* screen, int kind,
                                    COLORREF colour, const vector3* place, const vector3* direction,
                                    DWORD a, DWORD b, DWORD c, DWORD d, DWORD e, DWORD f);
@@ -387,7 +388,7 @@ static void scene_add_light(BYTE* self, int line, int kind, COLORREF colour, con
     BYTE* light = game_new(0xAC, KRUSTYUI_CPP, line);
 
     if (light)
-        light = game_FUN_0049f460(light, NULL, 1);
+        light = light_construct(light, NULL, 1);
     scene_light = game_FUN_0049f7e0(light, NULL, object_screen(self), kind, colour, place,
                                     direction, 0, 0, 0, 0, 0, 0);
     object_add_child(session_scene(self), NULL, scene_light, -1);
@@ -1387,8 +1388,8 @@ void  __fastcall game_FUN_00524700(BYTE* stats, void* edx_unused, short kind, co
 BOOL  __fastcall game_FUN_00524a10(BYTE* stats, void* edx_unused, short kind, int player);
 void  __fastcall game_FUN_005248b0(BYTE* stats, void* edx_unused, short kind, const char* track,
                                    DWORD value);
-void  __fastcall game_FUN_00528bb0(char* profile);                       /* save it */
-DWORD __fastcall game_FUN_00529750(char* profile);
+void __fastcall profile_save(char* self);                       /* save it */
+int __fastcall profile_event(char* self);
 
 __declspec(noinline) void __fastcall session_record(BYTE* self, void* edx_unused, int table);
 
@@ -1440,12 +1441,12 @@ void __fastcall session_record(BYTE* self, void* edx_unused, int table)
     }
     if (improved)
         game_FUN_005248b0(game_stats, NULL, (short) race_kind, track,
-                          game_FUN_00529750(game_profile));
+                          profile_event(game_profile));
 }
 
 /* The GUIManager's callback (given it in session_setup): the profile saved. */
 PORT(0x0049D370)
 void __cdecl session_save_profile(void)
 {
-    game_FUN_00528bb0(game_profile);
+    profile_save(game_profile);
 }
