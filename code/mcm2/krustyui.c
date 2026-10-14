@@ -144,6 +144,7 @@ gui_manager* __fastcall gui_manager_setup(gui_manager* self, void* edx_unused, v
                                           void* font_object, const char* name, short font_size,
                                           const char* cursor_image, int c);
 void  __fastcall gui_manager_make_background(gui_manager* self);
+void  __fastcall gui_manager_drop_background(gui_manager* self);
 void  __fastcall gui_manager_set_folder(gui_manager* self, void* edx_unused, const char* folder);
 void  __fastcall gui_manager_set_wait_image(gui_manager* self, void* edx_unused, const char* image);
 void  __fastcall gui_manager_show_cursors(gui_manager* self, void* edx_unused, BOOL show);
@@ -726,7 +727,9 @@ static void menus_take_profile_mode(BYTE* self)
     if (!dev_settings.menus_widescreen || !card || chosen < 0 || chosen >= FIELD(card, 0x8, int)
         || chosen == FIELD(card, 0xC, int))
         return;
+    /* The background's copy is the old mode's size: dropped first, as a race start does. */
     dev_trace("display", "menus to the profile's mode %d", chosen);
+    gui_manager_drop_background(session_gui(self));
     VIRTUAL(game_main, 0x4C, method_1)(game_main, NULL, chosen);
     gui_manager_make_background(session_gui(self));
 }
