@@ -9,7 +9,7 @@
     exception frames are not reproduced.
 */
 
-#include "game.h"
+#include "dirlist.h"
 
 #define NAME(address) ((const char*) (address))
 #define DIRLIST_CPP NAME(0x0056F2EC)    /* "D:\aardvark\VC\krusty2\dirlist.cpp" */
@@ -41,23 +41,6 @@ static BOOL text_equal(const char* a, const char* b)
 }
 
 /* ---- The drives ---- */
-
-typedef struct drive_entry {
-    char root[4];               /* "X:\" */
-    UINT type;                  /* GetDriveTypeA's */
-    char label[MAX_PATH];       /* the volume's */
-} drive_entry;
-
-typedef struct drive_list {
-    drive_entry* drives;
-    int          count;
-} drive_list;
-
-LAYOUT(drive_entry, label, 0x8);
-_Static_assert(sizeof(drive_entry) == 0x10C, "a drive is 268 bytes");
-_Static_assert(sizeof(drive_list) == 8, "the drive list is 8 bytes");
-
-__declspec(noinline) BOOL __fastcall drives_scan(drive_list* self);
 
 /* A jump to drives_scan, which the profile calls when it is made. */
 PORT(0x0044ADF0)
@@ -159,36 +142,7 @@ BOOL __fastcall drives_root(drive_list* self, void* edx_unused, int index, char*
 
 /* ---- DirectoryList ---- */
 
-typedef struct dir_entry {
-    char  name[MAX_PATH];
-    DWORD attributes;           /* FindFirstFileA's */
-    UINT  drive;                /* DRIVE_FIXED; the merge means it to tell the CD's apart */
-} dir_entry;
-
-typedef struct dir_list {
-    void**     vtable;          /* slot 0 the destructor, slot 1 (offset 4) the scan */
-    int        count;
-    int        cursor;          /* the name the next and current ones go from */
-    char       pattern[MAX_PATH];
-    char       folder[MAX_PATH];
-    dir_entry* entries;
-    BOOL       files_too;       /* FALSE: folders only */
-} dir_list;
-
-LAYOUT(dir_list, count, 0x4);
-LAYOUT(dir_list, cursor, 0x8);
-LAYOUT(dir_list, pattern, 0xC);
-LAYOUT(dir_list, folder, 0x110);
-LAYOUT(dir_list, entries, 0x214);
-LAYOUT(dir_list, files_too, 0x218);
-_Static_assert(sizeof(dir_entry) == 0x10C, "an entry is 268 bytes");
-_Static_assert(sizeof(dir_list) == 0x21C, "a DirectoryList is 540 bytes");
-
 #define DIR_LIST_VTABLE ((void**) 0x00556798)
-
-/* Ported below, called before their place. */
-BOOL __fastcall dir_list_scan(dir_list* self);
-void __fastcall dir_list_destruct(dir_list* self);
 
 /* `count` empty entries, as the original's new[] makes them. */
 static dir_entry* entries_new(int count, int line)
@@ -484,16 +438,6 @@ void __fastcall dir_list_destruct(dir_list* self)
 }
 
 /* ---- CombinedDirectoryList ---- */
-
-typedef struct merged_list {
-    dir_list base;
-    char     hard_disk[MAX_PATH];   /* the folder under the hard disk's game root */
-    char     cd[MAX_PATH];          /* and under the CD's */
-} merged_list;
-
-LAYOUT(merged_list, hard_disk, 0x21C);
-LAYOUT(merged_list, cd, 0x320);
-_Static_assert(sizeof(merged_list) == 0x424, "a CombinedDirectoryList is 1060 bytes");
 
 #define MERGED_LIST_VTABLE ((void**) 0x005567A4)
 

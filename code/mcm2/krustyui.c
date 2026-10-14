@@ -681,11 +681,11 @@ void __fastcall session_hide_cursors(BYTE* self)
 #define PC_RACE     NAME(0x005738F4)    /* "PCLRace.dtm" */
 #define HIGH_SCORES NAME(0x0056F584)    /* "HiScores.dtm" */
 
-void* __fastcall game_FUN_004f7da0(void* self);            /* clears MPBase's table */
+void* __fastcall teams_clear(void* teams);                /* clears MPBase's table */
 void  __fastcall game_FUN_00469760(BYTE* game);
 void  __fastcall game_FUN_00469cb0(void* scene, void* edx_unused, const char* class_name);
 void  __fastcall game_FUN_004d88f0(BYTE* net);
-void  __cdecl    game_FUN_004d92f0(void);
+void __cdecl circuit_screen_open(void);
 
 /* MPBase has a table of its own, cleared before its vtable is set. */
 static BYTE* multiplayer_new(int line)
@@ -694,7 +694,7 @@ static BYTE* multiplayer_new(int line)
 
     if (dialog) {
         dialog_construct(dialog, NULL, 1, MP_BASE);
-        game_FUN_004f7da0(dialog + 0x7F68);
+        teams_clear(dialog + 0x7F68);
         *(DWORD*) dialog = 0x00559BCC;
     }
     return dialog;
@@ -778,7 +778,7 @@ void __fastcall session_go_to(BYTE* self, void* edx_unused, int screen)
                 screen_open(self, multiplayer_new(0x317), screen, 2, FALSE);
         } else if (FIELD(net, 0x128D + FIELD(net, 0x40, int) * 16, int) == FIELD(net, 0x44, int)) {
             game_FUN_004d88f0(net);
-            game_FUN_004d92f0();
+            circuit_screen_open();
         } else if (FIELD(game_main, 0x2D70, int) == 1) {
             screen_open(self, dialog_new(0x7F58, 0x30E, PC_RACE, 0x00559B48), screen, 2, FALSE);
         } else {

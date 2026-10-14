@@ -8,6 +8,7 @@
 */
 
 #include "menus.h"
+#include "dirlist.h"
 
 #define SGP_CPP NAME(0x00579D90)        /* "D:\aardvark\VC\krusty2\SelectGamePicProcs.cpp" */
 
@@ -185,29 +186,23 @@ void   __cdecl    game_FUN_00539a96(void* base, size_t count, size_t size,
                                     int (__cdecl* compare)(const void*, const void*));  /* qsort */
 void*  __cdecl    game_FUN_004a45b0(size_t count, size_t size, const char* file, int line);
 DWORD  __cdecl    game_FUN_004c41d0(void);                                       /* the time */
-void   __cdecl    game_FUN_004b3610(void);                       /* leave the network game */
+void __cdecl net_leave(void);                       /* leave the network game */
 void   __stdcall  game_FUN_0053b88e(void* array, size_t size, int count, DWORD construct,
                                     DWORD destruct);
 void   __stdcall  game_FUN_0053b7b0(void* array, size_t size, int count, DWORD destruct);
 BOOL   __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* text, int size);
 #define load_string(id, text) game_FUN_00526fc0(game_main, NULL, id, text, sizeof text)
 
-void   __fastcall game_FUN_0044bb50(BYTE* files, void* edx_unused, const char* own,
-                                    const char* shared);
-void   __fastcall game_FUN_0044b1b0(BYTE* files, void* edx_unused, const char* pattern, DWORD a);
-int    __fastcall game_FUN_0044b340(BYTE* files);                                /* any found */
-BOOL   __fastcall game_FUN_0044b4f0(BYTE* files, void* edx_unused, char* name);  /* the first */
-BOOL   __fastcall game_FUN_0044b460(BYTE* files, void* edx_unused, char* name);  /* the next */
-void   __fastcall game_FUN_0044b280(BYTE* files, void* edx_unused, DWORD track, char* out);
 void*  __fastcall game_FUN_00461c80(void* self, void* edx_unused, void* resources);
 void   __fastcall game_FUN_00461cd0(void* self);
 #define game_resources (*(void* const*) 0x00578C84)
 
-DWORD  __fastcall game_FUN_00529750(char* profile);
-void   __fastcall game_FUN_00529730(char* profile, void* edx_unused, DWORD track);
-void   __fastcall game_FUN_00529380(char* profile, void* edx_unused, const char* topic, DWORD a);
-void   __fastcall game_FUN_00528300(char* profile);
-void   __fastcall game_FUN_00527cb0(char* profile);
+int __fastcall profile_event(char* self);
+char* __fastcall profile_set_event(char* self, void* edx_unused, int kind);
+BOOL __fastcall profile_open_help(char* self, void* edx_unused, const char* topic,
+                                  const char* parameters);
+void __fastcall profile_clear_flags(char* self);
+BOOL __fastcall profile_reset_players(char* self);
 void   __fastcall game_FUN_004ee910(BYTE* scenes, void* edx_unused, const char* path);
 void   __fastcall game_FUN_004eeda0(BYTE* scenes, void* edx_unused, char* title, const char* file,
                                     DWORD variant, const char* kind, DWORD* a, DWORD* b);
@@ -217,8 +212,8 @@ void   __fastcall game_FUN_004eebc0(BYTE* scenes, void* edx_unused, const char* 
                                     const char* kind, DWORD a);
 void   __fastcall game_FUN_004ef120(BYTE* scenes, void* edx_unused, char* title, BYTE* where,
                                     DWORD number);
-void   __fastcall game_FUN_005275e0(BYTE* entrant, void* edx_unused, const char* maker,
-                                    const char* bike, const char* look);
+void __fastcall player_set_names(BYTE* self, void* edx_unused, const char* first,
+                                 const char* second, const char* third);
 void   __fastcall game_FUN_0045f530(BYTE* events);
 
 void   __fastcall game_FUN_004b0f20(BYTE* net, void* edx_unused, DWORD type, void* data,
@@ -369,7 +364,7 @@ static int track_add(int count, int variant, const char* name, DWORD a, DWORD b)
     BOOL shared = game_net && net_hosting;
 
     return session_add_track(game_session, NULL, count, variant,
-                             game_FUN_00529750(game_profile), name, shared ? a : 0,
+                             profile_event(game_profile), name, shared ? a : 0,
                              shared ? b : 0);
 }
 
@@ -402,7 +397,7 @@ static void track_show(BYTE* pictures, BYTE* names, void* archive, const char* f
     selected reads the track before the first.
 */
 PORT(0x004F66A0)
-BOOL __cdecl tracks_list_fill(BYTE* files, const char* folder, const char* pattern,
+BOOL __cdecl tracks_list_fill(merged_list* files, const char* folder, const char* pattern,
                               const char* kind, BOOL big, const char* picture_name,
                               const char* list_name, char* track, int* chosen, BYTE* dialog,
                               DWORD number, BOOL keep)
@@ -445,20 +440,20 @@ BOOL __cdecl tracks_list_fill(BYTE* files, const char* folder, const char* patte
 
     game_FUN_0053a11f(own, PATH, (const char*) game_main + 0x2948, folder);
     game_FUN_0053a11f(shared, PATH, (const char*) game_main + 0x2A4C, folder);
-    game_FUN_0044bb50(files, NULL, own, shared);
-    game_FUN_0044b1b0(files, NULL, pattern, 1);
+    merged_list_set_folders(files, NULL, own, shared);
+    dir_list_set_pattern(&files->base, NULL, pattern, 1);
     VIRTUAL(files, 4, method_0)(files);
-    if (!game_FUN_0044b340(files))
+    if (!dir_list_count(&files->base))
         return TRUE;
 
     game_FUN_0053a11f(picture, PATH, UI_FOLDER, big ? UNART : UNART_SMALL);
     file_find(picture, fallback);
-    found = game_FUN_0044b4f0(files, NULL, name);
+    found = dir_list_current_title(&files->base, NULL, name);
     archive = game_new(0x134, SGP_CPP, 0xB4);
     if (archive)
         archive = game_FUN_00461c80(archive, NULL, game_resources);
 
-    for (count = 0; found; count++, found = game_FUN_0044b460(files, NULL, name)) {
+    for (count = 0; found; count++, found = dir_list_next_title(&files->base, NULL, name)) {
         int entry;
 
         if (track_hidden(name))
@@ -470,7 +465,7 @@ BOOL __cdecl tracks_list_fill(BYTE* files, const char* folder, const char* patte
 
             game_FUN_004eeda0(game_scenes, NULL, title, name, 0, SCN, &second, &third);
             entry = track_add(count, 0, name, second, third);
-            mode = game_FUN_00529750(game_profile);
+            mode = profile_event(game_profile);
             if (mode == 1 || mode == 5)
                 game_FUN_0053a11f(picture, big ? PIC_FIRST : PIC_FIRST_SMALL, name);
             else
@@ -509,8 +504,7 @@ BOOL __cdecl tracks_list_fill(BYTE* files, const char* folder, const char* patte
     }
     index = (int) list_data(names, NULL, -1);
     VIRTUAL(files, 4, method_0)(files);
-    game_FUN_0044b280(files, NULL,
-                      FIELD(session_tracks + index * TRACK_SIZE, 0, DWORD), track);
+    dir_list_title(&files->base, NULL, FIELD(session_tracks + index * TRACK_SIZE, 0, DWORD), track);
     if (archive) {
         game_FUN_00461cd0(archive);
         game_delete(archive);
@@ -518,7 +512,7 @@ BOOL __cdecl tracks_list_fill(BYTE* files, const char* folder, const char* patte
     return TRUE;
 }
 
-#define event_files       FIELD(game_main, 0x2B5C, BYTE*)
+#define event_files       FIELD(game_main, 0x2B5C, merged_list*)
 #define CUSTOM_FOLDER     FIELD(game_main, 0xC18, const char*)
 #define BAJA_FOLDER       NAME(0x0056CB6C)    /* "Teraform\Baja" */
 #define NATIONAL_FOLDER   NAME(0x0056F60C)    /* "Teraform\National" */
@@ -728,7 +722,7 @@ void __fastcall mp_race_start(BYTE* self)
     FIELD(entrant(0), ENTRANT_PLAYER, int) = me;
     text_copy_most((char*) entrant(0) + ENTRANT_NAME, game_profile, 15);
     FIELD(entrant(0), ENTRANT_INDEX, int) = 0;
-    game_FUN_005275e0(entrant(0), NULL, (char*) game_main + 0x1EEC, (char*) game_main + 0x1F2C,
+    player_set_names(entrant(0), NULL, (char*) game_main + 0x1EEC, (char*) game_main + 0x1F2C,
                       (char*) game_main + 0x1F6C);
     FIELD(entrant(0), ENTRANT_C4, DWORD) = FIELD(game_main, 0x1FB0, DWORD);
     if (skill_wanted > 0 && skill_wanted < 101)
@@ -807,7 +801,7 @@ static void computers_pick(BYTE* self, int count)
         }
     }
 
-    game_FUN_00528300(game_profile);
+    profile_clear_flags(game_profile);
     if (race_mode == SERIES && FIELD(race_events, 0x48, BYTE)) {
         for (i = 0; i < total; i++) {
             race_grid[i].player = FIELD(entrant(i), ENTRANT_PLAYER, int);
@@ -1227,7 +1221,7 @@ static void rider_status_take(BYTE* self, const rider_status* status, int from, 
         FIELD(rider, ENTRANT_PLAYER, int) = player_id(i);
         FIELD(rider, ENTRANT_INDEX, int) = 0;
         text_copy_most((char*) rider + ENTRANT_NAME, player_name(i), 15);
-        game_FUN_005275e0(rider, NULL, status->maker_model, status->bike_look, status->rider_look);
+        player_set_names(rider, NULL, status->maker_model, status->bike_look, status->rider_look);
         FIELD(rider, ENTRANT_ENGINE, int) = status->engine;
         FIELD(rider, ENTRANT_FOUR_STROKE, int) = status->four_stroke;
         FIELD(rider, ENTRANT_F4, BYTE) = status->unset;
@@ -1299,7 +1293,7 @@ static void settings_take(BYTE* self, const settings_message* message)
     FIELD(race_settings, 0x138, DWORD) = message->settings_138;
     FIELD(race_settings, 0x13C, DWORD) = message->settings_13c;
     FIELD(game_main, 0x60C, int) = packed[4] >> 6;
-    game_FUN_00529730(game_profile, NULL, FIELD(race_settings, 0x08, DWORD));
+    profile_set_event(game_profile, NULL, FIELD(race_settings, 0x08, DWORD));
     race_track[0] = 0;
     game__strncat(race_track, message->track, 0x3F);
     __movsd((unsigned long*) mp_teams(self), (unsigned long*) message->teams, 0x18);
@@ -1434,7 +1428,7 @@ static void mp_screen_open(BYTE* self)
     FIELD(self, 0x80CC, DWORD) = 0;
     packet_intervals_load();
     settings_send_wait = 2;
-    game_FUN_00527cb0(game_profile);
+    profile_reset_players(game_profile);
     if (FIELD(self, 0xC4, int) != MP_SCREEN_LOBBY)
         game_FUN_0045f530(race_events);
     FIELD(game_main, 0x2D9C, BYTE) = 0;
@@ -1498,7 +1492,8 @@ static void mp_screen_open(BYTE* self)
     } else {
         lobby_slot = 0;
     }
-    if (FIELD(self, 0xC4, int) != MP_SCREEN_RACE_INFO && FIELD(self, 0xC4, int) != MP_SCREEN_LOBBY) {
+    if (FIELD(self, 0xC4, int) != MP_SCREEN_RACE_INFO
+        && FIELD(self, 0xC4, int) != MP_SCREEN_LOBBY) {
         radio_set(dialog_find_control(self, NULL, TAB_EVENT, TAB_CONTROL), NULL, 0);
         mp_show_page(self, NULL, 0);
     } else {
@@ -1642,7 +1637,7 @@ static void mp_screen_click(BYTE* self, ui_event* event)
             return;
         }
         game_FUN_004b0d20(game_net);
-        game_FUN_004b3610();
+        net_leave();
         dialog_end((BYTE*) event->sender, NULL, 0);
         event->e = 1;
         session_go_to(game_session, NULL, 100);
@@ -1668,7 +1663,7 @@ static void mp_screen_click(BYTE* self, ui_event* event)
     } else if (clicked(event, JOYSTICK)) {
         options_open(self, 0x6AF, 1);
     } else if (clicked(event, HELP)) {
-        game_FUN_00529380(game_profile, NULL, HELP_TOPIC, 0);
+        profile_open_help(game_profile, NULL, HELP_TOPIC, 0);
     } else {
         for (i = 0; i < PLAYER_SLOTS; i++) {
             if (clicked(event, kick_buttons[i])) {
@@ -1728,7 +1723,7 @@ void __fastcall mp_screen_handle(BYTE* self, void* edx_unused, ui_event* event)
     }
 }
 
-#define mp_rules          FIELD(game_main, 0x214C, DWORD) /* the host's: 1 event, 2 track fixed, 4/8 bikes */
+#define mp_rules          FIELD(game_main, 0x214C, DWORD) /* host's: 1 event, 2 track, 4/8 bikes */
 #define mp_largest        FIELD(game_main, 0x2D8C, int)  /* the largest engine class allowed */
 #define mp_max_ai         FIELD(game_main, 0xC54, int)
 #define SET_TRACK_ID      0x08
@@ -1770,7 +1765,7 @@ void  __fastcall game_FUN_0046a880(void* walk, void* edx_unused, void* root, DWO
 BYTE* __fastcall game_FUN_0046a980(void* walk);
 void  __fastcall game_FUN_0046a970(void* walk);
 
-void  __fastcall game_FUN_005291a0(char* profile, void* edx_unused, char* folder);
+BOOL __fastcall profile_race_scene(char* self, void* edx_unused, char* scene);
 void  __cdecl    game_FUN_0051dcc0(char* text, float seconds);    /* a time, as text */
 
 /* OpponentsListBox: 0 to the host's most, the old count kept where it still fits. */
@@ -1951,10 +1946,10 @@ void __fastcall mp_track_check(BYTE* self)
     if (!game__strcmp((char*) self + MP_TRACK, track)
         && FIELD(self, MP_TRACK_KIND, DWORD) == FIELD(race_settings, SET_TRACK_KIND, BYTE))
         return;
-    game_FUN_005291a0(game_profile, NULL, folder);
+    profile_race_scene(game_profile, NULL, folder);
     profile_find_named_file(game_profile, NULL, folder, track, ENV, path);
     game_FUN_004ee910(FIELD(game_main, 0x574, BYTE*), NULL, path);
-    if (game_FUN_00529750(game_profile) == 1 || game_FUN_00529750(game_profile) == 5)
+    if (profile_event(game_profile) == 1 || profile_event(game_profile) == 5)
         variant = FIELD(race_settings, SET_TRACK_KIND, BYTE);
     else
         variant = 0;
@@ -1964,7 +1959,7 @@ void __fastcall mp_track_check(BYTE* self)
         mp_track_state = 2;
         if (mp_user_ready)
             mp_ready_cancel(self, NULL, 2);
-        game_FUN_00526fc0(game_main, NULL, 0x143B, title, 0x80);   /* 0x40 bytes left: as original */
+        game_FUN_00526fc0(game_main, NULL, 0x143B, title, 0x80);   /* 0x40 left (the original's) */
     } else if (check == FIELD(race_settings, SET_TRACK_CHECK, DWORD)) {
         mp_track_state = 0;
     } else {
@@ -2102,7 +2097,7 @@ void __fastcall mp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
             BYTE* track = FIELD(game_session, 0x60, BYTE*)
                           + list_data(list, NULL, -1) * TRACK_ENTRY;
 
-            game_FUN_00529730(game_profile, NULL, FIELD(track, 0x8, DWORD));
+            profile_set_event(game_profile, NULL, FIELD(track, 0x8, DWORD));
             text_copy_most((char*) race_settings + SET_TRACK, (const char*) track + 0x14, 0xFF);
             FIELD(race_settings, SET_TRACK_KIND, BYTE) = FIELD(track, 0x4, BYTE);
             FIELD(race_settings, SET_TRACK_138, DWORD) = FIELD(track, 0xC, DWORD);
@@ -2275,27 +2270,27 @@ void __fastcall mp_event_kind_set(BYTE* self)
         track_show_hosts(self);
     } else {
         if (kind == 0) {
-            game_FUN_00529730(game_profile, NULL, 0);
+            profile_set_event(game_profile, NULL, 0);
             tracks_list(self, 0);
-            game_FUN_00529730(game_profile, NULL, 5);
+            profile_set_event(game_profile, NULL, 5);
             tracks_list(self, 1);
         } else if (kind == 4) {
-            game_FUN_00529730(game_profile, NULL, 4);
+            profile_set_event(game_profile, NULL, 4);
             tracks_list(self, 0);
-            game_FUN_00529730(game_profile, NULL, 1);
+            profile_set_event(game_profile, NULL, 1);
             tracks_list(self, 1);
-            game_FUN_00529730(game_profile, NULL, 5);
+            profile_set_event(game_profile, NULL, 5);
             tracks_list(self, 1);
-            game_FUN_00529730(game_profile, NULL, 0);
+            profile_set_event(game_profile, NULL, 0);
             tracks_list(self, 1);
         } else {
-            game_FUN_00529730(game_profile, NULL, kind);
+            profile_set_event(game_profile, NULL, kind);
             tracks_list(self, 0);
         }
         list_select_text(combo_list(self, LIST_TEXT_BOX), NULL,
                          (char*) game_main + kind * 0x80 + 0xC6C);
     }
-    game_FUN_00529730(game_profile, NULL, FIELD(race_settings, SET_TRACK_ID, DWORD));
+    profile_set_event(game_profile, NULL, FIELD(race_settings, SET_TRACK_ID, DWORD));
 }
 
 /* Slot 31, host only: the page into the settings (`out`), or back from them. */
@@ -2324,7 +2319,7 @@ void __fastcall mp_event_sync(BYTE* self, void* edx_unused, DWORD out)
         list = combo_list(self, LIST_TEXT_BOX);
         track = FIELD(game_session, 0x60, BYTE*) + list_data(list, NULL, -1) * TRACK_ENTRY;
         text_copy_most((char*) settings + SET_TRACK, (const char*) track + 0x14, 0xFF);
-        game_FUN_00529730(game_profile, NULL, FIELD(track, 0x8, DWORD));
+        profile_set_event(game_profile, NULL, FIELD(track, 0x8, DWORD));
         FIELD(settings, SET_TRACK_KIND, BYTE) = FIELD(track, 0x4, BYTE);
         FIELD(settings, SET_TRACK_138, DWORD) = FIELD(track, 0xC, DWORD);
         FIELD(settings, SET_TRACK_CHECK, DWORD) = FIELD(track, 0x10, DWORD);
@@ -2352,7 +2347,8 @@ void __fastcall mp_event_sync(BYTE* self, void* edx_unused, DWORD out)
             for (i = 0; i < FIELD(list, 0x1EC, int); i++) {
                 int track = (int) list_data(list, NULL, i);
 
-                if (!game_FUN_0053b6e0(FIELD(game_session, 0x60, char*) + track * TRACK_ENTRY + 0x14,
+                if (!game_FUN_0053b6e0(FIELD(game_session, 0x60, char*)
+                                       + track * TRACK_ENTRY + 0x14,
                                        (const char*) settings + SET_TRACK)) {
                     list_select_data(list, NULL, track);
                     break;
@@ -2414,7 +2410,7 @@ void __fastcall track_picture_add(BYTE* self, void* edx_unused, BYTE* list, cons
     if (race_kind == 1 || race_kind == 5)
         game_FUN_0053a11f(picture, NAME(0x00579D50), track,                 /* "%s%02ds.tga" */
                           FIELD(race_settings, SET_TRACK_KIND, BYTE));
-    else if (game_FUN_00529750(game_profile) == 1 || game_FUN_00529750(game_profile) == 5)
+    else if (profile_event(game_profile) == 1 || profile_event(game_profile) == 5)
         game_FUN_0053a11f(picture, NAME(0x00579D68), track);                /* "%s01s.tga" */
     else
         game_FUN_0053a11f(picture, NAME(0x00579D80), track);                /* "%ss.tga" */
@@ -2479,7 +2475,7 @@ static void mp_bike_rider_open(BYTE* self)
 
     list = combo_list(self, LIST_ENGINE_SIZE);
     list_clear(list);
-    list_add_text(list, NULL, NAME(0x0056FC28), 0, 0);                         /* "125cc 2-stroke" */
+    list_add_text(list, NULL, NAME(0x0056FC28), 0, 0);                     /* "125cc 2-stroke" */
     list_add_text(list, NULL, NAME(0x0056FC18), engine_class(engine_sizes[1]), 0);  /* 250cc */
     list_add_text(list, NULL, NAME(0x0056FC08), engine_class(engine_sizes[2]), 0);  /* 400cc */
     list_add_text(list, NULL, NAME(0x0056FBF8), engine_class(engine_sizes[3]), 0);  /* 500cc */
