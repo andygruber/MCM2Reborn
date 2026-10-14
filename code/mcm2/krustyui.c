@@ -727,11 +727,14 @@ static void menus_take_profile_mode(BYTE* self)
     if (!dev_settings.menus_widescreen || !card || chosen < 0 || chosen >= FIELD(card, 0x8, int)
         || chosen == FIELD(card, 0xC, int))
         return;
-    /* The background's copy is the old mode's size: dropped first, as a race start does. */
+    /* The background's copy is the old mode's size. It is remade, not replaced: the dialog
+       closing still holds the background, so freeing it would leave that dangling. */
     dev_trace("display", "menus to the profile's mode %d", chosen);
-    gui_manager_drop_background(session_gui(self));
+    if (session_gui(self)->background)
+        background_release_dc(session_gui(self)->background);
     VIRTUAL(game_main, 0x4C, method_1)(game_main, NULL, chosen);
-    gui_manager_make_background(session_gui(self));
+    if (session_gui(self)->background)
+        background_resize(session_gui(self)->background);
 }
 #endif
 
