@@ -17,13 +17,6 @@
 #define light_y    (*(vector3*) 0x00682620)
 #define light_z    (*(vector3*) 0x006825F0)
 
-static void set_vector(vector3* v, float x, float y, float z)
-{
-    v->x = x;
-    v->y = y;
-    v->z = z;
-}
-
 /* Out of line, so the entries below stay jumps to them as in the original. */
 __declspec(noinline) void __cdecl light_init_zero(void);
 __declspec(noinline) void __cdecl light_init_x(void);

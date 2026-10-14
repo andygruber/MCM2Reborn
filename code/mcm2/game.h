@@ -93,6 +93,13 @@ typedef struct vector3 {
     float x, y, z;
 } vector3;
 
+static __inline void set_vector(vector3* v, float x, float y, float z)
+{
+    v->x = x;
+    v->y = y;
+    v->z = z;
+}
+
 /* Parameter.cpp's reader; its size is the room the original gives it. */
 typedef struct param_file {
     BYTE opaque[0x6C4];

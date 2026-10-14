@@ -81,11 +81,6 @@ typedef DWORD (__fastcall* setting_number)(void* game, void* edx_unused, const c
 #define TXT_TIME_END   NAME(0x00572744)     /* "TxtTimeEnd" */
 #define TXT_TIME       NAME(0x00572750)     /* "TxtTime" */
 
-enum {
-    EVENT_CLICK = 1, EVENT_OPEN = 5, EVENT_CLOSE = 6, EVENT_CHILD_ENDED = 9,
-    EVENT_SLIDER = 16,      /* a slider moved; c is the slider */
-};
-
 #define KEY_RETURN 0x1C
 
 #define game_net       FIELD(game_main, 0x8, BYTE*)
@@ -405,7 +400,7 @@ void __fastcall vcr_handle(BYTE* self, void* edx_unused, ui_event* event)
         if (!cursors_locked && !FIELD(self, VCR_LEAVING, DWORD))
             gui_manager_show_cursors(dialog_gui(self), NULL, FALSE);
         break;
-    case EVENT_SLIDER:
+    case EVENT_SLIDE_END:
         if (clicked(event, SLIDER_TIME)) {
             float fraction = (float) slider_get_value((BYTE*) event->c) * 0.001f;
 

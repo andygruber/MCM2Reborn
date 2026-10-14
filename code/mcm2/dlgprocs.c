@@ -6,7 +6,7 @@
     sender) and look the screen's controls up by the names the dialog files give them.
 */
 
-#include "gui.h"
+#include "menus.h"
 #include <imm.h>
 
 /* The controls and lists these use, ported in ui.c. */
@@ -37,19 +37,14 @@ int         __fastcall list_set_text_colour(BYTE* self, void* edx_unused, COLORR
 int         __fastcall list_set_colour_2(BYTE* self, void* edx_unused, COLORREF colour);
 DWORD       __fastcall list_data(BYTE* self, void* edx_unused, int index);
 
-#define COMBO_LIST 0x1FC     /* a combo box's list */
-
 /* The game's: atoi, a string from its language module, and the profile it saves to. */
 int  __cdecl    game_FUN_0053b6c7(const char* text);
 int  __cdecl    game_FUN_0053b6e0(const char* a, const char* b);           /* _stricmp */
-void __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* text, int size);
+BOOL __fastcall game_FUN_00526fc0(BYTE* game, void* edx_unused, UINT id, char* text, int size);
 BOOL __fastcall profile_load(char* self);
 int  __cdecl    game_FUN_0053a11f(char* to, const char* format, ...);      /* sprintf */
 char* __cdecl   game__strncpy(char* to, const char* from, size_t count);
 char* __cdecl   game_FUN_0054aaa5(int value, char* text, int radix);   /* _itoa */
-#define game_profile ((char*) game_main + 0x578)    /* char[16]: the player's profile */
-#define game_language FIELD(game_main, 0x420, HINSTANCE)
-#define game_session FIELD(game_main, 0x56C, BYTE*)       /* the menus' session */
 
 /* The directory lister (dirlist.cpp) at game_main + 0x3338, and its calls. */
 #define game_files FIELD(game_main, 0x3338, BYTE*)
@@ -58,7 +53,6 @@ void __fastcall game_FUN_0044b1b0(BYTE* files, void* edx_unused, const char* pat
 BOOL __fastcall game_FUN_0044b4f0(BYTE* files, void* edx_unused, char* name);   /* the first */
 BOOL __fastcall game_FUN_0044b460(BYTE* files, void* edx_unused, char* name);   /* the next */
 
-#define NAME(address) ((const char*) (address))
 #define LIST_PROFILES   NAME(0x0056F3E8)    /* "LstProfiles" */
 #define PROFILE_FOLDER  NAME(0x0056F548)    /* "ui\profile" */
 #define PROFILE_FILES   NAME(0x0056F334)    /* "*" */
@@ -69,12 +63,6 @@ BOOL __fastcall game_FUN_0044b460(BYTE* files, void* edx_unused, char* name);   
 #define PROFILE_LENGTH  15
 
 #define DLGPROCS_CPP NAME(0x0056F744)     /* "...\dlgprocs.cpp" */
-
-/* Less as the x87 compare tests it (C0 set): unordered counts too. */
-static BOOL x87_less(double a, double b)
-{
-    return !(a >= b);
-}
 
 static BYTE* event_dialog(const ui_event* event)
 {
@@ -261,8 +249,6 @@ void __cdecl stats_add_row(ui_event* event, const char* first, const char* secon
 #define PROMPT_TEXT   NAME(0x0056F858)      /* "TxtPrompt" */
 #define KEY_RETURN    0x1C
 
-enum { EVENT_CLICK = 1, EVENT_OPEN = 5, EVENT_CLOSE = 6, EVENT_KEY = 11 };
-
 static void load_text(BYTE* self, const char* name, int type, UINT id)
 {
     control_load_text(dialog_find_control(self, NULL, name, type), NULL, game_language, id);
@@ -288,11 +274,6 @@ static void one_button(BYTE* self, UINT id)
     button = dialog_find_control(self, NULL, BUTTON_MIDDLE, 1);
     control_load_text(button, NULL, game_language, id);
     FIELD(button, 0x1D8, DWORD) = KEY_RETURN;
-}
-
-static BOOL clicked(const ui_event* event, const char* button)
-{
-    return !game_FUN_0053b6e0(button, (const char*) event->b);
 }
 
 /* Three choices: left ends with 60, middle with 61, right with 0. */
@@ -488,7 +469,6 @@ BYTE* __fastcall loading_baja_construct(BYTE* self, void* edx_unused, DWORD flag
 #define GHOST_CHOSEN 0x7F58
 #define GHOST_PATHS  0x7F60
 #define GHOST_COUNT  0x7F64
-
 
 /*
     The chosen record and the listed records' paths, freed. The ghost and replay screens share
@@ -1072,7 +1052,6 @@ void __cdecl result_go(int code, ui_event* event)
 
 /* ---- Intro ---- */
 
-#define session_gui     FIELD(game_session, 0x2C, gui_manager*)
 #define cursors_locked  (FIELD(game_main, 0x2D5, BYTE) & 2)
 
 void __fastcall gui_manager_show_cursors(gui_manager* self, void* edx_unused, BOOL show);
@@ -1210,9 +1189,6 @@ int   __fastcall dialog_draw_over(BYTE* self);
 void  __fastcall game_FUN_00445c10(BYTE* model, void* edx_unused, DWORD a, BYTE* look,
                                    BYTE* display);
 
-#define session_players FIELD(game_session, 0x48, BYTE*)    /* 200 bytes each */
-#define player_model(player) FIELD(FIELD(player, 0xC0, BYTE*), 0x1A0, BYTE*)
-
 /*
     Vtable slot 13: draw. A bike or rider picked from DDLBikes or DDLRiders since the last draw
     (0x7F84, 0x7F88) dresses the model showing it.
@@ -1255,16 +1231,9 @@ int __fastcall preview_draw(BYTE* self)
     the riders (200 bytes each from 0x58, 0x5C of them) of kind 2 or 3 or marked at 0xC0, with
     the one named at the game's 0x1F6C picked.
 */
-#define BIKE_SIZE   0x94
-#define RIDER_SIZE  200
 
 int __fastcall list_select_data(BYTE* self, void* edx_unused, DWORD data);
 int __cdecl    game__strcmp(const char* a, const char* b);
-
-static BOOL maker_rideable(int kind)
-{
-    return kind == 2 || kind == 3 || (kind == 10 && (FIELD(game_main, 0x1EE8, BYTE) & 1));
-}
 
 PORT(0x00450630)
 void __fastcall choices_fill(BYTE* self)
@@ -1385,7 +1354,6 @@ int __fastcall race_start_tick(BYTE* self, void* edx_unused, float seconds)
 */
 #define loading_ticks   (*(int*) 0x005A0F4C)
 #define loading_d8      (*(DWORD*) 0x005A0FD8)   /* cleared as the screen opens */
-#define EVENT_TIMER     7
 
 BYTE* __fastcall progress_construct(BYTE* self, void* edx_unused, DWORD a, const RECT* area,
                                     BYTE* dialog);
@@ -1993,37 +1961,6 @@ BYTE* __fastcall record_init(BYTE* self)
 /* ---- The race's settings ---- */
 
 /*
-    The race settings the menus edit, 0x7B dwords at the game's 0x2D70. They, the bike's
-    (0x1550), the rider's (0x1EEC) and 0x60C have copies (0x2F5C, 0x15AC, 0x1FB4, 0x610) that
-    the single-player screen opens with and that Back and Start keep.
-*/
-#define race_settings   (game_main + 0x2D70)
-#define race_mode       FIELD(game_main, 0x2D70, int)   /* RaceModeDropDown's; 2 a series, 4 a ghost race */
-#define race_kind       FIELD(game_main, 0x2D74, int)   /* 0 quarry, 1 baja, 2 national, 3 SX, 4 tag, 5 enduro */
-#define race_round      FIELD(game_main, 0x2D7C, int)
-#define race_events     FIELD(game_main, 0x570, BYTE*)
-#define series_started  FIELD(game_main, 0x1664, int)
-#define record_race     FIELD(game_main, 0x3334, int)
-#define SERIES          2
-#define GHOST_RACE      4
-
-#define SET_MODE        0x00
-#define SET_EVENT       0x04
-#define SET_RACES       0x0C
-#define SET_TREES       0x10    /* tree collision */
-#define SET_LAPS        0x20
-#define SET_OPPONENTS   0x24
-#define SET_28          0x28    /* cleared by Start */
-#define SET_RANDOM_GATES 0x2C   /* BYTE */
-#define SET_GATES       0x2D    /* BYTE */
-#define SET_SEED        0x30
-#define SET_TRACK_KIND  0x34    /* BYTE */
-#define SET_TRACK       0x36    /* char[0x100] */
-#define SET_TIME        0x140   /* float: the laps list's value for the timed events (0 and 4) */
-#define TRACK_ENTRY     0x54    /* the session's tracks (0x60): kind 0x4, id 0x8, name 0x14 */
-#define SEED_MAX        999
-
-/*
     The race's standings: 0x50 bytes a rider from events + 0x50, events + 0x4C of them. The
     columns are named by their use: 0x04 shown as a number, 0x08, 0x14, 0x18 and 0x1C as
     times, 0x2C as a score; 0x24 leaves the rider out.
@@ -2153,64 +2090,6 @@ int  __fastcall list_find_data(BYTE* self, void* edx_unused, DWORD data);
 BOOL __fastcall list_remove(BYTE* self, void* edx_unused, int index);
 void __cdecl    game_FUN_004f7f20(DWORD a, const char* picture, const char* list, DWORD b,
                                   BYTE* dialog, DWORD append);       /* the kind's tracks */
-
-#define SP_EVENT_TYPE       NAME(0x0056FA84)    /* "EventTypeDropDown" */
-#define SP_RACE_MODE        NAME(0x0056FA70)    /* "RaceModeDropDown" */
-#define SP_OPPONENTS        NAME(0x0056FA5C)    /* "OpponentsListBox" */
-#define SP_RECORD           NAME(0x0056FA4C)    /* "ChkRecordRace" */
-#define SP_LOD_EASY         NAME(0x0056FA40)    /* "RadLODEasy" */
-#define SP_GATES            NAME(0x0056FA34)    /* "LstNumGates" */
-#define SP_SEED             NAME(0x0056FA1C)    /* "EditSeed" */
-#define SP_RANDOM_GATES     NAME(0x0056FA00)    /* "ChkRandomGates" */
-#define SP_TRACK_LEFT       NAME(0x0056F9F4)    /* "TrackLeft" */
-#define SP_TRACK_RIGHT      NAME(0x0056F9E8)    /* "TrackRight" */
-#define SP_GHOST_LEFT       NAME(0x0056F9DC)    /* "GhostLeft" */
-#define SP_GHOST_RIGHT      NAME(0x0056F9C0)    /* "GhostRight" */
-#define SP_SEED_LEFT        NAME(0x0056F9B4)    /* "SeedLeft" */
-#define SP_SEED_RIGHT       NAME(0x0056F9A8)    /* "SeedRight" */
-#define SP_OPPONENTS_LEFT   NAME(0x0056F994)    /* "OpponentsLeftArrow" */
-#define SP_OPPONENTS_RIGHT  NAME(0x0056F980)    /* "OpponentsRightArrow" */
-#define SP_LAPS_BOX         NAME(0x0056FB18)    /* "LapsControlBox" */
-#define SP_RACES_BOX        NAME(0x0056FB08)    /* "RacesControlBox" */
-#define SP_GHOST_BOX        NAME(0x0056FAFC)    /* "GhostBox" */
-#define SP_OPPONENTS_BOX    NAME(0x0056FAE8)    /* "OpponentsControlBox" */
-#define SP_WAYPOINTS        NAME(0x0056FADC)    /* "WaypointBox" */
-#define SP_RACES_LEFT       NAME(0x0056FACC)    /* "RacesLeftArrow" */
-#define SP_RACES_RIGHT      NAME(0x0056FABC)    /* "RacesRightArrow" */
-#define SP_RACES_LABEL      NAME(0x0056FAB0)    /* "RacesLabel" */
-#define SP_RACES            NAME(0x0056FAA0)    /* "RacesListBox" */
-#define SP_LAPS             NAME(0x0056FB38)    /* "LapsListBox" */
-#define SP_LAPS_LABEL       NAME(0x0056FB44)    /* "LapsLabel" */
-#define SP_TREES            NAME(0x0056FB50)    /* "ChkTreeCollision" */
-#define SP_PICTURE          NAME(0x0056FB28)    /* "PictureBox" */
-#define ONE_NUMBER          NAME(0x0056EEA8)    /* "%d" */
-#define METRES              NAME(0x0056FB34)    /* "%dm" */
-#define RACE_OF             NAME(0x0056FA98)    /* "%d/%d" */
-
-#define EVENT_SELECT 2      /* a list's selection moved; c is the list */
-
-static BYTE* combo_list(BYTE* self, const char* name)
-{
-    return FIELD(dialog_find_control(self, NULL, name, 6), COMBO_LIST, BYTE*);
-}
-
-/* Event types 0 and 4 are timed: the laps list holds their time (SET_TIME). */
-static BOOL event_timed(int type)
-{
-    return type == 0 || type == 4;
-}
-
-static void numbers_fill(BYTE* list, const char* format, int first, int last)
-{
-    char number[0x100];
-    int i;
-
-    list_clear(list);
-    for (i = first; i <= last; i++) {
-        game_FUN_0053a11f(number, format, i);
-        list_add_text(list, NULL, number, i, 0);
-    }
-}
 
 static void tracks_list(BYTE* self, DWORD append)
 {
@@ -2467,33 +2346,6 @@ void __fastcall sp_event_refresh(BYTE* self)
     }
 }
 
-/* Vtable slot 54: the outside value a control shows and sets, synced by dialog_notify_controls. */
-static void control_bind(BYTE* control, void* value)
-{
-    VIRTUAL(control, 0xD8, method_1)(control, NULL, (DWORD) value);
-}
-
-static void list_add_string(BYTE* list, UINT id, DWORD data)
-{
-    char text[0x80];
-
-    game_FUN_00526fc0(game_main, NULL, id, text, sizeof text);
-    list_add_text(list, NULL, text, data, 0);
-}
-
-/* The arrows beside a drop-down list step its selection round, and tell its dialog (slot 66). */
-static void combo_step(BYTE* self, const char* name, BOOL back)
-{
-    BYTE* list = combo_list(self, name);
-    int count = FIELD(list, 0x1EC, int);
-
-    if (back)
-        list_select_all(list, NULL, (list_selected(list) + count - 1) % count);
-    else
-        list_select_all(list, NULL, (list_selected(list) + 1) % count);
-    VIRTUAL(list, 0x108, method_1)(list, NULL, 0);
-}
-
 /* The arrows beside EditSeed: 0 down wraps to 999, 999 up to 0. */
 static void seed_step(BYTE* self, BOOL back)
 {
@@ -2613,7 +2465,6 @@ __declspec(noinline) void __fastcall ghosts_fill(BYTE* self);
 #define SP_TAB_RACE_INFO    NAME(0x0056F8D4)    /* "RaceInfoTab" */
 #define SP_OPTIONS          NAME(0x0056F8BC)    /* "Options" */
 #define SP_JOYSTICK         NAME(0x0056F8B0)    /* "Joystick" */
-#define EVENT_CHILD_ENDED   9                   /* a dialog this one opened ended, its code in a */
 #define SP_SCREEN_RACE_INFO 0x88E               /* the screen opened on its race info */
 
 /* The tabs: words for both their states, centred (0x12). */
@@ -2996,8 +2847,6 @@ void __fastcall race_info_handle(BYTE* self, void* edx_unused, ui_event* event)
 #define PROFILE_CHARACTERS NAME(0x0056FE6C)  /* letters, digits and "_-()$#@" */
 #define OK_BUTTON_WORDS NAME(0x0056FF54)     /* "OKButton": OkButton too, names being matched by _stricmp */
 #define profile_asking  FIELD(game_session, 0x4B0, DWORD)
-
-#define EVENT_EDIT_CHANGED  19
 
 BOOL __fastcall game_FUN_0044b8b0(BYTE* files, void* edx_unused, const char* name);  /* listed */
 void __fastcall profile_defaults(char* self);       /* the profile's defaults */
@@ -3903,7 +3752,6 @@ void __fastcall main_menu_handle(BYTE* self, void* edx_unused, ui_event* event)
 
 /* ---- Numbers ---- */
 
-
 PORT(0x00452190)
 char* __cdecl number_text(int value, char* text)
 {
@@ -3927,13 +3775,6 @@ __declspec(noinline) void __cdecl init_vector_y(void);
 __declspec(noinline) void __cdecl init_vector_z(void);
 __declspec(noinline) void __cdecl init_timer_a(void);
 __declspec(noinline) void __cdecl init_timer_b(void);
-
-static void set_vector(vector3* v, float x, float y, float z)
-{
-    v->x = x;
-    v->y = y;
-    v->z = z;
-}
 
 PORT(0x00454B30)
 void __cdecl init_vector_zero(void)
@@ -4009,116 +3850,6 @@ void __cdecl init_timer_b_entry(void)
 }
 
 /* ---- Single player: the bike and rider page ---- */
-
-/*
-    The bike and rider page (SPBikeR.dtm, vtable 0x00556DEC) shows the session's rider and bike
-    models (0x46C, 0x470) through its camera (0x468), circling the session's point (0x474).
-*/
-#define BR_POSITION      0x7F58     /* vector3: the camera */
-#define BR_TARGET        0x7F64     /* vector3: what it looks at */
-#define BR_DISTANCE      0x7F70     /* float: how far it circles */
-#define BR_SLOT          0x7F74     /* the page's background slot */
-#define BR_MANUAL        0x7F78     /* the mouse turns it (ChkAutoRotate off) */
-#define BR_HELD          0x7F7C     /* the mouse button is down (hold_release clears it) */
-#define BR_IDLING        0x7F80     /* the rider is playing WaitR */
-#define BR_BIKE_CHANGED  0x7F84
-#define BR_RIDER_CHANGED 0x7F88
-#define BR_VIEW          0x7F8C     /* RECT: where the models are drawn */
-
-#define session_camera FIELD(game_session, 0x468, BYTE*)
-#define session_rider  FIELD(game_session, 0x46C, BYTE*)
-#define session_bike   FIELD(game_session, 0x470, BYTE*)
-#define session_centre FIELD(game_session, 0x474, vector3)
-
-#define LIST_BIKES        NAME(0x0056FBCC)    /* "DDLBikes" */
-#define LIST_RIDERS       NAME(0x0056FBC0)    /* "DDLRiders" */
-#define LIST_ENGINE_SIZE  NAME(0x0056FC38)    /* "DDLEngineSize" */
-#define TEXT_ENGINE_SIZE  NAME(0x0056FC84)    /* "TxtEngineSize" */
-#define EDIT_PLATE        NAME(0x0056FBD8)    /* "EditPlateNumber" */
-#define CHECK_AUTO_ROTATE NAME(0x0056FC48)    /* "ChkAutoRotate" */
-
-#define engine_sizes    ((const int*) 0x00572BEC)   /* 125, 250, 400, 500, 600 */
-#define TURN_PER_PIXEL  0.015707964f                /* pi/200 */
-#define TURN_PER_SECOND 0.39269908f                 /* pi/8 */
-#define EVENT_EDIT_DONE 10
-
-int   __cdecl    game__rand(void);
-void  __cdecl    game_FUN_0053a27e(unsigned seed);                         /* srand */
-DWORD __cdecl    game_FUN_004c41d0(void);                                  /* the time */
-float __cdecl    game_FUN_00461ac0(float value);                           /* a fast square root */
-void* __stdcall  D3DRMVectorRotate(vector3* out, const vector3* v, const vector3* axis,
-                                   float angle);
-
-/* The session's camera: its place (each pointer may be NULL), where it looks, its viewport. */
-void __fastcall game_FUN_0042f8d0(BYTE* camera, void* edx_unused, const vector3* position,
-                                  const void* a, const void* b, const void* c, const float* fov);
-typedef int (__fastcall* camera_look_at)(void* camera, void* edx_unused, vector3 target);
-void __fastcall game_FUN_004300b0(BYTE* camera, void* edx_unused, int x, int y, int width,
-                                  int height);
-typedef int (__fastcall* model_step)(void* model, void* edx_unused, float seconds, DWORD a,
-                                     DWORD b);
-void __fastcall game_FUN_004aa170(BYTE* model, void* edx_unused, const char* animation);
-void __fastcall session_show_scene(BYTE* self, void* edx_unused, BYTE* dialog);  /* models in */
-void __fastcall game_FUN_004eda80(BYTE* screen, void* edx_unused, BYTE* camera);
-
-/* Equal as `test ah, 40h` tests it (C3 set): unordered counts too. */
-static BOOL x87_equal(double a, double b)
-{
-    return !(a < b) && !(a > b);
-}
-
-/* An engine size's class (0 to 4), as the game rounds it; 1 when it falls between. */
-static int engine_class(int cc)
-{
-    int i;
-
-    if (cc <= engine_sizes[0])
-        return 0;
-    if (cc >= engine_sizes[4])
-        return 4;
-    for (i = 1; i < 4; i++) {
-        if (cc > engine_sizes[i - 1] && cc < engine_sizes[i + 1])
-            return i;
-    }
-    return 1;
-}
-
-/* The class's handling, from the session (rider kinds 0-2) or the game's own table. */
-static void engine_class_apply(int size_class)
-{
-    int kind;
-    int i;
-
-    FIELD(game_main, 0x15A0, DWORD) = FIELD(game_session, 0x2FC + size_class * 4, DWORD);
-    FIELD(game_main, 0x15A4, DWORD) = FIELD(game_session, 0x310 + size_class * 4, DWORD);
-    FIELD(game_main, 0x15A8, DWORD) = FIELD(game_session, 0x414 + size_class * 4, DWORD);
-    FIELD(game_main, 0x1558, DWORD) = FIELD(game_session, 0x428 + size_class * 4, DWORD);
-    kind = FIELD(game_main, 0xF84 + size_class * 4, int);
-    for (i = 0; i < 11; i++) {
-        int index = (size_class * 3 + kind) * 11 + i;
-
-        FIELD(game_main, 0x1574 + i * 4, DWORD) = kind < 3
-            ? FIELD(game_session, 0x68 + index * 4, DWORD)
-            : FIELD(game_main, 0x15E4 + index * 4, DWORD);
-    }
-}
-
-/* A player's model: its virtual base (through the vbtable at +4) hides (slot 4) or shows (5). */
-static void model_show(BYTE* player, BOOL shown)
-{
-    BYTE* model = FIELD(player, 0xC0, BYTE*);
-    BYTE* base = model + 4 + FIELD(FIELD(model, 4, BYTE*), 4, int);
-
-    VIRTUAL(base, shown ? 0x14 : 0x10, method_0)(base);
-}
-
-static void engine_size_show(BYTE* self, BYTE* list, BOOL shown)
-{
-    control_show(list, NULL, shown, TRUE);
-    control_show(dialog_find_control(self, NULL, TEXT_ENGINE_SIZE, 0), NULL, shown, TRUE);
-    if (FIELD(self, 0x110, BYTE*))
-        background_invalidate(FIELD(self, 0x110, BYTE*));
-}
 
 /*
     The bike picked in DDLBikes: only its maker's model shows, its engine size (chosen in
@@ -4395,7 +4126,6 @@ int __fastcall preview_tick(BYTE* self, void* edx_unused, float seconds)
     Vtable slot 31: the page's choice into the game's rider settings (out only): the bike's
     maker and model, then the rider, each of at most 63 characters; the profile is saved.
 */
-#define RIDER_TEXT_LENGTH 0x3F
 
 PORT(0x004513F0)
 void __fastcall bike_rider_sync(BYTE* self, void* edx_unused, DWORD out)

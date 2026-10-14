@@ -565,7 +565,7 @@ game_object* __fastcall control_container_delete(game_object* self, void* edx_un
 
 /* ---- The unit vectors, set up by the C runtime's start-up --------------------------------- */
 
-static void set_vector(float* v, float x, float y, float z)
+static void set_floats(float* v, float x, float y, float z)
 {
     v[0] = x;
     v[1] = y;
@@ -575,25 +575,25 @@ static void set_vector(float* v, float x, float y, float z)
 PORT(0x0046F7B0)
 void __cdecl vector_zero_init(void)
 {
-    set_vector((float*) 0x006616B0, 0.0f, 0.0f, 0.0f);
+    set_floats((float*) 0x006616B0, 0.0f, 0.0f, 0.0f);
 }
 
 PORT(0x0046F840)
 void __cdecl vector_x_init(void)
 {
-    set_vector((float*) 0x006616C0, 1.0f, 0.0f, 0.0f);
+    set_floats((float*) 0x006616C0, 1.0f, 0.0f, 0.0f);
 }
 
 PORT(0x0046F890)
 void __cdecl vector_y_init(void)
 {
-    set_vector((float*) 0x006616D8, 0.0f, 1.0f, 0.0f);
+    set_floats((float*) 0x006616D8, 0.0f, 1.0f, 0.0f);
 }
 
 PORT(0x0046F950)
 void __cdecl vector_z_init(void)
 {
-    set_vector((float*) 0x00661698, 0.0f, 0.0f, 1.0f);
+    set_floats((float*) 0x00661698, 0.0f, 0.0f, 1.0f);
 }
 
 /* The start-up table points at these jumps to them. */
