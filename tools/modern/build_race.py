@@ -171,8 +171,9 @@ def build_vcr(data):
     # The keys: leave, play and the speeds, the ends; save, camera and riders at the right.
     y0, y1 = h - 24 - 84, h - 24
     x = 24
-    layout = [("ButExit", "exit", 100, "button"), ("TogPlay", "play", 120, "toggle"), ("TogPause", "pause", 84, "toggle"),
-              ("ButBeginning", "beginning", 84, "button"), ("TogReverse", "reverse", 84, "toggle"),
+    layout = [("ButExit", "exit", 100, "button"), ("TogPlay", "play", 120, "toggle"),
+              ("TogPause", "pause", 84, "toggle"), ("ButBeginning", "beginning", 84, "button"),
+              ("TogReverse", "reverse", 84, "toggle"),
               ("TogFF", "ff", 84, "toggle"), ("TogFFF", "fff", 84, "toggle"), ("ButEnd", "end", 84, "button")]
     for name, kind, kw, what in layout:
         place(screen, board, name, (x, y0, x + kw, y1), kind, what)

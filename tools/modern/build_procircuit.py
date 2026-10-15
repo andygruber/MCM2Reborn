@@ -17,8 +17,9 @@ from pathlib import Path
 import reborn_kit as kit
 from reborn_kit import EDGE, GREY, LEFT, ORANGE, PAPER, RIGHT, box, heading, sub
 from reborn_layout import Screen, button_states, font, segment_states, under, xywh
-from reborn_pages import (FOOT, PLACE, build_base, build_bike, card_ground, card_info, chip, footer, full_info, full_screen, ground,
-                          info_row, local, page_info, preview, radio, scroll_bar, stepper, table, text_button)
+from reborn_pages import (FOOT, PLACE, build_base, build_bike, card_ground, card_info, chip, footer, full_info,
+                          full_screen, ground, info_row, local, page_info, preview, radio, scroll_bar, stepper, table,
+                          text_button)
 
 TABS = ["TabNext", "TabBikeRider", "TabStandings"]          # the pages' order (procircuitprocs.c)
 TITLES = ["NEXT RACE", "BIKE & RIDER", "STANDINGS"]
