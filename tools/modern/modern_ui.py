@@ -2,7 +2,7 @@ r"""What the modern menus are drawn with: the colours, the shapes, and the 16-bi
 
 The menus' pictures are 16-bit, so the renderer reads the colours beside the colour key as
 inks the photos show through (code/mcm2/ddraw.c, photo_pixel): HOLE is clear, and red 29, 30
-and 31 with no green are shadow, blue and light blue at the strength their blue gives. encode()
+and 31 with no green are shadow, orange and gold at the strength their blue gives. encode()
 turns an RGBA picture into that; shown() undoes it, for the previews.
 """
 import struct
@@ -25,7 +25,9 @@ MATTE = (12, 13, 16)                # soft edges are mixed with this where there
 
 HOLE = 0x7C1E                       # x1R5G5B5 31, 0, 30
 KEY = 0x7C1F
-INKS = np.array([(0, 0, 0), BLUE, GLOW], dtype=np.float64)       # red 29, 30, 31
+INK_ORANGE = (255, 138, 0)
+INK_GOLD = (255, 196, 0)
+INKS = np.array([(0, 0, 0), INK_ORANGE, INK_GOLD], dtype=np.float64)    # red 29, 30, 31
 INK_STEPS = np.array([32, 32, 30])                               # their blue's strengths
 INK_NEAR = 30 ** 2 * 3              # how far a soft pixel's colour may be from an ink to be one
 BAYER = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]) / 16 - 0.5

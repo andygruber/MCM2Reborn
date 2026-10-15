@@ -253,8 +253,8 @@ static void unpack(int format, WORD p, BYTE* rgba);
 static WORD pack(int format, const BYTE* rgba);
 static void free_dc(surface* s);
 
-/* The inks of red 29, 30 and 31: shadow, blue, light blue. */
-static const BYTE k_inks[3][3] = { { 0, 0, 0 }, { 34, 110, 255 }, { 110, 185, 255 } };
+/* The inks of red 29, 30 and 31: shadow, orange and gold (MCM2:Reborn's accents). */
+static const BYTE k_inks[3][3] = { { 0, 0, 0 }, { 255, 138, 0 }, { 255, 196, 0 } };
 
 /* A menu pixel, as unpacked, as the target keeps it over the photos: HOLE clear (alpha 1 of
    255, so a keyed draw's alpha test, which drops the key's 0, still writes it), an ink

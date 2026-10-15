@@ -3584,6 +3584,30 @@ static void event_screen_open(BYTE* self, ui_event* event, int kind, const char*
     event->e = 1;
 }
 
+#ifdef OPENMCM2_DEV
+/*
+    The modern menus' Single Player: no event panel, but the event screen straight away, at the
+    event last chosen (the panel's buttons' kinds, folders and lines; Supercross the first time).
+*/
+static void single_player_open(BYTE* self, ui_event* event)
+{
+    static const struct { int kind; const char* folder; int line; } events[] = {
+        { 3, NAME(0x0056F63C), 0x161 },         /* Supercross: Teraform\SX */
+        { 2, NAME(0x0056F60C), 0x171 },         /* Nationals */
+        { 1, NAME(0x0056CB6C), 0x159 },         /* Baja */
+        { 5, NAME(0x0056CB5C), 0x169 },         /* Enduro */
+        { 0, NAME(0x0056F66C), 0x151 },         /* Stunt Quarry: Teraform\Quarries */
+    };
+    int last = FIELD(game_main, 0x2F60, int);
+    size_t i, pick = 0;
+
+    for (i = 0; i < sizeof events / sizeof events[0]; i++)
+        if (events[i].kind == last)
+            pick = i;
+    event_screen_open(self, event, events[pick].kind, events[pick].folder, events[pick].line);
+}
+#endif
+
 /* A screen opened from the menu, which then closes. */
 static void screen_open(BYTE* self, size_t size, int line, const char* name, void* vtable,
                         DWORD a)
@@ -3632,6 +3656,12 @@ static void menu_click(BYTE* self, ui_event* event)
         return;
 #endif
     if (clicked(event, NAME(0x0056F708))) {                                 /* "MenuSingle" */
+#ifdef OPENMCM2_DEV
+        if (dev_settings.menus_modern) {
+            single_player_open(self, event);
+            return;
+        }
+#endif
         panel_toggle(self, MENU_SINGLE, MENU_SINGLE_OPEN);
         FIELD(self, MENU_MOVIE_READY, DWORD) = 1;
         if (FIELD(self, MENU_SINGLE_OPEN, int))
