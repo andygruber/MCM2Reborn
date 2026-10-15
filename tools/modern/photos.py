@@ -1,6 +1,8 @@
-r"""The main menu's background photos: photos.py <out folder> <preview folder>
+r"""The main menu's background photos: photos.py <out folder> <preview folder> [upscaled folder]
 
-Each source is cropped to 16:9 (clear of the sites' watermarks), scaled to 2560x1440, and
+The upscaled folder, if given, has each source run through Real-ESRGAN (realesrgan-x4plus) as
+<stem>.png; the boxes below are in the original's pixels and scale with it. Each source is
+cropped to 16:9 (clear of the sites' watermarks), scaled to 2560x1440, and
 darkened on the left where the menu is and along the bottom, as the menu's look has it. The
 renderer reads them as ui\modern\photo1.tga.. (32-bit, bottom up) and crossfades between them.
 """
@@ -32,10 +34,16 @@ def darken(image):
     return Image.composite(image, black, shade)
 
 
-def prepare(name, box):
-    image = Image.open(DOWNLOADS / name).convert("RGB").crop(box)
-    image = image.resize((W, H), Image.LANCZOS)
-    image = image.filter(ImageFilter.UnsharpMask(radius=4, percent=110, threshold=1))
+def prepare(name, box, upscaled):
+    image = Image.open(DOWNLOADS / name).convert("RGB")
+    sharp = upscaled and upscaled / (Path(name).stem + ".png")
+    if sharp and sharp.exists():
+        scale = Image.open(sharp).width / image.width
+        image = Image.open(sharp).convert("RGB")
+        box = tuple(round(v * scale) for v in box)
+    image = image.crop(box).resize((W, H), Image.LANCZOS)
+    if not sharp:
+        image = image.filter(ImageFilter.UnsharpMask(radius=4, percent=110, threshold=1))
     return darken(image)
 
 
@@ -49,8 +57,9 @@ def tga32(image):
 
 if __name__ == "__main__":
     out, previews = Path(sys.argv[1]), Path(sys.argv[2])
+    upscaled = Path(sys.argv[3]) if len(sys.argv) > 3 else None
     for n, (name, box) in enumerate(SOURCES, 1):
-        image = prepare(name, box)
+        image = prepare(name, box, upscaled)
         (out / ("photo%d.tga" % n)).write_bytes(tga32(image))
         image.resize((W // 2, H // 2)).save(previews / ("menu photo %d.jpg" % n), quality=90)
         print("photo%d.tga from %s" % (n, name))
