@@ -824,15 +824,20 @@ void target_bind(surface* target)
     {
         gl.GenFramebuffers(1, &target->fbo);
         gl.GenTextures(1, &target->colour);
-        gl.GenRenderbuffers(1, &target->depth);
 
         gl.BindTexture(GL_TEXTURE_2D, target->colour);
         gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, target->desc.dwWidth, target->desc.dwHeight, 0,
                       GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-        gl.BindRenderbuffer(GL_RENDERBUFFER, target->depth);
-        gl.RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, target->desc.dwWidth, target->desc.dwHeight);
+        if (!target->depth)
+        {
+            /* A flip chain's later buffers keep the first one's: only colour flips. */
+            gl.GenRenderbuffers(1, &target->depth);
+            gl.BindRenderbuffer(GL_RENDERBUFFER, target->depth);
+            gl.RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, target->desc.dwWidth,
+                                   target->desc.dwHeight);
+        }
 
         gl.BindFramebuffer(GL_FRAMEBUFFER, target->fbo);
         gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->colour, 0);
@@ -1247,6 +1252,8 @@ static void free_surface(surface* s)
 
         if (s->back)
             free_surface(s->back);
+        while (s->spares)
+            free_surface(s->spare[--s->spares]);
         if (s->zbuffer)
             s->zbuffer->iface.lpVtbl->Release(&s->zbuffer->iface);
         if (g_gl)
@@ -1351,6 +1358,20 @@ static HRESULT create_surface(DDSURFACEDESC2* request, surface** out)
         complete(s->back, PF_565);
         s->back->top = s;       /* attached: it lives as long as the primary, sharing its count */
         s->desc.ddsCaps.dwCaps |= DDSCAPS_FRONTBUFFER;
+
+        /* The rest of the chain, the front buffer among them, for s_Flip to turn through. */
+        while (s->spares < request->dwBackBufferCount && s->spares < 2)
+        {
+            surface* spare = new_surface(&back);
+
+            if (!spare)
+            {
+                free_surface(s);
+                return DDERR_OUTOFMEMORY;
+            }
+            complete(spare, PF_565);
+            s->spare[s->spares++] = spare;
+        }
     }
 
     if (caps & DDSCAPS_MIPMAP)
@@ -1711,11 +1732,56 @@ static HRESULT WINAPI s_EnumOverlayZOrders(IDirectDrawSurface7* self, DWORD flag
     return unsupported("Surface7::EnumOverlayZOrders");
 }
 
+/* Everything one buffer of a flip chain holds, from `a` to `b` and back: not its depth, which
+   the chain shares, nor what the game sees of the surface. */
+static void swap_buffers(surface* a, surface* b)
+{
+    surface held = *a;
+
+#define TRADE(field) (a->field = b->field, b->field = held.field)
+    TRADE(pixels);
+    TRADE(locked_target);
+    TRADE(pixels_current);
+    TRADE(ahead);
+    TRADE(fbo);
+    TRADE(colour);
+    TRADE(texture);
+    TRADE(dirty);
+    TRADE(blit_texture);
+    TRADE(blit_stale);
+    TRADE(blit_how);
+    TRADE(inks);
+    TRADE(dc);
+    TRADE(dib);
+    TRADE(old_bitmap);
+    TRADE(dib_bits);
+    TRADE(dib_from);
+    TRADE(dc_saved);
+    TRADE(locked);
+    TRADE(shown);
+    TRADE(stale);
+    TRADE(shown_photos);
+#undef TRADE
+}
+
+/*
+    Show the back buffer, and then, as DirectDraw's flip does, make the back buffer the one shown
+    longest ago: the game counts on that, putting back the menus' background in each buffer where
+    that buffer last had something over it. The buffer just shown is spare[0].
+*/
 static HRESULT WINAPI s_Flip(IDirectDrawSurface7* self, IDirectDrawSurface7* target, DWORD flags)
 {
+    surface* back = SELF->back;
+    DWORD i;
+
     (void) target; (void) flags;
-    if (SELF->back)
-        present(SELF->back);
+    if (!back)
+        return DD_OK;
+    present(back);
+    if (back->dc_out || back->locked_target)
+        return DD_OK;       /* DirectDraw would not flip a buffer in use: it stays */
+    for (i = 0; i < SELF->spares; ++i)
+        swap_buffers(back, SELF->spare[i]);
     return DD_OK;
 }
 
@@ -1993,14 +2059,16 @@ static HRESULT WINAPI s_Lock(IDirectDrawSurface7* self, LPRECT rect, LPDDSURFACE
        reads it for screenshots. Its pixels are the back buffer's; writes to it are not shown. */
     if (is_primary(s))
     {
+        surface* shown = s->spares && s->spare[0]->fbo ? s->spare[0] : s->back;
+
         if (!s->back)
             return unsupported("Surface7::Lock of a windowed primary");
-        target_read(s->back);
-        if (!s->back->pixels)
+        target_read(shown);
+        if (!shown->pixels)
             return DDERR_OUTOFMEMORY;
         *desc = s->desc;
         desc->dwFlags |= DDSD_LPSURFACE;
-        desc->lpSurface = s->back->pixels + (rect ? rect->top * surface_pitch(s) + rect->left * 2 : 0);
+        desc->lpSurface = shown->pixels + (rect ? rect->top * surface_pitch(s) + rect->left * 2 : 0);
         return DD_OK;
     }
 

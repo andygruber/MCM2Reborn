@@ -49,6 +49,8 @@ typedef struct surface
     DWORD                blit_how;
 
     struct surface*      back;          /* the primary's back buffer */
+    struct surface*      spare[2];      /* the primary's other buffers, last shown first: see s_Flip */
+    DWORD                spares;
     struct surface*      mip;           /* the next smaller mipmap level */
     struct surface*      zbuffer;       /* attached with AddAttachedSurface */
     struct surface*      top;           /* the level that owns the mip chain, or itself */

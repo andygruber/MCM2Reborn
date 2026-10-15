@@ -111,6 +111,8 @@ typedef struct device
     float*           vertices;
     DWORD            capacity;
     BOOL             fog_coordinates;   /* the draw's fog comes from each vertex, not distance */
+
+    RECT             solid;             /* the viewport this scene's 3D has made solid */
 } device;
 
 #define FLOATS_PER_VERTEX 10    /* x y z w, colour (four bytes in one slot), u0 v0 u1 v1, fog */
@@ -634,6 +636,32 @@ static void submit(device* d, D3DPRIMITIVETYPE type, const float* v, DWORD count
     g_state_lost = FALSE;
 }
 
+/*
+    A 3D view is a window of solid picture, but the device writes no alpha (see apply_states):
+    without this, whatever see-through ink or hole the menus once left under it would let the
+    photos show through the 3D. So the first 3D draw of a scene into a viewport makes that
+    viewport's alpha solid, its colour untouched.
+*/
+static void make_solid(device* d, const RECT* viewport)
+{
+    const RECT* done = &d->solid;
+
+    if ((viewport->left == done->left && viewport->top == done->top
+         && viewport->right == done->right && viewport->bottom == done->bottom)
+        || viewport->left >= viewport->right || viewport->top >= viewport->bottom)
+        return;
+    d->solid = *viewport;
+    gl.Enable(GL_SCISSOR_TEST);
+    gl.Scissor(viewport->left, (GLint) d->target->desc.dwHeight - viewport->bottom,
+               viewport->right - viewport->left, viewport->bottom - viewport->top);
+    gl.ColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
+    gl.ClearColor(0, 0, 0, 1);
+    gl.Clear(GL_COLOR_BUFFER_BIT);
+    gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+    gl.Disable(GL_SCISSOR_TEST);
+    g_state_lost = TRUE;
+}
+
 /* Vertices from the game's memory, in whatever format it names. */
 static HRESULT draw(device* d, D3DPRIMITIVETYPE type, DWORD fvf, const BYTE* vertices, DWORD count,
                     const WORD* indices, DWORD index_count)
@@ -646,6 +674,8 @@ static HRESULT draw(device* d, D3DPRIMITIVETYPE type, DWORD fvf, const BYTE* ver
 
     part = drawn_part(d, (fvf & D3DFVF_XYZRHW) ? vertices : NULL, count, layout_of(fvf).stride);
     target_bind_part(d->target, &part);
+    if (!(fvf & D3DFVF_XYZRHW))
+        make_solid(d, &part);
     v = convert(d, vertices, count, fvf, NULL);
     if (!v)
         return DDERR_OUTOFMEMORY;
@@ -675,6 +705,8 @@ static HRESULT draw_buffer(device* d, D3DPRIMITIVETYPE type, vertex_buffer* vb, 
     part = drawn_part(d, !vb->processed && l.pretransformed ? vb->data + start * l.stride : NULL,
                       count, l.stride);
     target_bind_part(d->target, &part);
+    if (vb->processed || !l.pretransformed)
+        make_solid(d, &part);
     if (vb->processed)
     {
         /* Already in OpenGL's clip space, depth included (see b_ProcessVertices). */
@@ -813,6 +845,7 @@ static HRESULT WINAPI v_BeginScene(IDirect3DDevice7* self)
     static const RECT nothing = { 0, 0, 0, 0 };
 
     target_bind_part(DEV->target, &nothing);
+    DEV->solid = nothing;
     return D3D_OK;
 }
 
