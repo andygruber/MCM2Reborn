@@ -699,7 +699,7 @@ static BYTE* central_tab_setup(BYTE* self, const char* name, UINT id)
     BYTE* tab = dialog_find_control(self, NULL, name, TAB_CONTROL);
 
 #ifdef OPENMCM2_DEV
-    if (pages_titled(self))
+    if (menu_reborn(self))                      /* its tabs' words are in their pictures */
         return tab;
 #endif
     option_load_text(tab, NULL, 0, game_language, id);

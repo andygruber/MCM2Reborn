@@ -11,6 +11,10 @@
 #include "gui.h"
 #include "dirlist.h"
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 BYTE* __fastcall dialog_find_control(BYTE* self, void* edx_unused, const char* name, int type);
 BYTE* __fastcall dialog_construct(BYTE* self, void* edx_unused, DWORD flag, const char* name);
 void  __fastcall dialog_end(BYTE* self, void* edx_unused, DWORD code);
@@ -1260,6 +1264,10 @@ static void options_open(BYTE* self, const ui_event* event)
     for (i = 0; i < 6; i++) {
         BYTE* tab = find(self, option_pages[i].tab, 4);
 
+#ifdef OPENMCM2_DEV
+        if (menu_reborn(self))                  /* its tabs' words are in their pictures */
+            break;
+#endif
         option_load_text(tab, NULL, 0, game_language, option_pages[i].text);
         option_load_text(tab, NULL, 1, game_language, option_pages[i].text);
         control_set_align(tab, NULL, 0x22);

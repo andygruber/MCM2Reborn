@@ -2413,6 +2413,7 @@ static struct {
     BYTE* dialog;
     int art;
     RECT view;              /* its View, in its layout's pixels; empty when it gives none */
+    BOOL reborn;            /* a MCM2:Reborn layout, its words in its pictures */
 } dialog_arts[64] = { 0 };
 
 static void modern_mark(const char* name, void* picture)
@@ -2445,8 +2446,9 @@ static BOOL modern_marked(void* picture)
     return FALSE;
 }
 
-/* A dialog's ArtScale and View, kept each time a layout is read: a dialog's address is reused. */
-static void dialog_art_set(BYTE* dialog, int art, const RECT* view)
+/* A dialog's ArtScale, View and Reborn, kept each time a layout is read: a dialog's address is
+   reused. */
+static void dialog_art_set(BYTE* dialog, int art, const RECT* view, BOOL reborn)
 {
     int i, free = -1;
 
@@ -2464,6 +2466,17 @@ static void dialog_art_set(BYTE* dialog, int art, const RECT* view)
     }
     dialog_arts[i].art = art;
     dialog_arts[i].view = *view;
+    dialog_arts[i].reborn = reborn;
+}
+
+BOOL menu_reborn(BYTE* dialog)
+{
+    int i;
+
+    for (i = 0; i < 64; i++)
+        if (dialog_arts[i].dialog == dialog)
+            return dialog_arts[i].reborn;
+    return FALSE;
 }
 
 static int dialog_art(BYTE* dialog)
@@ -8934,12 +8947,13 @@ static void reader_info(dialog_reader* r)
         they are drawn at the menus' scale divided by it: 1:1 when the menus are scaled by that.
     */
     if (dev_settings.menus_widescreen) {
-        int photos = 0;
+        int photos = 0, reborn = 0;
         RECT view = { 0 };
 
         reader_int(r, "ArtScale", 1, &art);
         reader_rect(r, "View", &view);
-        dialog_art_set(self, art, &view);
+        reader_int(r, "Reborn", 0, &reborn);
+        dialog_art_set(self, art, &view, reborn);
         reader_int(r, "Photos", 0, &photos);
         if (photos) {
             photos_dialog = self;

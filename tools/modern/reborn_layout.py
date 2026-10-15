@@ -208,6 +208,7 @@ class Screen:
         self.keys, self.drops, self.added = {}, {}, []
         self.shown = []                             # (picture, where on the screen), for previews
         self.picture(NOTHING, clear((4, 4)))
+        self.set("Set_Information", Reborn="1")     # its words are in its pictures (ui.c, menu_reborn)
 
     def picture(self, anim, img, window=None):
         self.pictures[anim] = (img, window)

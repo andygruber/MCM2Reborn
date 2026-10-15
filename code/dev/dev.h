@@ -67,9 +67,10 @@ BOOL preview_zoom(unsigned char* page);
    every caller in a frame. `user` is the gui_user, `object` anything on the screen (ui.c). */
 int menu_wheel(void* user, void* object);
 
-/* A MCM2:Reborn screen with pages: whether it titles them itself, and the title of page
-   `page` shown (dlgprocs.c). */
-BOOL pages_titled(unsigned char* screen);
+/* Whether a dialog's layout is MCM2:Reborn's, which draws its words in its pictures (ui.c). */
+BOOL menu_reborn(unsigned char* dialog);
+
+/* A MCM2:Reborn screen with pages: the title of page `page` shown (dlgprocs.c). */
 void page_title_show(unsigned char* screen, int page);
 
 /* Whether a modern screen has the photos under it (ui.c). */

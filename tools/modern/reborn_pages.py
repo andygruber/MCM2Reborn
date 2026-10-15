@@ -64,7 +64,7 @@ def combo(screen, name, board, text_area, arrow=True, list_h=170, size=28, align
     """A drop-down list: its text in `text_area`, the arrow just after it when `arrow` (`arrow_w`
     wide, square by default), the list below as wide as the text."""
     x0, y0, x1, y1 = text_area
-    origin = origin or PLACE[:2]
+    origin = origin or screen.origin
     h = arrow_w or y1 - y0
     keys = {"Xywh": xywh(text_area, origin), "ListHeight": str(list_h), "TextLMargin": "18"}
     keys.update(font(size, PAPER, align))
@@ -120,7 +120,7 @@ def toggle(screen, board, name, area, words, origin=None):
     keys = screen.states(name, toggle_states(board, area, words),
                          {"State0": "State0", "State1": "State1", "StateDisable0": "StateDisable0",
                           "StateDisable1": "StateDisable1"}, at=area[:2])
-    screen.set(name, ("Text", "LocalTextId"), Xywh=xywh(area, origin or PLACE[:2]), TextDrop="0", **keys)
+    screen.set(name, ("Text", "LocalTextId"), Xywh=xywh(area, origin or screen.origin), TextDrop="0", **keys)
 
 
 def radio(screen, name, pictures, area, origin=None, chosen=False, **more):
@@ -128,9 +128,9 @@ def radio(screen, name, pictures, area, origin=None, chosen=False, **more):
     keys = screen.states(name, pictures, {"AnimOn": "On", "AnimOff": "Off", "AnimOnDisable": "OnGrey",
                                           "AnimOffDisable": "OffGrey"}, at=area[:2], show="On" if chosen else "Off")
     if name in dict(screen.sections):
-        screen.set(name, ("Text", "LocalTextId"), Xywh=xywh(area, origin or PLACE[:2]), **keys, **more)
+        screen.set(name, ("Text", "LocalTextId"), Xywh=xywh(area, origin or screen.origin), **keys, **more)
     else:
-        screen.add(name, Type="RADIOBUTTON", Xywh=xywh(area, origin or PLACE[:2]), **keys, **more)
+        screen.add(name, Type="RADIOBUTTON", Xywh=xywh(area, origin or screen.origin), **keys, **more)
 
 
 
@@ -221,15 +221,22 @@ def full_screen(data, stem, kicker, title):
 
 
 def scroll_bar(screen, board, name, bar, origin=None, anchor=None):
-    """A slider (VSCROLLBAR) in `bar`: a groove and an orange thumb, the thumb cut from the
-    groove's middle (see-through, it would show the photos through what it is on)."""
+    """A slider (VSCROLLBAR, or HSCROLLBAR when `bar` is wider than tall) in `bar`: a groove and
+    an orange thumb, the thumb cut from the groove's middle (see-through, it would show the
+    photos through what it is on)."""
     groove = under(board, bar)
-    ImageDraw.Draw(groove).rounded_rectangle((groove.width // 2 - 3, 0, groove.width // 2 + 3, groove.height - 1), 3,
-                                             fill=RAISED + (255,))
-    middle = groove.height // 2 - 36
-    thumb = groove.crop((0, middle, groove.width, middle + 72))
-    ImageDraw.Draw(thumb).rounded_rectangle((thumb.width // 2 - 7, 0, thumb.width // 2 + 7, 71), 7,
-                                            fill=ORANGE + (255,))
+    w, h = groove.size
+    d = ImageDraw.Draw(groove)
+    if w > h:
+        d.rounded_rectangle((0, h // 2 - 3, w - 1, h // 2 + 3), 3, fill=EDGE + (255,))
+        middle = w // 2 - 18
+        thumb = groove.crop((middle, 0, middle + 36, h))
+        ImageDraw.Draw(thumb).rounded_rectangle((4, h // 2 - 16, 31, h // 2 + 16), 8, fill=ORANGE + (255,))
+    else:
+        d.rounded_rectangle((w // 2 - 3, 0, w // 2 + 3, h - 1), 3, fill=EDGE + (255,))
+        middle = h // 2 - 36
+        thumb = groove.crop((0, middle, w, middle + 72))
+        ImageDraw.Draw(thumb).rounded_rectangle((w // 2 - 7, 0, w // 2 + 7, 71), 7, fill=ORANGE + (255,))
     track = screen.picture("M%sBar" % name, groove)
     keys = dict(Xywh=xywh(bar, origin or screen.origin), AnimNorm=track, AnimFocus=track, AnimPush=track,
                 AnimDisable=track, AnimThumb=screen.picture("M%sThumb" % name, thumb))
@@ -346,13 +353,14 @@ def table(screen, board, frame, columns, origin, anchor=None, size=32, head=64):
 
 # ---- Previews ----
 
-def preview(photo, layers):
+def preview(photo, layers, place=PLACE):
     """The screen as the game would show it: `layers` of (screen, board, window) drawn in turn,
-    each board where its screen draws it and then its controls at rest; the 3D stood in for."""
+    each board where its screen draws it (a page in `place`) and then its controls at rest; the
+    3D stood in for."""
     canvas = kit.cover(Image.open(photo).convert("RGB"), (W, H)).convert("RGBA")
     out = Image.new("RGBA", (W, H))
     for screen, board, window in layers:
-        area = (0, 0, W, H) if screen.origin == (0, 0) else PLACE
+        area = (0, 0, W, H) if screen.origin == (0, 0) else place
         out.paste(shown(board.crop(area), window=window.crop(area) if window else None), area[:2])
         for picture, at in screen.shown:
             out.paste(shown(picture), at)

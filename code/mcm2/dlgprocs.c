@@ -394,16 +394,9 @@ static const struct {
 };
 
 #ifdef OPENMCM2_DEV
-/*
-    A MCM2:Reborn screen with pages (single player's, the pro circuit's) titles each one itself,
-    Title0 to Title2, its tabs' words drawn in their pictures.
-*/
+/* A MCM2:Reborn screen with pages (single player's, the pro circuit's) titles each one itself,
+   Title0 to Title2. */
 static const char* const page_titles[3] = { "Title0", "Title1", "Title2" };
-
-BOOL pages_titled(BYTE* self)
-{
-    return dialog_find_control(self, NULL, page_titles[0], 0) != NULL;
-}
 
 void page_title_show(BYTE* self, int page)
 {
@@ -2635,7 +2628,7 @@ static BYTE* sp_tab_setup(BYTE* self, const char* name, UINT id)
     BYTE* tab = dialog_find_control(self, NULL, name, TAB_CONTROL);
 
 #ifdef OPENMCM2_DEV
-    if (pages_titled(self))
+    if (menu_reborn(self))                      /* its tabs' words are in their pictures */
         return tab;
 #endif
     option_load_text(tab, NULL, 0, game_language, id);
