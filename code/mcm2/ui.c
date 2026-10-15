@@ -35,6 +35,11 @@ void render_photos(BOOL on);
 void render_inks(void* picture_surface);
 static BYTE* photos_dialog = NULL;
 
+BOOL menu_photos_shown(void)
+{
+    return photos_dialog != NULL;
+}
+
 /* A 640x480 area moved onto the screen's centred one. */
 static void menu_place(BYTE* screen, RECT* area)
 {

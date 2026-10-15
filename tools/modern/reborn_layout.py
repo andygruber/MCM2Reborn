@@ -253,7 +253,15 @@ class Screen:
         lines = dict(self.sections).get(section, [])
         return any(line.split("=", 1)[0].strip().lower() == key.lower() for line in lines if "=" in line)
 
+    def unplaced(self):
+        """The original's controls left where it had them (at its 640x480): each is either
+        placed, hidden, or a mistake."""
+        return [name for name, lines in self.sections
+                if self.has(name, "Type") and self.has(name, "Xywh") and "Xywh" not in self.keys.get(name, {})]
+
     def pack(self):
+        missed = self.unplaced()
+        assert not missed, "%s: not placed: %s" % (self.stem, ", ".join(missed))
         out = []
         for name, lines in self.sections:
             for added, before, keys in self.added:

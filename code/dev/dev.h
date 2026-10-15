@@ -72,6 +72,9 @@ int menu_wheel(void* user, void* object);
 BOOL pages_titled(unsigned char* screen);
 void page_title_show(unsigned char* screen, int page);
 
+/* Whether a modern screen has the photos under it (ui.c). */
+BOOL menu_photos_shown(void);
+
 /* A rectangle on the 640x480 menu screen, where the scaled menus put it (ui.c). */
 void menu_place_view(unsigned char* dialog, RECT* view);
 

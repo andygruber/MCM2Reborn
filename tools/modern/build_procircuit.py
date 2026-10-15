@@ -80,7 +80,8 @@ def build_start(data):
             [("ButContinue", "CONTINUE", 360, True), ("ButDelete", "DELETE", 240, False)])
     careers(screen, board, (LEFT, 794, RIGHT, 1264), "FINISHED", FINISHED, "rbwVertSlider1",
             [("ButDoneDelete", "DELETE", 240, False)])
-    for hidden in ("rbwLabel1", "rbwLabel2", "rbwLabel3", "rbwLabel4"):
+    # The original's panels behind its two tables, and its words, are drawn in the pictures.
+    for hidden in ("LstCurrent", "LstFinished", "rbwLabel1", "rbwLabel2", "rbwLabel3", "rbwLabel4"):
         screen.hide(hidden)
     footer(screen, board, [("Back", "BACK")], [("ButNew", "NEW CIRCUIT", 540, True)])
     full_info(screen, board)

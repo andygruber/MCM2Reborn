@@ -1568,6 +1568,44 @@ void __fastcall game_FUN_00469df0(void* scene, void* edx_unused, const char* cla
     NULL when the screen cannot be locked.
 */
 PORT(0x00487100)
+#ifdef OPENMCM2_DEV
+void render_inks(void* picture_surface);
+
+/*
+    A picture of the screen darkened as the original darkens it (each colour halved) but for its
+    inks (ddraw.c, photo_pixel): what was clear is shadow at half, shadow is half as much again
+    clear, and orange and gold are half as strong. Pixels are 565, or 555 with `is_555`.
+*/
+static void darken_inks(WORD* pixels, int count, BOOL is_555)
+{
+    int green_bits = is_555 ? 5 : 6;
+    int i;
+
+    for (i = 0; i < count; i++) {
+        WORD p = pixels[i];
+        int red = p >> (5 + green_bits) & 31;
+        int green = p >> 5 & ((1 << green_bits) - 1);
+        int blue = p & 31;
+
+        if (red >= 29 && !green) {
+            if (red == 31 && blue >= 30) {
+                if (blue == 30)
+                    blue = 15, red = 29;            /* clear: shadow at half */
+                else
+                    continue;                       /* the colour key */
+            } else if (red == 29) {
+                blue = (blue + 32) / 2;             /* shadow: half the rest is shadow too */
+            } else {
+                blue = (blue + 1) / 2 - 1 < 0 ? 0 : (blue + 1) / 2 - 1;
+            }
+            pixels[i] = (WORD) (red << (5 + green_bits) | blue);
+        } else {
+            pixels[i] = (WORD) ((p >> 1) & (is_555 ? 0x3DEF : 0x7BEF));
+        }
+    }
+}
+#endif
+
 void* __fastcall gui_manager_capture_screen(gui_manager* self, void* edx_unused, BOOL darken,
                                             const RECT* area)
 {
@@ -1620,6 +1658,13 @@ void* __fastcall gui_manager_capture_screen(gui_manager* self, void* edx_unused,
     }
     VIRTUAL(surface, 0x80, surface_unlock)(surface, NULL);
 
+#ifdef OPENMCM2_DEV
+    /* Over the photos the screen's see-through colours stay what they are, darkened as inks. */
+    if (darken && depth == 2 && menu_photos_shown()) {
+        darken_inks((WORD*) pixels, count, mode == 0x22B);
+        darken = FALSE;
+    }
+#endif
     if (darken) {
         if (depth == 1) {
             unsigned y;
@@ -1655,6 +1700,10 @@ void* __fastcall gui_manager_capture_screen(gui_manager* self, void* edx_unused,
     VIRTUAL(picture, 0x10, picture_fill)(picture, NULL, pixels, width, height, width, width, mode,
                                          mode, 0, 4, 0, 0, 0, 2, 1, 0, 0x80, 0xFF00FF);
     game_FUN_004a4450(pixels, GUIMANAGER_CPP, 0x399);
+#ifdef OPENMCM2_DEV
+    if (picture && depth == 2 && menu_photos_shown())
+        render_inks(FIELD(picture, 0x70, void*));
+#endif
     return picture;
 }
 
