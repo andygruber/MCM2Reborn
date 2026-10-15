@@ -394,15 +394,15 @@ static const struct {
 };
 
 #ifdef OPENMCM2_DEV
-/* A MCM2:Reborn screen with pages (single player's, the pro circuit's) titles each one itself,
-   Title0 to Title2. */
-static const char* const page_titles[3] = { "Title0", "Title1", "Title2" };
+/* A MCM2:Reborn screen with pages (single player's, the pro circuit's, multiplayer's) titles
+   each one itself, Title0 to Title3. */
+static const char* const page_titles[4] = { "Title0", "Title1", "Title2", "Title3" };
 
 void page_title_show(BYTE* self, int page)
 {
     int i;
 
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < 4; i++) {
         BYTE* title = dialog_find_control(self, NULL, page_titles[i], 0);
 
         if (title)

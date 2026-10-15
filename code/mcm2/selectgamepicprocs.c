@@ -1371,6 +1371,10 @@ static void mp_tab_setup(BYTE* self, const char* name, UINT id)
 {
     BYTE* tab = dialog_find_control(self, NULL, name, TAB_CONTROL);
 
+#ifdef OPENMCM2_DEV
+    if (menu_reborn(self))                      /* its tabs' words are in their pictures */
+        return;
+#endif
     option_load_text(tab, NULL, 0, game_language, id);
     option_load_text(tab, NULL, 1, game_language, id);
     control_set_align(tab, NULL, 0x22);
@@ -1911,6 +1915,10 @@ void __fastcall mp_show_page(BYTE* self, void* edx_unused, int page)
     int i;
 
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if ((unsigned) page <= 3)
+        page_title_show(self, page);
+#endif
     for (i = 0; i < 4; i++) {
         BYTE** open = &FIELD(self, MP_PAGES + 4 * i, BYTE*);
 

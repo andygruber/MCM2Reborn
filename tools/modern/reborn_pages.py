@@ -28,13 +28,13 @@ def ground():
     return Image.new("RGBA", (W, H), SHADE)
 
 
-def page_info(screen, board, window=None):
+def page_info(screen, board, window=None, place=PLACE):
     """A page's own keys: its ground, size and Place."""
-    back = under(board, PLACE)
+    back = under(board, place)
     screen.set("Set_Information", BackgroundImage=screen.picture("MBack", back,
-                                                                 window.crop(PLACE) if window else None),
-               ScreenWidth=str(PLACE[2] - PLACE[0]), ScreenHeight=str(PLACE[3] - PLACE[1]), ArtScale=str(ART),
-               Place=xywh(PLACE), Xywh=xywh(PLACE), FontName='"Helvetica"')
+                                                                 window.crop(place) if window else None),
+               ScreenWidth=str(place[2] - place[0]), ScreenHeight=str(place[3] - place[1]), ArtScale=str(ART),
+               Place=xywh(place), Xywh=xywh(place), FontName='"Helvetica"')
 
 
 def local(area):
@@ -136,24 +136,24 @@ def radio(screen, name, pictures, area, origin=None, chosen=False, **more):
 
 # ---- The screen around the pages ----
 
-def stage_window():
+def stage_window(stage=STAGE):
     """The mask of the bike page's stage, where the 3D shows."""
     window = Image.new("L", (W, H))
-    ImageDraw.Draw(window).rectangle((STAGE[0], STAGE[1], STAGE[2] - 1, STAGE[3] - 1), fill=255)
+    ImageDraw.Draw(window).rectangle((stage[0], stage[1], stage[2] - 1, stage[3] - 1), fill=255)
     return window
 
 
-def build_base(data, stem, kicker, titles, tabs, left, right):
+def build_base(data, stem, kicker, titles, tabs, left, right, stage=STAGE, board=None):
     """The screen around the pages: `titles` for its pages, `tabs` its tab controls, `left` the
     (control, words) of the buttons from the foot's left, `right` (control, words, width,
-    primary) from its right."""
+    primary) from its right; on `board` when it has more of its own."""
     screen = Screen(data, stem)
-    board = ground()
+    board = board or ground()
     kit.tag(board, kicker, LEFT, TOP, 26)
     kit.build_mark(board)
 
     # The bike page's stage shows the 3D through here too.
-    window = stage_window()
+    window = stage_window(stage)
     board.paste((0, 0, 0, 0), mask=window)
 
     areas = kit.step_areas(names=[("%02d" % (i + 1), words) for i, words in enumerate(titles)])
@@ -279,69 +279,89 @@ def text_button(screen, board, name, area, origin=None):
     screen.button(name, area, button_states(board, area, ""), origin, keep_text=True, **keys)
 
 
-def build_bike(data, stem):
-    """The bike and rider page: the 3D stage (its View, the colour key here and on the screen
-    round it) and the rider and machine beside it."""
-    screen = Screen(data, stem, PLACE[:2])
-    board = ground()
-    window = stage_window()
-    board.paste((0, 0, 0, 0), mask=window)
-    screen.set("Set_Information", View=local(STAGE))
-
-    area = (1680, PLACE[1], RIGHT, PLACE[3])
-    kit.panel(board, area, 230)
-    x0, x1 = area[0] + 24, area[2] - 24
+def bike_picker(screen, board, row, names, list_h=420, label=None):
+    """A rider or bike chosen by its arrows or its list: `names` the left arrow, the list and
+    the right arrow, in a well `row`, its `label` at the well's left."""
     side = 52
+    inset = (row[3] - row[1] - side) / 2
+    chip(board, row, label)
+    start = row[0] + (110 if label else 12)
+    left = (start, row[1] + inset, start + side, row[1] + inset + side)
+    right = (row[2] - 12 - side, row[1] + inset, row[2] - 12, row[1] + inset + side)
+    screen.button(names[0], left, arrow_states(board, left, "left"))
+    screen.button(names[2], right, arrow_states(board, right, "right"))
+    combo(screen, names[1], board, (left[2] + 8, row[1] + 10, right[0] - 8, row[3] - 10), arrow=False,
+          list_h=list_h, size=34, align="CENTER")
 
-    def picker(top, words, names):
-        heading(board, words, x0, top - 20, 28, ORANGE)
-        row = (x0, top, x1, top + 84)
-        chip(board, row)
-        inset = (84 - side) / 2
-        left = (row[0] + 12, top + inset, row[0] + 12 + side, top + inset + side)
-        right = (row[2] - 12 - side, top + inset, row[2] - 12, top + inset + side)
-        screen.button(names[0], left, arrow_states(board, left, "left"))
-        screen.button(names[2], right, arrow_states(board, right, "right"))
-        combo(screen, names[1], board, (left[2] + 8, top + 10, right[0] - 8, top + 74), arrow=False, list_h=420,
-              size=34, align="CENTER")
 
-    picker(PLACE[1] + 92, "RIDER", ("RiderLeft", "DDLRiders", "RiderRight"))
-    picker(PLACE[1] + 252, "BIKE", ("BikeLeft", "DDLBikes", "BikeRight"))
-
-    heading(board, "MACHINE", x0, PLACE[1] + 392, 28, ORANGE)
-    # The engine's size shows only for a bike that has a choice (dlgprocs.c, with TxtEngineSize):
-    # its well is drawn by the two, the name on TxtEngineSize and the rest under the list's text.
-    engine = (x0, PLACE[1] + 412, x1, PLACE[1] + 488)
+def engine_row(screen, board, row):
+    """The engine's size. It shows only for a bike that has a choice (with TxtEngineSize), so its
+    well is drawn by the two: the name on TxtEngineSize, the rest under the list's text."""
+    side = 52
     engine_board = board.copy()
-    chip(engine_board, engine, "ENGINE")
-    name_area = (engine[0], engine[1], engine[0] + 180, engine[3])
-    screen.set("TxtEngineSize", ("Text", "LocalTextId"), Xywh=local(name_area),
+    chip(engine_board, row, "ENGINE")
+    name_area = (row[0], row[1], row[0] + 180, row[3])
+    screen.set("TxtEngineSize", ("Text", "LocalTextId"), Xywh=xywh(name_area, screen.origin), Anchor="",
                AnimNorm=screen.picture("MTxtEngineSize", under(engine_board, name_area)))
     screen.shown.append((under(engine_board, name_area), name_area[:2]))
-    combo(screen, "DDLEngineSize", engine_board, (name_area[2], engine[1], engine[2] - side - 1, engine[3]),
-          list_h=230, arrow_w=side)
-    inset = (76 - side) / 2
+    combo(screen, "DDLEngineSize", engine_board, (name_area[2], row[1], row[2] - side - 1, row[3]), list_h=230,
+          arrow_w=side)
 
-    plate = (x0, engine[3] + 12, x1, engine[3] + 88)
-    chip(board, plate, "PLATE NUMBER")
-    edit = (plate[2] - 12 - 140, plate[1] + inset, plate[2] - 12, plate[3] - inset)
+
+def plate_row(screen, board, row):
+    """The bike's plate number, an edit box at the well's right."""
+    chip(board, row, "PLATE NUMBER")
+    inset = (row[3] - row[1] - 52) / 2
+    edit = (row[2] - 12 - 140, row[1] + inset, row[2] - 12, row[3] - inset)
     box(board, edit, (14, 15, 18, 255), 6, EDGE + (255,))
-    keys = {"Xywh": local(edit), "AnimNorm": screen.picture("MEditPlateNumber", under(board, edit)),
+    keys = {"Xywh": xywh(edit, screen.origin), "AnimNorm": screen.picture("MEditPlateNumber", under(board, edit)),
             "TextLMargin": "0", "TextTMargin": "0"}
     keys.update(font(32, PAPER, "CENTER"))
     screen.set("EditPlateNumber", **keys)
     screen.hide("rbwLabel1")
 
+
+def bike_page(data, stem, stage=STAGE, place=PLACE):
+    """A bike and rider page and its board, the 3D stage (its View, the colour key here and on
+    the screen round it) cleared on it."""
+    screen = Screen(data, stem, place[:2])
+    board = ground()
+    window = stage_window(stage)
+    board.paste((0, 0, 0, 0), mask=window)
+    screen.set("Set_Information", View=xywh(stage, place[:2]))
+    return screen, board, window
+
+
+def finish_bike(screen, board, window, place=PLACE):
+    for corner in ("CornerLR", "CornerUL", "CornerUR", "CornerLL"):
+        if corner in screen.names:
+            screen.hide(corner)
+    page_info(screen, board, window, place)
+    return screen, board, window
+
+
+def build_bike(data, stem):
+    """The single player's and pro circuit's bike page: the stage, and the rider and machine
+    beside it."""
+    screen, board, window = bike_page(data, stem)
+    area = (1680, PLACE[1], RIGHT, PLACE[3])
+    kit.panel(board, area, 230)
+    x0, x1 = area[0] + 24, area[2] - 24
+    for top, words, names in ((PLACE[1] + 92, "RIDER", ("RiderLeft", "DDLRiders", "RiderRight")),
+                              (PLACE[1] + 252, "BIKE", ("BikeLeft", "DDLBikes", "BikeRight"))):
+        heading(board, words, x0, top - 20, 28, ORANGE)
+        bike_picker(screen, board, (x0, top, x1, top + 84), names)
+
+    heading(board, "MACHINE", x0, PLACE[1] + 392, 28, ORANGE)
+    engine = (x0, PLACE[1] + 412, x1, PLACE[1] + 488)
+    engine_row(screen, board, engine)
+    plate = (x0, engine[3] + 12, x1, engine[3] + 88)
+    plate_row(screen, board, plate)
     toggle(screen, board, "ChkAutoRotate", (x0, plate[3] + 12, x1, plate[3] + 88), "AUTO ROTATE")
     tune = (x0, plate[3] + 116, x1, plate[3] + 192)
     screen.button("ButWrench", tune, button_states(board, tune, "TUNE THE BIKE", size=30))
     sub(board, "MOUSE WHEEL ZOOMS THE BIKE", x0, area[3] - 30, 22, (120, 122, 128), bold=True)
-
-    for corner in ("CornerLR", "CornerUL", "CornerUR", "CornerLL"):
-        if corner in screen.names:
-            screen.hide(corner)
-    page_info(screen, board, window)
-    return screen, board, window
+    return finish_bike(screen, board, window)
 
 
 # ---- A table ----
