@@ -1,14 +1,11 @@
 r"""MCM2:Reborn's single player screen: build_singleplayer.py <game ui folder> <out folder> <preview dir>
 
-SPBase is the screen around the three pages: the title of the page shown (dlgprocs.c shows
-the one for the page), the steps as its tabs, and the buttons along the foot. Each page is
-drawn in the room under the header (its Place), on the same 2560x1440:
+SPBase is the screen around the three pages (reborn_pages.py). The pages:
 
   the event page: event cards in place of the event list (dlgprocs.c keeps the two together),
-  the tracks as a list (TrackList, in the game's track list's group, so the two keep the same
-  track), the track's picture, and the race's settings down the right;
-  the bike page: the 3D stage (its View, the colour key here and in SPBase) and the rider and
-  machine beside it;
+  the tracks as a list (TrackList, which dlgprocs.c keeps on the game's track), the track's
+  picture, and the race's settings down the right;
+  the bike page (reborn_pages.py);
   the race information page: the last race's results.
 
 Writes SPBASE.DAT, SPEVENT.DAT, SPBIKER.DAT and SPRINFO.DAT for the game's ui\modern\.
@@ -17,25 +14,21 @@ import io
 import sys
 from pathlib import Path
 
-import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
 import reborn_kit as kit
 from build_mainmenu import rs2_files
-from modern_ui import shown
-from reborn_kit import (BOTTOM, EDGE, GREY, LEFT, ORANGE, PANEL, PAPER, RAISED, RIGHT, SOFT, TOP, H, W,
-                        box, heading, heading_ink, outline, shape, slanted, sub)
-from reborn_layout import (LABEL, NOTHING, Screen, arrow_states, button_states, clear, colorref, font, label_at,
-                           on_board, segment_states, toggle_states, under, xywh)
+from reborn_kit import (EDGE, GREY, LEFT, ORANGE, PANEL, PAPER, RIGHT, SOFT, box, heading, outline, shape,
+                        slanted, sub)
+from reborn_layout import (LABEL, Screen, arrow_states, button_states, colorref, font, on_board, segment_states,
+                           under, xywh)
+from reborn_pages import (PLACE, build_base, build_bike, chip, combo, ground, keyed_outside, local, page_info,
+                          preview, radio, scroll_bar, stepper, table, toggle)
 
-ART = 3
-PLACE = (LEFT, 274, RIGHT, 1264)            # the pages' room, under the header and over the foot
-FOOT = (BOTTOM - 72, BOTTOM)
-SHADE = (8, 8, 10, 170)
 SELECTED = (42, 33, 22)
 
 TABS = ["EventTab", "BikeRiderTab", "RaceInfoTab"]
-TITLES = [("TitleEvent", "CHOOSE YOUR EVENT"), ("TitleBikeRider", "BIKE & RIDER"), ("TitleRaceInfo", "RACE INFO")]
+TITLES = ["CHOOSE YOUR EVENT", "BIKE & RIDER", "RACE INFO"]
 
 # The event cards: control, the event list's kind, title, what it is, the loading screen with its art.
 CARDS = [("CardSupercross", 3, "SUPERCROSS", "STADIUM", "LOADSX"),
@@ -45,169 +38,6 @@ CARDS = [("CardSupercross", 3, "SUPERCROSS", "STADIUM", "LOADSX"),
          ("CardQuarry", 0, "STUNT QUARRY", "SCORE ATTACK", "LOADQUAR")]
 CARD_GROUP = 150
 TRACK_GROUP = 151
-
-# The bike page's stage, where the 3D shows.
-STAGE = (LEFT, PLACE[1], 1640, PLACE[3])
-
-
-def ground():
-    """What every part of the screen is on: the photos behind a dark glass."""
-    return Image.new("RGBA", (W, H), SHADE)
-
-
-def page_info(screen, board, window=None):
-    """A page's own keys: its ground, size and Place."""
-    back = under(board, PLACE)
-    screen.set("Set_Information", BackgroundImage=screen.picture("MBack", back,
-                                                                 window.crop(PLACE) if window else None),
-               ScreenWidth=str(PLACE[2] - PLACE[0]), ScreenHeight=str(PLACE[3] - PLACE[1]), ArtScale=str(ART),
-               Place=xywh(PLACE), Xywh=xywh(PLACE), FontName='"Helvetica"')
-
-
-def local(area):
-    """`area` on the page, from the screen."""
-    return xywh(area, PLACE[:2])
-
-
-def chip(img, area, words=None):
-    """A setting's well, with its name."""
-    box(img, area, RAISED + (255,), 8, EDGE + (255,))
-    if words:
-        label_at(img, area, words)
-
-
-def keyed_outside(picture, points, at):
-    """`picture` with what is outside the polygon `points` (on the screen) the colour key, so it
-    leaves what is under it alone: for shapes whose boxes overlap."""
-    mask = Image.new("L", picture.size)
-    ImageDraw.Draw(mask).polygon([(x - at[0], y - at[1]) for x, y in points], fill=255)
-    out = Image.new("RGBA", picture.size, (255, 0, 255, 255))
-    out.paste(picture, (0, 0), mask)
-    return out
-
-
-def combo(screen, name, board, text_area, arrow=True, list_h=170, size=28, align="LEFT", origin=None,
-          arrow_w=None):
-    """A drop-down list: its text in `text_area`, the arrow just after it when `arrow` (`arrow_w`
-    wide, square by default), the list below as wide as the text."""
-    x0, y0, x1, y1 = text_area
-    origin = origin or PLACE[:2]
-    h = arrow_w or y1 - y0
-    keys = {"Xywh": xywh(text_area, origin), "ListHeight": str(list_h), "TextLMargin": "18"}
-    keys.update(font(size, PAPER, align))
-    keys["SelectColor"] = colorref(ORANGE)
-    keys["AnimTextBack"] = screen.picture("M%sText" % name, under(board, text_area))
-    listing = clear((int(x1 - x0), list_h))
-    box(listing, (0, 0, listing.width - 1, list_h - 1), (14, 15, 18, 255), 8, ORANGE + (255,))
-    keys["AnimListBack"] = screen.picture("M%sList" % name, listing)
-    if arrow:
-        area = (x1 + 1, y0, x1 + 1 + h, y1)
-        states = arrow_states(board, area, "down", well=arrow_w is None)
-        for key, state in (("AnimNorm", "Up"), ("AnimFocus", "Lit"), ("AnimPush", "Down"), ("AnimDisable", "Grey")):
-            screen.picture("M%s%s" % (name, state), states[state])
-            keys[key] = '"M%s%s"' % (name, state)
-        screen.shown.append((states["Up"], (int(area[0]), int(area[1]))))
-        track = clear((int(h), list_h - 4))
-        ImageDraw.Draw(track).line((h // 2, 10, h // 2, list_h - 14), fill=EDGE + (255,), width=2)
-        keys["AnimScrollBack"] = screen.picture("M%sTrack" % name, track)
-        thumb = clear((int(h), 40))
-        ImageDraw.Draw(thumb).rounded_rectangle((h // 2 - 5, 4, h // 2 + 5, 36), 5, fill=ORANGE + (255,))
-        keys["AnimThumb"] = screen.picture("M%sThumb" % name, thumb)
-    else:
-        for key in ("AnimNorm", "AnimFocus", "AnimPush", "AnimDisable"):
-            keys[key] = '""'
-        keys["AnimScrollBack"] = keys["AnimThumb"] = '"%s"' % NOTHING
-    screen.set(name, **keys)
-    screen.shown.append((under(board, text_area), (int(x0), int(y0))))
-
-
-def stepper(screen, board, area, names, origin, label=None, side=52, number=84):
-    """A number stepped by arrows at the right of a well: `names` the left arrow, the number's
-    list (or edit box) and the right arrow; the arrows `side` square, the number `number` wide.
-    Returns where the arrows begin."""
-    left, value, right = names
-    x0, y0, x1, y1 = area
-    inset = (y1 - y0 - side) / 2
-    right_area = (x1 - 12 - side, y0 + inset, x1 - 12, y1 - inset)
-    value_area = (right_area[0] - number, y0 + inset, right_area[0], y1 - inset)
-    left_area = (value_area[0] - side, y0 + inset, value_area[0], y1 - inset)
-    for name, where, way in ((left, left_area, "left"), (right, right_area, "right")):
-        screen.button(name, where, arrow_states(board, where, way), origin)
-    keys = {"Xywh": xywh(value_area, origin), "TextLMargin": "0", "TextTMargin": "0",
-            "AnimNorm": screen.picture("M%sBack" % value, under(board, value_area))}
-    keys.update(font(30, PAPER, "CENTER"))
-    if screen.has(value, "SelectColor"):
-        keys["SelectColor"] = colorref(PAPER)
-    screen.set(value, ("Text", "LocalTextId") if label is None else (), **keys)
-    screen.shown.append((under(board, value_area), (int(value_area[0]), int(value_area[1]))))
-    return left_area[0]
-
-
-def toggle(screen, board, name, area, words, origin=None):
-    keys = screen.states(name, toggle_states(board, area, words),
-                         {"State0": "State0", "State1": "State1", "StateDisable0": "StateDisable0",
-                          "StateDisable1": "StateDisable1"}, at=area[:2])
-    screen.set(name, ("Text", "LocalTextId"), Xywh=xywh(area, origin or PLACE[:2]), TextDrop="0", **keys)
-
-
-def radio(screen, name, pictures, area, origin=None, chosen=False, **more):
-    """A radio button; the previews show it `chosen` or not."""
-    keys = screen.states(name, pictures, {"AnimOn": "On", "AnimOff": "Off", "AnimOnDisable": "OnGrey",
-                                          "AnimOffDisable": "OffGrey"}, at=area[:2], show="On" if chosen else "Off")
-    if name in dict(screen.sections):
-        screen.set(name, ("Text", "LocalTextId"), Xywh=xywh(area, origin or PLACE[:2]), **keys, **more)
-    else:
-        screen.add(name, Type="RADIOBUTTON", Xywh=xywh(area, origin or PLACE[:2]), **keys, **more)
-
-
-# ---- SPBase: the screen around the pages ----
-
-def build_base(data):
-    screen = Screen(data, "SPBASE")
-    board = ground()
-    kit.tag(board, "SINGLE PLAYER", LEFT, TOP, 26)
-    kit.build_mark(board)
-
-    # The bike page's stage shows the 3D through here too.
-    window = Image.new("L", (W, H))
-    ImageDraw.Draw(window).rectangle((STAGE[0], STAGE[1], STAGE[2] - 1, STAGE[3] - 1), fill=255)
-    board.paste((0, 0, 0, 0), mask=window)
-
-    tabs = kit.step_areas()
-    title_area = (LEFT - 8, TOP + 50, tabs[0][0] - 40, TOP + 186)
-    for (name, words), number in zip(TITLES, range(3)):
-        canvas = on_board(board, title_area)
-        size = kit.fit(words, 92, title_area[2] - title_area[0] - 24)
-        heading(canvas, words, LEFT, TOP + 140, size, PAPER)
-        shape(canvas, [(LEFT + 2, TOP + 162), (LEFT + 600, TOP + 162), (LEFT + 594, TOP + 170), (LEFT, TOP + 170)],
-              ORANGE)
-        picture = screen.picture("M%s" % name, under(canvas, title_area))
-        screen.add(name, Type="STATIC", Xywh=xywh(title_area), AnimNorm=picture)
-        if not number:
-            screen.shown.append((under(canvas, title_area), title_area[:2]))
-
-    for i, (name, area) in enumerate(zip(TABS, tabs)):
-        on, off = on_board(board, area), on_board(board, area)
-        kit.steps(on, i)
-        kit.steps(off, -1)
-        pictures = {"On": under(on, area), "Off": under(off, area)}
-        pictures["OnGrey"] = pictures["Off"]
-        pictures["OffGrey"] = pictures["Off"]
-        radio(screen, name, pictures, area, (0, 0), chosen=i == 0, FitToAnimOn="0")
-
-    top, bottom = FOOT
-    x = LEFT
-    for name, words in (("Back", "BACK"), ("Help", "HELP"), ("Options", "OPTIONS"), ("Joystick", "CONTROLS")):
-        w = heading_ink(words, 28) + 96
-        area = (x, top, x + w, bottom)
-        screen.button(name, area, button_states(board, area, words, size=28))
-        x += w + 16
-    area = (RIGHT - 540, top, RIGHT, bottom)
-    screen.button("Start", area, button_states(board, area, "RIDE", primary=True, size=44))
-
-    screen.set("Set_Information", BackgroundImage=screen.picture("MBack", board, window), ScreenWidth=str(W),
-               ScreenHeight=str(H), ArtScale=str(ART), Photos="1", Xywh=xywh((0, 0, W, H)), FontName='"Helvetica"')
-    return screen, board, window
 
 
 # ---- The event page ----
@@ -270,20 +100,8 @@ def track_panel(screen, board):
         screen.add(name, Type=kind, AttachId=str(TRACK_GROUP))
         screen.button(name, where, arrow_states(board, where, way))
     bar = (bar_x0, up[3] + 8, bar_x1, down[1] - 8)
-    groove = under(board, bar)
-    ImageDraw.Draw(groove).rounded_rectangle((groove.width // 2 - 3, 0, groove.width // 2 + 3, groove.height - 1), 3,
-                                             fill=RAISED + (255,))
-    # The thumb on the groove's middle, which is the same all the way down: see-through, it
-    # would show the photos through the panel.
-    middle = groove.height // 2 - 36
-    thumb = groove.crop((0, middle, groove.width, middle + 72))
-    ImageDraw.Draw(thumb).rounded_rectangle((thumb.width // 2 - 7, 0, thumb.width // 2 + 7, 71), 7,
-                                            fill=ORANGE + (255,))
-    groove_name = screen.picture("MTrackBar", groove)
-    screen.add("TrackSlider", Type="VSCROLLBAR", AttachId=str(TRACK_GROUP), Xywh=local(bar), AnimNorm=groove_name,
-               AnimFocus=groove_name, AnimPush=groove_name, AnimDisable=groove_name,
-               AnimThumb=screen.picture("MTrackThumb", thumb))
-    screen.shown += [(groove, bar[:2]), (thumb, bar[:2])]
+    screen.add("TrackSlider", Type="VSCROLLBAR", AttachId=str(TRACK_GROUP),
+               **scroll_bar(screen, board, "TrackSlider", bar))
 
 
 def text_row(listing, words, chosen):
@@ -406,68 +224,6 @@ def build_event(data, ui):
     return screen, board, None
 
 
-# ---- The bike page ----
-
-def build_bike(data):
-    screen = Screen(data, "SPBIKER", PLACE[:2])
-    board = ground()
-    window = Image.new("L", (W, H))
-    ImageDraw.Draw(window).rectangle((STAGE[0], STAGE[1], STAGE[2] - 1, STAGE[3] - 1), fill=255)
-    board.paste((0, 0, 0, 0), mask=window)
-    screen.set("Set_Information", View=local(STAGE))
-
-    area = (1680, PLACE[1], RIGHT, PLACE[3])
-    kit.panel(board, area, 230)
-    x0, x1 = area[0] + 24, area[2] - 24
-    side = 52
-
-    def picker(top, words, names):
-        heading(board, words, x0, top - 20, 28, ORANGE)
-        row = (x0, top, x1, top + 84)
-        chip(board, row)
-        inset = (84 - side) / 2
-        left = (row[0] + 12, top + inset, row[0] + 12 + side, top + inset + side)
-        right = (row[2] - 12 - side, top + inset, row[2] - 12, top + inset + side)
-        screen.button(names[0], left, arrow_states(board, left, "left"))
-        screen.button(names[2], right, arrow_states(board, right, "right"))
-        combo(screen, names[1], board, (left[2] + 8, top + 10, right[0] - 8, top + 74), arrow=False, list_h=420,
-              size=34, align="CENTER")
-
-    picker(PLACE[1] + 92, "RIDER", ("RiderLeft", "DDLRiders", "RiderRight"))
-    picker(PLACE[1] + 252, "BIKE", ("BikeLeft", "DDLBikes", "BikeRight"))
-
-    heading(board, "MACHINE", x0, PLACE[1] + 392, 28, ORANGE)
-    # The engine's size shows only for a bike that has a choice (dlgprocs.c, with TxtEngineSize):
-    # its well is drawn by the two, the name on TxtEngineSize and the rest under the list's text.
-    engine = (x0, PLACE[1] + 412, x1, PLACE[1] + 488)
-    engine_board = board.copy()
-    chip(engine_board, engine, "ENGINE")
-    name_area = (engine[0], engine[1], engine[0] + 180, engine[3])
-    screen.set("TxtEngineSize", ("Text", "LocalTextId"), Xywh=local(name_area),
-               AnimNorm=screen.picture("MTxtEngineSize", under(engine_board, name_area)))
-    screen.shown.append((under(engine_board, name_area), name_area[:2]))
-    combo(screen, "DDLEngineSize", engine_board, (name_area[2], engine[1], engine[2] - side - 1, engine[3]),
-          list_h=230, arrow_w=side)
-    inset = (76 - side) / 2
-
-    plate = (x0, engine[3] + 12, x1, engine[3] + 88)
-    chip(board, plate, "PLATE NUMBER")
-    edit = (plate[2] - 12 - 140, plate[1] + inset, plate[2] - 12, plate[3] - inset)
-    box(board, edit, (14, 15, 18, 255), 6, EDGE + (255,))
-    keys = {"Xywh": local(edit), "AnimNorm": screen.picture("MEditPlateNumber", under(board, edit)),
-            "TextLMargin": "0", "TextTMargin": "0"}
-    keys.update(font(32, PAPER, "CENTER"))
-    screen.set("EditPlateNumber", **keys)
-    screen.hide("rbwLabel1")
-
-    toggle(screen, board, "ChkAutoRotate", (x0, plate[3] + 12, x1, plate[3] + 88), "AUTO ROTATE")
-    tune = (x0, plate[3] + 116, x1, plate[3] + 192)
-    screen.button("ButWrench", tune, button_states(board, tune, "TUNE THE BIKE", size=30))
-    sub(board, "MOUSE WHEEL ZOOMS THE BIKE", x0, area[3] - 30, 22, (120, 122, 128), bold=True)
-
-    page_info(screen, board, window)
-    return screen, board, window
-
 
 # ---- The race information page ----
 
@@ -483,23 +239,11 @@ def build_results(data):
 
     frame = (area[0] + 24, area[1] + 112, area[2] - 24, area[3] - 112)
     box(board, frame, (12, 12, 14, 235), 8, EDGE + (255,))
-    head = 64
-    ImageDraw.Draw(board).line((frame[0] + 24, frame[1] + 20 + head, frame[2] - 24, frame[1] + 20 + head),
-                               fill=EDGE + (255,), width=2)
+    # The columns as wide as the original has them.
+    table(screen, board, frame, [("ButStats%d" % k, "LstStats%d" % k, share)
+                                 for k, share in zip(range(1, 5), (141, 56, 136, 112))], frame[:2])
     screen.set("rbwFrame1", Xywh=local(frame), AnimNorm=screen.picture("MFrame", under(board, frame)))
     screen.shown.append((under(board, frame), frame[:2]))
-    # The columns where the original has them, across the frame.
-    across = (frame[2] - frame[0] - 64) / 449
-    columns = [(8, 137), (149, 52), (205, 129), (341, 108)]
-    for k, (x, w) in enumerate(columns):
-        cx0 = frame[0] + 32 + (x - 8) * across
-        cx1 = cx0 + w * across
-        keys = {"Xywh": xywh((cx0, frame[1] + 20, cx1, frame[1] + 20 + head), frame[:2]), "TextLMargin": "8"}
-        keys.update(font(26, GREY))
-        screen.set("ButStats%d" % (k + 1), **keys)
-        keys = {"Xywh": xywh((cx0, frame[1] + 40 + head, cx1, frame[3] - 20), frame[:2]), "TextLMargin": "8"}
-        keys.update(font(32, PAPER))
-        screen.set("LstStats%d" % (k + 1), **keys)
 
     replay = (area[2] - 40 - 440, area[3] - 92, area[2] - 40, area[3] - 20)
     screen.button("ButViewReplay", replay, button_states(board, replay, "VIEW REPLAY", size=30),
@@ -508,33 +252,15 @@ def build_results(data):
     return screen, board, None
 
 
-# ---- Previews ----
-
-def preview(photo, layers):
-    """The screen as the game would show it: `layers` of (screen, board, window) drawn in turn,
-    each board where its screen draws it and then its controls at rest; the 3D stood in for."""
-    canvas = kit.cover(Image.open(photo).convert("RGB"), (W, H)).convert("RGBA")
-    out = Image.new("RGBA", (W, H))
-    for screen, board, window in layers:
-        whole = screen.stem == "SPBASE"
-        area = (0, 0, W, H) if whole else PLACE
-        out.paste(shown(board.crop(area), window=window.crop(area) if window else None), area[:2])
-        for picture, at in screen.shown:
-            out.paste(shown(picture), at)
-        stage = window or Image.new("L", (W, H))           # the page's, drawn last, is what shows
-    keyed = Image.fromarray(((np.asarray(out)[..., :3] == (255, 0, 255)).all(-1) * 255).astype("uint8"))
-    out.paste((0, 0, 0, 0), mask=keyed)
-    canvas.alpha_composite(out)
-    canvas.paste((40, 44, 52, 255), mask=stage)
-    return canvas.convert("RGB")
-
-
 def main(ui, out, previews):
     ui, out, previews = Path(ui), Path(out), Path(previews)
     kit.fonts_from(ui / "modern" / "fonts")
     read = lambda stem: (ui / (stem + ".DAT")).read_bytes()             # noqa: E731
-    base = build_base(read("SPBASE"))
-    pages = [build_event(read("SPEVENT"), ui), build_bike(read("SPBIKER")), build_results(read("SPRINFO"))]
+    base = build_base(read("SPBASE"), "SPBASE", "SINGLE PLAYER", TITLES, TABS,
+                      [("Back", "BACK"), ("Help", "HELP"), ("Options", "OPTIONS"), ("Joystick", "CONTROLS")],
+                      [("Start", "RIDE", 540, True)])
+    pages = [build_event(read("SPEVENT"), ui), build_bike(read("SPBIKER"), "SPBIKER"),
+             build_results(read("SPRINFO"))]
     out.mkdir(parents=True, exist_ok=True)
     previews.mkdir(parents=True, exist_ok=True)
     for screen, _, _ in [base] + pages:

@@ -2471,6 +2471,23 @@ static int dialog_art(BYTE* dialog)
     return 1;
 }
 
+/*
+    How many times over the game's picture `width` pixels across is drawn in `control`: its
+    dialog's ArtScale, or fewer when that would not fit across the control (in its layout's
+    pixels), so a track's picture fits a box smaller than three times its size.
+*/
+static int game_picture_art(BYTE* control, int width, int margin)
+{
+    BYTE* dialog = FIELD(control, CTL_DIALOG, BYTE*);
+    int art = dialog_art(dialog);
+    int across = (int) ((FIELD(control, CTL_RECT, RECT).right - FIELD(control, CTL_RECT, RECT).left
+                         - 2 * margin) / FIELD(dialog, 0x9C4, float) + 0.5f);
+
+    if (width > 0 && across / width < art)
+        art = across / width > 1 ? across / width : 1;
+    return art;
+}
+
 /* The part of `picture` the control draws (its 0x4C), in the picture's own pixels. */
 static RECT* control_source(BYTE* self, void* picture)
 {
@@ -2480,6 +2497,7 @@ static RECT* control_source(BYTE* self, void* picture)
 
     if (art <= 1 || modern_marked(picture))
         return source;
+    art = game_picture_art(self, FIELD(picture, 0x14, int), 0);
     scaled.left = source->left / art;
     scaled.top = source->top / art;
     scaled.right = source->right / art;
@@ -5592,20 +5610,11 @@ static int list_entry_art(BYTE* self, int index)
     list_entry* entry = &list_entries(self)[index];
     int art = dialog_art(FIELD(self, CTL_DIALOG, BYTE*));
 
-    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
-    int width, across;
-
     if (art <= 1 || (entry->kind != 2 && entry->kind != 3) || !entry->anim)
         return 1;
     if (modern_marked(anim_current(entry->anim)->picture))
         return 1;
-    /* At most as many times as fits across the list, in its layout's pixels. */
-    width = anim_current(entry->anim)->width;
-    across = (int) ((FIELD(self, CTL_RECT, RECT).right - FIELD(self, CTL_RECT, RECT).left
-                     - 2 * FIELD(self, 0xE8, LONG)) / FIELD(dialog, 0x9C4, float) + 0.5f);
-    if (width > 0 && across / width < art)
-        art = across / width > 1 ? across / width : 1;
-    return art;
+    return game_picture_art(self, anim_current(entry->anim)->width, FIELD(self, 0xE8, LONG));
 }
 #endif
 

@@ -57,13 +57,20 @@ def font(size, colour=PAPER, align="LEFT", bold=True):
 # ---- The controls' states ----
 
 def button_states(board, area, words, primary=False, size=None):
-    """A slanted button: orange when primary, an outlined ghost filled orange when chosen."""
+    """A slanted button: orange when primary, an outlined ghost filled orange when chosen. With
+    no `words` the game writes its own on it, so chosen it is outlined orange instead, for the
+    words to read on it."""
     x0, y0, x1, y1 = area
     size = size or int((y1 - y0) * 0.46)
     pictures = {}
     for state in STATES:
         canvas = on_board(board, area)
         lit = state in ("Lit", "Down")
+        if not words:
+            shape(canvas, slanted(area), (40, 30, 18) if lit else PANEL, 230)
+            outline(canvas, slanted(area), (ORANGE if state == "Lit" else DEEP) if lit else EDGE, 3 if lit else 2)
+            pictures[state] = under(canvas, area)
+            continue
         if primary and state != "Grey":
             shape(canvas, slanted(area), {"Up": ORANGE, "Lit": (255, 158, 40), "Down": DEEP}[state])
             colour = INK
@@ -226,9 +233,10 @@ class Screen:
         self.added.append((section, before, keys))
         self.names.add(section)
 
-    def button(self, name, area, pictures, origin=None, **more):
-        """A button (or step arrow) at `area` on the screen, `origin` its anchor's corner."""
-        self.set(name, TEXT_KEYS, Xywh=xywh(area, origin or self.origin),
+    def button(self, name, area, pictures, origin=None, keep_text=False, **more):
+        """A button (or step arrow) at `area` on the screen, `origin` its anchor's corner; its
+        words are in its pictures, or with `keep_text` the game's."""
+        self.set(name, () if keep_text else TEXT_KEYS, Xywh=xywh(area, origin or self.origin),
                  **self.states(name, pictures, {"AnimNorm": "Up", "AnimFocus": "Lit", "AnimPush": "Down",
                                                 "AnimDisable": "Grey"}, at=area[:2]), **more)
 

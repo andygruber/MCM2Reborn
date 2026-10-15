@@ -67,6 +67,11 @@ BOOL preview_zoom(unsigned char* page);
    every caller in a frame. `user` is the gui_user, `object` anything on the screen (ui.c). */
 int menu_wheel(void* user, void* object);
 
+/* A MCM2:Reborn screen with pages: whether it titles them itself, and the title of page
+   `page` shown (dlgprocs.c). */
+BOOL pages_titled(unsigned char* screen);
+void page_title_show(unsigned char* screen, int page);
+
 /* A rectangle on the 640x480 menu screen, where the scaled menus put it (ui.c). */
 void menu_place_view(unsigned char* dialog, RECT* view);
 

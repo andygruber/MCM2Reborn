@@ -394,15 +394,23 @@ static const struct {
 };
 
 #ifdef OPENMCM2_DEV
-/* MCM2:Reborn's screen titles each page itself, its tabs' words drawn in their pictures. */
-static const char* const sp_titles[3] = { "TitleEvent", "TitleBikeRider", "TitleRaceInfo" };
+/*
+    A MCM2:Reborn screen with pages (single player's, the pro circuit's) titles each one itself,
+    Title0 to Title2, its tabs' words drawn in their pictures.
+*/
+static const char* const page_titles[3] = { "Title0", "Title1", "Title2" };
 
-static void sp_title_show(BYTE* self, int page)
+BOOL pages_titled(BYTE* self)
+{
+    return dialog_find_control(self, NULL, page_titles[0], 0) != NULL;
+}
+
+void page_title_show(BYTE* self, int page)
 {
     int i;
 
     for (i = 0; i < 3; i++) {
-        BYTE* title = dialog_find_control(self, NULL, sp_titles[i], 0);
+        BYTE* title = dialog_find_control(self, NULL, page_titles[i], 0);
 
         if (title)
             control_show(title, NULL, i == page, FALSE);
@@ -421,7 +429,7 @@ void __fastcall sp_show_page(BYTE* self, void* edx_unused, int page)
     (void) edx_unused;
 #ifdef OPENMCM2_DEV
     if (page >= 0 && page <= 2)
-        sp_title_show(self, page);
+        page_title_show(self, page);
 #endif
     for (i = 0; i < 3; i++) {
         BYTE** open = &FIELD(self, SP_PAGES + 4 * i, BYTE*);
@@ -2627,7 +2635,7 @@ static BYTE* sp_tab_setup(BYTE* self, const char* name, UINT id)
     BYTE* tab = dialog_find_control(self, NULL, name, TAB_CONTROL);
 
 #ifdef OPENMCM2_DEV
-    if (dialog_find_control(self, NULL, sp_titles[0], 0))
+    if (pages_titled(self))
         return tab;
 #endif
     option_load_text(tab, NULL, 0, game_language, id);
