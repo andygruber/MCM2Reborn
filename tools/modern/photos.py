@@ -35,8 +35,7 @@ def darken(image):
 def prepare(name, box):
     image = Image.open(DOWNLOADS / name).convert("RGB").crop(box)
     image = image.resize((W, H), Image.LANCZOS)
-    image = image.filter(ImageFilter.GaussianBlur(1.6))         # the upscale's blocks, smoothed
-    image = image.filter(ImageFilter.UnsharpMask(radius=3, percent=60, threshold=2))
+    image = image.filter(ImageFilter.UnsharpMask(radius=4, percent=110, threshold=1))
     return darken(image)
 
 
