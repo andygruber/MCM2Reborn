@@ -21,6 +21,7 @@ from mainmenu_art import (BLUE, CARD, CREAM, DIM, INK, ROW, ROW_LINE, YELLOW,   
                           YELLOW_DOWN, text, width_of)
 
 ART = 3                         # the pictures' pixels to the original's
+SIDE = 320                      # what a full screen gains each side: 1920 wide becomes 2560
 GROUND = (24, 26, 30)           # behind everything on a full screen
 FOLDER = "03_Modern\\"
 CREAM_BGR = str(0xE0ECF0)       # COLORREF of CREAM
@@ -228,17 +229,6 @@ def radio(size, ground, on, enabled):
     return img
 
 
-def frame(size, ground):
-    """What a decorative picture becomes: a fine outline, its inside see-through."""
-    img = new(size, ground)
-    outline(img, ROW_LINE, max(a(0.5), 1))
-    w, h = img.size
-    m = max(a(0.5), 1)
-    if w > 2 * m and h > 2 * m:
-        fill(img, (255, 0, 255), (m, m, w - 1 - m, h - 1 - m))
-    return img
-
-
 def backdrop(size, title, card):
     """A screen's ground: flat dark, its title as a label; a panel's: a card edged in blue."""
     img = new(size, CARD if card else GROUND)
@@ -250,10 +240,11 @@ def backdrop(size, title, card):
 TITLE_BOX = (8, 4, 220, 22)                     # where a title goes, in the original's pixels
 
 
-def draw_title(img, title):
+def draw_title(img, title, side):
     """The screen's title as a label at its top left."""
-    ImageDraw.Draw(img).rectangle((a(10), a(12), a(16) - 1, a(13) - 1), fill=BLUE + (255,))
-    text(img, title, a(20), a(15), mono_a(6), BLUE, spacing=0.3)
+    ImageDraw.Draw(img).rectangle((side + a(10), a(12), side + a(16) - 1, a(13) - 1),
+                                  fill=BLUE + (255,))
+    text(img, title, side + a(20), a(15), mono_a(6), BLUE, spacing=0.3)
 
 
 def overlaps(box, other):
@@ -262,9 +253,12 @@ def overlaps(box, other):
 
 # ---- A screen ----
 
-def scale_xywh(text_value):
-    n = numbers(text_value)
-    return ", ".join(str(a(v)) for v in n)
+def scale_xywh(text_value, shift=0):
+    """An Xywh at ART times, moved `shift` pixels across."""
+    n = [a(v) for v in numbers(text_value)]
+    if n:
+        n[0] += shift
+    return ", ".join(str(v) for v in n)
 
 
 def theme(dat, globals_, preview_dir):
@@ -279,13 +273,16 @@ def theme(dat, globals_, preview_dir):
     full = width >= 640 and height >= 480
     card = bool(background) and background.lower() != "none" and not full
     ground = CARD if card else GROUND
+    # A full screen is made 16:9, its 4:3 in the middle, so it covers the screen beside it too.
+    side = SIDE if full and background and background.lower() != "none" else 0
     anims = {n.lower(): l for n, l in sections}
     stem = dat.stem.upper()
 
     pictures, keys, drops = {}, {}, {}
     if background and background.lower() != "none":
-        pictures["MBack"] = backdrop((a(width), a(height)), None, card)
-    info_keys = {"ScreenWidth": str(a(width)), "ScreenHeight": str(a(height)), "ArtScale": str(ART),
+        pictures["MBack"] = backdrop((a(width) + 2 * side, a(height)), None, card)
+    info_keys = {"ScreenWidth": str(a(width) + 2 * side), "ScreenHeight": str(a(height)),
+                 "ArtScale": str(ART),
                  "FontName": '"Bahnschrift"', "TextColor": CREAM_BGR}
     if "MBack" in pictures:
         info_keys["BackgroundImage"] = '"MBack"'
@@ -309,7 +306,7 @@ def theme(dat, globals_, preview_dir):
         origins[name.lower()] = (ox + x, oy + y)
         boxes.append((ox + x, oy + y, ox + x + w, oy + y + h))
         size = (a(w), a(h))
-        k = {"Xywh": scale_xywh(value(lines, "Xywh"))}
+        k = {"Xywh": scale_xywh(value(lines, "Xywh"), 0 if anchor else side)}
         if value(lines, "FontHeight"):
             k["FontHeight"] = "%g" % (float(value(lines, "FontHeight")) * ART)
         for colour_key in ("TextColor",):
@@ -375,20 +372,17 @@ def theme(dat, globals_, preview_dir):
             made = {"AnimNorm": "Back"}
             pictures["M%sBack" % name] = field(size, ground, underline=kind == "EDITBOX")
         elif kind == "STATIC" and has("AnimNorm"):
-            made = {"AnimNorm": "Frame"}
-            pictures["M%sFrame" % name] = frame(size, ground)
-            for fx in ("FXAnimIn", "FXAnimOut"):
-                if has(fx):
-                    k[fx] = '"M%sFrame"' % name
+            # Decoration: none. (As big colour-keyed outlines they cost every frame.)
+            drops[name] = ("AnimNorm", "FXAnimIn", "FXAnimOut")
         for key, state in made.items():
             k[key] = '"M%s%s"' % (name, state)
         keys[name] = k
         if "AnimNorm" in made or "AnimOff" in made:
             first = "M%s%s" % (name, made.get("AnimNorm") or made.get("AnimOff"))
-            placed.append((pictures[first], (a(ox + x), a(oy + y))))
+            placed.append((pictures[first], (a(ox + x) + side, a(oy + y))))
 
     if full and stem in TITLES and "MBack" in pictures             and not any(overlaps(TITLE_BOX, box) for box in boxes):
-        draw_title(pictures["MBack"], TITLES[stem])
+        draw_title(pictures["MBack"], TITLES[stem], side)
 
     out = []
     for name, lines in sections:
@@ -411,7 +405,7 @@ def theme(dat, globals_, preview_dir):
     new_entries.append((layout, "\r\n".join(out).encode("latin-1")))
 
     if preview_dir:
-        canvas = (pictures.get("MBack") or new((a(width), a(height)), GROUND)).copy()
+        canvas = (pictures.get("MBack") or new((a(width) + 2 * side, a(height)), GROUND)).copy()
         for img, at in placed:
             canvas.alpha_composite(img, at)
         rgb = canvas.convert("RGB")

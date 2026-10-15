@@ -2346,6 +2346,101 @@ int __fastcall control_tick(BYTE* self, void* edx_unused, DWORD time)
     return game_vf_10_46A300(self, NULL, time);
 }
 
+#ifdef OPENMCM2_DEV
+/*
+    The modern menus' pictures are made at ArtScale times a layout's units, but the game's own -
+    a track's or a bike's, set by the code at run time - are one pixel to a unit. A control draws
+    the part of its picture its layout's size covers, so for the game's pictures in a modern
+    dialog that part is taken ArtScale times smaller. The modern pictures are known by the folder
+    they are loaded from, and the dialogs by the ArtScale their layout gave.
+*/
+#define MODERN_MOST 2048
+
+static void* modern_pictures[MODERN_MOST] = { 0 };
+static int modern_count = 0;
+
+static struct {
+    BYTE* dialog;
+    int art;
+} dialog_arts[64] = { 0 };
+
+static void modern_mark(const char* name, void* picture)
+{
+    if (picture && modern_count < MODERN_MOST
+        && (game_FUN_0053b910(name, "_Modern\\") || game_FUN_0053b910(name, "_modern\\")))
+        modern_pictures[modern_count++] = picture;
+}
+
+static void modern_forget(void* picture)
+{
+    int i;
+
+    for (i = 0; i < modern_count; i++)
+        if (modern_pictures[i] == picture) {
+            modern_pictures[i] = modern_pictures[--modern_count];
+            return;
+        }
+}
+
+static BOOL modern_marked(void* picture)
+{
+    int i;
+
+    for (i = 0; i < modern_count; i++)
+        if (modern_pictures[i] == picture)
+            return TRUE;
+    return FALSE;
+}
+
+/* A dialog's ArtScale, kept each time a layout is read: a dialog's address is reused. */
+static void dialog_art_set(BYTE* dialog, int art)
+{
+    int i, free = -1;
+
+    for (i = 0; i < 64; i++) {
+        if (dialog_arts[i].dialog == dialog) {
+            dialog_arts[i].art = art;
+            return;
+        }
+        if (free < 0 && dialog_arts[i].art <= 1)
+            free = i;
+    }
+    if (art > 1 && free >= 0) {
+        dialog_arts[free].dialog = dialog;
+        dialog_arts[free].art = art;
+    }
+}
+
+static int dialog_art(BYTE* dialog)
+{
+    int i;
+
+    for (i = 0; i < 64; i++)
+        if (dialog_arts[i].dialog == dialog)
+            return dialog_arts[i].art;
+    return 1;
+}
+
+/* The part of `picture` the control draws (its 0x4C), in the picture's own pixels. */
+static RECT* control_source(BYTE* self, void* picture)
+{
+    static RECT scaled;
+    RECT* source = &FIELD(self, 0x4C, RECT);
+    int art = dialog_art(FIELD(self, CTL_DIALOG, BYTE*));
+
+    if (art <= 1 || modern_marked(picture))
+        return source;
+    scaled.left = source->left / art;
+    scaled.top = source->top / art;
+    scaled.right = source->right / art;
+    scaled.bottom = source->bottom / art;
+    return &scaled;
+}
+#define CONTROL_SOURCE(self, picture) control_source(self, picture)
+#else
+#define CONTROL_SOURCE(self, picture) (&FIELD(self, 0x4C, RECT))
+#endif
+
 /*
     Vtable slot 39: lay the control out from its design rectangle (0x3C), scaled by the dialog
     and placed relative to the control it links to, or to the dialog. The parts off the screen
@@ -2493,7 +2588,7 @@ int __fastcall control_render(BYTE* self)
         background = FIELD(FIELD(self, CTL_DIALOG, BYTE*), DLG_BACKGROUND, BYTE*);
         if (background) {
             picture = FIELD(self, 0x1CC, BYTE*);
-            background_draw(background, NULL, picture, &area, &FIELD(self, 0x4C, RECT),
+            background_draw(background, NULL, picture, &area, CONTROL_SOURCE(self, picture),
                             FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000,
                             FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
                             &FIELD(self, 0x1BC, int), 0);
@@ -2504,7 +2599,8 @@ int __fastcall control_render(BYTE* self)
             picture = FIELD(self, 0x1CC, BYTE*);
             flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
             if (!VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL, &area,
-                                                                picture, self + 0x4C, flags))
+                                                                picture,
+                                                                CONTROL_SOURCE(self, picture), flags))
                 return 0;
         }
     }
@@ -3401,6 +3497,9 @@ ui_frame* __fastcall frame_construct(ui_frame* self, void* edx_unused, const cha
         self->height = image_height(image);
         frame_picture(self, image, owner, mode, 0x1393);
         game_FUN_005184b0(image);
+#ifdef OPENMCM2_DEV
+        modern_mark(name, self->picture);
+#endif
         return self;
     }
 
@@ -3468,6 +3567,9 @@ ui_frame* __fastcall frame_construct_resource(ui_frame* self, void* edx_unused, 
             self->height = 0;
             self->picture = NULL;
         }
+#ifdef OPENMCM2_DEV
+        modern_mark(name, self->picture);
+#endif
     }
     return self;
 }
@@ -3476,6 +3578,9 @@ PORT(0x00473CF0)
 void __fastcall frame_destruct(ui_frame* self)
 {
     self->vtable = UIFRAME_VTABLE;
+#ifdef OPENMCM2_DEV
+    modern_forget(self->picture);
+#endif
     if (self->picture)
         object_destroy(self->picture);
     if (self->owns_sound)
@@ -4048,14 +4153,14 @@ int __fastcall edit_render(BYTE* self)
 
         if (background) {
             background_draw(background, NULL, picture, &FIELD(self, CTL_RECT, RECT),
-                            &FIELD(self, 0x4C, RECT),
+                            CONTROL_SOURCE(self, picture),
                             flags, FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
                             &FIELD(self, 0x1BC, int), 0);
             kept = FIELD(self, 0x1BC, int);
         } else {
             VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL,
                                                            &FIELD(self, CTL_RECT, RECT), picture,
-                                                           self + 0x4C, flags);
+                                                           CONTROL_SOURCE(self, picture), flags);
         }
     }
     FIELD(self, 0x1BC, int) = redraws;
@@ -6451,13 +6556,15 @@ int __fastcall list_render(BYTE* self)
 
         if (background) {
             background_draw(background, NULL, picture, &FIELD(self, CTL_RECT, RECT),
-                            &FIELD(self, 0x4C, RECT),
+                            CONTROL_SOURCE(self, picture),
                             flags, FIELD(self, CTL_SLOT, int), FIELD(self, 0x1C0, DWORD),
                             &FIELD(self, 0x1BC, int), 0);
             FIELD(self, 0x1BC, int) = redraws;
         } else if (!VIRTUAL(object_screen(self), 0xC, screen_draw)(object_screen(self), NULL,
                                                                   &FIELD(self, CTL_RECT, RECT),
-                                                                  picture, self + 0x4C, flags)) {
+                                                                  picture,
+                                                                  CONTROL_SOURCE(self, picture),
+                                                                  flags)) {
             return 0;
         }
     }
@@ -8177,7 +8284,7 @@ int __fastcall progress_render(BYTE* self)
     RECT area;
 
     if (picture && !x87_zero(FIELD(self, PROGRESS_DONE, float))) {
-        RECT source = FIELD(self, 0x4C, RECT);
+        RECT source = *CONTROL_SOURCE(self, picture);
         DWORD flags = FIELD(picture, 0x30, int) ? 0x1008000 : 0x1000000;
 
         VIRTUAL(self, 0xFC, control_area)(self, NULL, &FIELD(self, CTL_RECT, RECT), &area);
@@ -8636,6 +8743,9 @@ static void reader_info(dialog_reader* r)
     char face[0x80];
     float size;
     int height, bold, italic, i;
+#ifdef OPENMCM2_DEV
+    int art = 1;
+#endif
 
     reader_int(r, KEY(0x00571CDC), FIELD(screen, 0xC, int), &FIELD(self, DLG_DESIGN_W, int));
     reader_int(r, KEY(0x00571CCC), FIELD(screen, 0x10, int), &FIELD(self, DLG_DESIGN_H, int));
@@ -8683,9 +8793,8 @@ static void reader_info(dialog_reader* r)
         they are drawn at the menus' scale divided by it: 1:1 when the menus are scaled by that.
     */
     if (dev_settings.menus_widescreen) {
-        int art = 1;
-
         reader_int(r, "ArtScale", 1, &art);
+        dialog_art_set(self, art);
         if (art > 1) {
             int left, top;
             float scale = menu_fit(object_screen(self), &left, &top) / art;
@@ -8696,7 +8805,8 @@ static void reader_info(dialog_reader* r)
     }
 
     /* A screen made wider than 4:3 (the modern menus' 1920x1080) is its own area, centred. */
-    if (dev_settings.menus_widescreen && FIELD(self, DLG_SCALED, int) && !FIELD(self, DLG_POPUP, int)
+    if (dev_settings.menus_widescreen && (FIELD(self, DLG_SCALED, int) || art > 1)
+        && !FIELD(self, DLG_POPUP, int)
         && FIELD(self, DLG_DESIGN_W, int) * 3 > FIELD(self, DLG_DESIGN_H, int) * 4) {
         RECT* area = &FIELD(self, DLG_AREA, RECT);
         int across = (int) (FIELD(self, DLG_DESIGN_W, int) * FIELD(self, 0x9C4, float));

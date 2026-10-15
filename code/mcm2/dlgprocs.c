@@ -174,6 +174,13 @@ void __fastcall profile_show(BYTE* self)
     char caption[0x80];
     char text[0x80];
 
+#ifdef OPENMCM2_DEV
+    /* The modern rider card says what it is: the label is the name alone. */
+    if (dev_settings.menus_modern) {
+        control_set_text(label, NULL, game_profile);
+        return;
+    }
+#endif
     game_FUN_00526fc0(game_main, NULL, 0x1466, caption, sizeof caption);
     game_FUN_0053a11f(text, TWO_WORDS, caption, game_profile);
     control_set_text(label, NULL, text);
