@@ -2673,6 +2673,16 @@ static HRESULT WINAPI d_SetCooperativeLevel(IDirectDraw7* self, HWND window, DWO
     (void) self;
     if (window)
         g_window = window;
+#ifdef OPENMCM2_DEV
+    if (window && dev_settings.menus_modern)
+    {
+        typedef BOOL (WINAPI* set_text_fn)(HWND window, LPCSTR text);
+        set_text_fn set_text = (set_text_fn) api("user32.dll", "SetWindowTextA");
+
+        if (set_text)
+            set_text(window, GAME_TITLE);
+    }
+#endif
     g_fullscreen = (flags & DDSCL_FULLSCREEN) != 0;
     if (g_fullscreen)
         cover_monitor();

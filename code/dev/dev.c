@@ -17,6 +17,45 @@ static BOOL read_switch(read_int_fn read, const char* section, const char* key)
     return read(section, key, 0, SETTINGS_FILE) != 0;
 }
 
+#define FONTS_FOLDER "ui\\modern\\fonts\\"
+
+typedef HANDLE (WINAPI* find_first_fn)(LPCSTR pattern, WIN32_FIND_DATAA* found);
+typedef BOOL   (WINAPI* find_next_fn)(HANDLE search, WIN32_FIND_DATAA* found);
+typedef BOOL   (WINAPI* find_close_fn)(HANDLE search);
+typedef int    (WINAPI* add_font_fn)(LPCSTR path, DWORD flags, void* reserved);
+
+/*
+    The modern menus' fonts, from the game's ui\modern\fonts folder: made available to this
+    process alone (nothing is installed), for the menus' FontName to find by name.
+*/
+static void load_menu_fonts(void)
+{
+    find_first_fn find_first = (find_first_fn) api("kernel32.dll", "FindFirstFileA");
+    find_next_fn find_next = (find_next_fn) api("kernel32.dll", "FindNextFileA");
+    find_close_fn find_close = (find_close_fn) api("kernel32.dll", "FindClose");
+    add_font_fn add_font = (add_font_fn) api("gdi32.dll", "AddFontResourceExA");
+    WIN32_FIND_DATAA found;
+    HANDLE search;
+    int loaded = 0;
+
+    if (!find_first || !find_next || !find_close || !add_font)
+        return;
+    search = find_first(FONTS_FOLDER "*.ttf", &found);
+    if (search == INVALID_HANDLE_VALUE)
+        return;
+    do {
+        char path[MAX_PATH];
+
+        wsprintfA(path, "%s%s", FONTS_FOLDER, found.cFileName);
+        if (add_font(path, FR_PRIVATE, NULL))
+            loaded++;
+        else
+            log_line("dev build: the font %s would not load", path);
+    } while (find_next(search, &found));
+    find_close(search);
+    log_line("dev build: %d menu font(s) from " FONTS_FOLDER, loaded);
+}
+
 void dev_install(void)
 {
     read_int_fn read = (read_int_fn) api("kernel32.dll", "GetPrivateProfileIntA");
@@ -40,6 +79,8 @@ void dev_install(void)
              dev_settings.trace_display, dev_settings.menus_widescreen,
              dev_settings.menus_fill_sides, dev_settings.menus_modern, dev_settings.menus_live,
              dev_settings.fix_last_pick);
+    if (dev_settings.menus_modern)
+        load_menu_fonts();
 }
 
 void dev_trace(const char* area, const char* fmt, ...)

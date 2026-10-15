@@ -36,6 +36,9 @@
 
 #include "runtime.h"
 
+/* The game's name in the modern menus, the window's title and wherever else it is shown. */
+#define GAME_TITLE "MCM2:Reborn"
+
 typedef struct dev_switches {
     BOOL trace_screens;
     BOOL trace_events;
