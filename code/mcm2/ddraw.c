@@ -130,6 +130,182 @@ static void cover_monitor(void)
 }
 
 /* Show a render target in the window, scaled to fit and keeping its aspect. */
+/*
+    The modern main menu's photographs: a layer under the menu that crossfades between the
+    pictures in ui\modern\photo1.tga.. (32-bit, bottom up), cover-scaled to the window whatever
+    its size. The menu shows them where it draws HOLE, which the render target keeps with no
+    alpha while the layer is on.
+*/
+#define PHOTOS_MOST 8
+#define PHOTO_HOLD  7000        /* milliseconds a photo shows */
+#define PHOTO_FADE  1600        /* and fades into the next */
+
+static struct
+{
+    BOOL   on, loaded;
+    int    count;
+    GLuint texture[PHOTOS_MOST];
+    LONG   width[PHOTOS_MOST], height[PHOTOS_MOST];
+    DWORD  start;
+} g_photos;
+
+/* The menu's see-through colour, as unpacked: x1R5G5B5 31, 0, 30, next to the colour key. */
+static BOOL is_hole(const BYTE* rgba)
+{
+    return rgba[0] == 255 && rgba[1] == 0 && rgba[2] == 247;
+}
+
+/* The time in milliseconds, through kernel32 (the game does not import GetTickCount). */
+static DWORD photo_clock(void)
+{
+    typedef DWORD (WINAPI* tick_fn)(void);
+    static tick_fn tick;
+
+    if (!tick)
+        tick = (tick_fn) api("kernel32.dll", "GetTickCount");
+    return tick ? tick() : 0;
+}
+
+void render_photos(BOOL on)
+{
+    if (on && !g_photos.on)
+        g_photos.start = photo_clock();
+    g_photos.on = on;
+}
+
+static void load_photos(void)
+{
+    int n;
+
+    g_photos.loaded = TRUE;
+    for (n = 0; n < PHOTOS_MOST; ++n)
+    {
+        char name[64];
+        BYTE header[18];
+        HANDLE file;
+        DWORD got, size;
+        BYTE* pixels;
+        LONG w, h;
+
+        wsprintfA(name, "ui\\modern\\photo%d.tga", n + 1);
+        file = CreateFileA(name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+        if (file == INVALID_HANDLE_VALUE)
+            break;
+        if (!ReadFile(file, header, sizeof header, &got, NULL) || got != sizeof header
+            || header[2] != 2 || header[16] != 32)
+        {
+            CloseHandle(file);
+            break;
+        }
+        w = header[12] | header[13] << 8;
+        h = header[14] | header[15] << 8;
+        size = (DWORD) w * h * 4;
+        SetFilePointer(file, 18 + header[0], NULL, FILE_BEGIN);
+        pixels = (BYTE*) mem_alloc(size);
+        if (!pixels || !ReadFile(file, pixels, size, &got, NULL) || got != size)
+        {
+            mem_free(pixels);
+            CloseHandle(file);
+            break;
+        }
+        CloseHandle(file);
+
+        gl.GenTextures(1, &g_photos.texture[n]);
+        gl.BindTexture(GL_TEXTURE_2D, g_photos.texture[n]);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        gl.PixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+        mem_free(pixels);
+        g_photos.width[n] = w;
+        g_photos.height[n] = h;
+        g_photos.count = n + 1;
+    }
+    log_line("render: %d menu photo(s)", g_photos.count);
+}
+
+/* A textured quad over x0..x1, y0..y1 of the window (y up), its texture's u0..u1, v0..v1. */
+static void quad(GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1, GLfloat u0, GLfloat v0, GLfloat u1,
+                 GLfloat v1)
+{
+    GLfloat q[4][4] = {
+        { x0, y0, u0, v0 }, { x1, y0, u1, v0 }, { x1, y1, u1, v1 }, { x0, y1, u0, v1 },
+    };
+
+    gl.VertexPointer(2, GL_FLOAT, sizeof q[0], q[0]);
+    gl.TexCoordPointer(2, GL_FLOAT, sizeof q[0], &q[0][2]);
+    gl.DrawArrays(GL_TRIANGLE_FAN, 0, 4);
+}
+
+/* Photo `n` covering the w x h window, cropped about its middle, at `alpha`. */
+static void draw_photo(int n, LONG w, LONG h, GLfloat alpha)
+{
+    GLfloat pw = (GLfloat) g_photos.width[n], ph = (GLfloat) g_photos.height[n];
+    GLfloat u = 0, v = 0;
+
+    if (w * ph > h * pw)
+        v = (1 - (pw * h / w) / ph) / 2;       /* the window is wider: crop top and bottom */
+    else
+        u = (1 - (ph * w / h) / pw) / 2;
+    gl.BindTexture(GL_TEXTURE_2D, g_photos.texture[n]);
+    gl.Color4f(1, 1, 1, alpha);
+    quad(0, 0, (GLfloat) w, (GLfloat) h, u, v, 1 - u, 1 - v);
+}
+
+/* The photos, then the menu over them where it is not see-through. */
+static void present_over_photos(surface* target, LONG w, LONG h, LONG x, LONG y, LONG fit_w, LONG fit_h)
+{
+    DWORD cycle = (DWORD) g_photos.count * (PHOTO_HOLD + PHOTO_FADE);
+    DWORD at = (photo_clock() - g_photos.start) % cycle;
+    int shown = (int) (at / (PHOTO_HOLD + PHOTO_FADE));
+    DWORD into = at % (PHOTO_HOLD + PHOTO_FADE);
+
+    gl.Disable(GL_DEPTH_TEST);
+    gl.Disable(GL_CULL_FACE);
+    gl.Disable(GL_FOG);
+    gl.DepthMask(GL_FALSE);
+    gl.ActiveTexture(GL_TEXTURE0 + 1);
+    gl.Disable(GL_TEXTURE_2D);
+    gl.ActiveTexture(GL_TEXTURE0);
+    gl.Enable(GL_TEXTURE_2D);
+    gl.TexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    gl.MatrixMode(GL_PROJECTION);
+    gl.LoadIdentity();
+    gl.Ortho(0, w, 0, h, -1, 1);
+    gl.MatrixMode(GL_MODELVIEW);
+    gl.LoadIdentity();
+    gl.DisableClientState(GL_COLOR_ARRAY);
+    gl.DisableClientState(GL_FOG_COORD_ARRAY);
+    gl.ClientActiveTexture(GL_TEXTURE0 + 1);
+    gl.DisableClientState(GL_TEXTURE_COORD_ARRAY);
+    gl.ClientActiveTexture(GL_TEXTURE0);
+    gl.EnableClientState(GL_VERTEX_ARRAY);
+    gl.EnableClientState(GL_TEXTURE_COORD_ARRAY);
+
+    gl.Disable(GL_ALPHA_TEST);
+    gl.Disable(GL_BLEND);
+    draw_photo(shown, w, h, 1);
+    if (into > PHOTO_HOLD && g_photos.count > 1)
+    {
+        GLfloat t = (GLfloat) (into - PHOTO_HOLD) / PHOTO_FADE;
+
+        gl.Enable(GL_BLEND);
+        gl.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        draw_photo((shown + 1) % g_photos.count, w, h, t * t * (3 - 2 * t));
+        gl.Disable(GL_BLEND);
+    }
+
+    gl.Enable(GL_ALPHA_TEST);
+    gl.AlphaFunc(GL_NEVER + 4, 0.5f);       /* GL_GREATER */
+    gl.BindTexture(GL_TEXTURE_2D, target->colour);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    gl.Color4f(1, 1, 1, 1);
+    quad((GLfloat) x, (GLfloat) y, (GLfloat) (x + fit_w), (GLfloat) (y + fit_h), 0, 0, 1, 1);
+    gl.Disable(GL_ALPHA_TEST);
+}
+
 static void present(surface* target)
 {
     RECT client;
@@ -155,6 +331,21 @@ static void present(surface* target)
     gl.Viewport(0, 0, w, h);
     gl.ClearColor(0, 0, 0, 1);
     gl.Clear(GL_COLOR_BUFFER_BIT);
+    if (g_photos.on && !g_photos.loaded)
+        load_photos();
+    if (g_photos.on && g_photos.count)
+    {
+        present_over_photos(target, w, h, x, y, fit_w, fit_h);
+        gl_present();
+        {
+            BOOL current = target->pixels_current;
+
+            target_bind(target);
+            target->pixels_current = current;
+        }
+        g_state_lost = TRUE;
+        return;
+    }
 #ifdef OPENMCM2_DEV
     if (dev_settings.menus_fill_sides && fit_w < w)
         fill_sides(target, w, h, x, x + fit_w);
@@ -416,6 +607,8 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
             unpack(format, row[x], out);
             if (keyed && row[x] == key)
                 out[3] = 0;
+            else if (g_photos.on)
+                out[3] = is_hole(out) ? 0 : 255;
             else if (format == PF_565 || keyed)
                 out[3] = 255;
         }

@@ -1,0 +1,57 @@
+r"""The main menu's background photos: photos.py <out folder> <preview folder>
+
+Each source is cropped to 16:9 (clear of the sites' watermarks), scaled to 2560x1440, and
+darkened on the left where the menu is and along the bottom, as the menu's look has it. The
+renderer reads them as ui\modern\photo1.tga.. (32-bit, bottom up) and crossfades between them.
+"""
+import struct
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageFilter
+
+W, H = 2560, 1440
+DOWNLOADS = Path(r"C:\Users\xshxd\Downloads")
+
+# The sources and the 16:9 part of each to use (left, top, right, bottom).
+SOURCES = [
+    ("game-mast-motocross-madness-2-1024x443.jpg", (0, 0, 787, 443)),
+    ("images (3).jpg", (0, 60, 516, 350)),
+    ("motocross-madness-2.322442.jpg", (0, 20, 533, 320)),     # under the fragland mark
+    ("original.jpeg", (0, 66, 598, 402)),                      # left of the Spong mark
+]
+
+
+def darken(image):
+    """Dark on the left (the menu) and at the bottom, fading out to the right and up."""
+    shade = Image.new("L", (W, H))
+    across = [min(1.0, x / (W * 0.62)) for x in range(W)]
+    down = [1.0 - 0.55 * max(0.0, (y - H * 0.7) / (H * 0.3)) for y in range(H)]
+    shade.putdata([int(255 * (0.16 + 0.84 * (a ** 1.35)) * d) for d in down for a in across])
+    black = Image.new("RGB", (W, H), (6, 7, 9))
+    return Image.composite(image, black, shade)
+
+
+def prepare(name, box):
+    image = Image.open(DOWNLOADS / name).convert("RGB").crop(box)
+    image = image.resize((W, H), Image.LANCZOS)
+    image = image.filter(ImageFilter.GaussianBlur(1.6))         # the upscale's blocks, smoothed
+    image = image.filter(ImageFilter.UnsharpMask(radius=3, percent=60, threshold=2))
+    return darken(image)
+
+
+def tga32(image):
+    """An uncompressed 32-bit TGA, bottom row first."""
+    header = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, W, H, 32, 8)
+    rgba = image.convert("RGBA").transpose(Image.FLIP_TOP_BOTTOM)
+    r, g, b, a = rgba.split()
+    return header + Image.merge("RGBA", (b, g, r, a)).tobytes()
+
+
+if __name__ == "__main__":
+    out, previews = Path(sys.argv[1]), Path(sys.argv[2])
+    for n, (name, box) in enumerate(SOURCES, 1):
+        image = prepare(name, box)
+        (out / ("photo%d.tga" % n)).write_bytes(tga32(image))
+        image.resize((W // 2, H // 2)).save(previews / ("menu photo %d.jpg" % n), quality=90)
+        print("photo%d.tga from %s" % (n, name))

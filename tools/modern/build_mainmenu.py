@@ -1,11 +1,13 @@
 r"""The modern main menu: build_mainmenu.py <original MAINMENU.DAT> <out MAINMENU.DAT> <preview dir>
 
-Draws the menu (mainmenu_art's look) at the art's size, cuts each control's pictures from it,
-rewrites the original layout with the same controls at their new places, and packs it all as an
-RS2 archive the game reads from ui\modern\. Places here are on the 1920x1080 grid.
+The menu over the photos (photos.py): the renderer draws them under it, crossfading, wherever
+the menu's pictures hold HOLE. Rows are type on the photo, the chosen one a slanted blue bar
+with a light blue glow; the less used things are small buttons at the bottom; the rider's card
+is at the bottom right. The title is tools/modern/title.png when there is one.
 
-Every picture is an opaque 16-bit TGA: the menus key out magenta (0xFF00FF) and nothing else,
-so each button carries its own piece of the backdrop, drawn in each of its four states.
+Draws the menu at the art's size, cuts each control's pictures from it, rewrites the original
+layout with the same controls at their new places, and packs it all as an RS2 archive the game
+reads from ui\modern\. Places here are on the 1920x1080 grid.
 """
 import struct
 import subprocess
@@ -13,46 +15,56 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, str(Path(__file__).parent))
-from mainmenu_art import (BLUE, CARD, CREAM, DIM, GREY, H, INK, ROW, ROW_LINE, W,  # noqa: E402
-                          YELLOW, YELLOW_DOWN, arrow, backdrop, body, dash, exit_icon, font,
-                          mono, rect, s, text, width_of)
+from mainmenu_art import H, W, font, lean, s, text, width_of  # noqa: E402
 
 FOLDER = "02_Modern\\"
-MAGENTA = (255, 0, 255)
+HERE = Path(__file__).parent
 VERSION = "0.1"
-NUMBER_BLUE = (52, 100, 158)    # a row's number at rest
 
-# The main rows, top to bottom: control, title, tag, the line shown when it is chosen.
+MAGENTA = (255, 0, 255)                 # the colour key: see-through and not clickable
+MATTE = (12, 13, 16)                    # what soft edges are mixed with: the photos' dark left
+CREAM = (236, 238, 242)
+SOFT = (150, 156, 166)                  # the small lines under the rows
+BLUE = (34, 110, 255)
+BLUE_DEEP = (18, 70, 210)
+BLUE_DOWN = (16, 56, 168)
+GLOW = (110, 185, 255)
+PALE = (205, 228, 255)
+DIM = (92, 96, 104)
+CARD = (17, 18, 22)
+EDGE = (58, 62, 70)
+
+# The main rows, top to bottom: control, title, what it holds.
 MAIN_ITEMS = [
-    ("MenuSingle", "SINGLE PLAYER", "6 EVENTS", "Pick an event. Drop the gate. Leave your mark."),
-    ("MenuMulti", "MULTIPLAYER", "LAN / ONLINE", "Race your friends on a network or online."),
-    ("MenuHighScore", "HIGH SCORES", "RECORDS", "The fastest laps and the biggest scores."),
-    ("MenuReplay", "REPLAYS", "VCR", "Watch your recorded races again."),
-    ("MenuOptions", "OPTIONS", "SETUP", "Controls, graphics and sound."),
+    ("MenuSingle", "SINGLE PLAYER", "BAJA · STUNT QUARRY · ENDURO · NATIONALS · SUPERCROSS"),
+    ("MenuMulti", "MULTIPLAYER", "LOCAL NETWORK · INTERNET · MSN GAMING ZONE · MODEM"),
+    ("MenuReplay", "REPLAYS", "WATCH YOUR SAVED RACES"),
+    ("MenuHighScore", "HIGH SCORES", "BEST LAPS · BEST SCORES · PRO CIRCUIT"),
+    ("MenuOptions", "OPTIONS", "CONTROLS · AUDIO · GRAPHICS"),
 ]
-ROWS_X, ROWS_Y, ROW_W, ROW_H = 67, 430, 546, 84
-EXIT = ("Menuexit", (67, ROWS_Y + ROW_H * 5 + 18, 300, 52))
-CHIPS = [("MenuHelp", "HELP", (67, 990, 112, 40)), ("MenuCredits", "CREDITS", (191, 990, 150, 40))]
-PROFILE_CARD = (1533, 52, 320, 112)
-CURRENT_PROFILE = (1623, 84, 215, 34)
+ROWS_X, ROWS_Y, ROW_W, ROW_H = 84, 330, 640, 92
+CHIPS = [("MenuHelp", "HELP", (84, 820, 110, 44)), ("MenuCredits", "CREDITS", (204, 820, 140, 44)),
+         ("Menuexit", "EXIT", (354, 820, 100, 44))]
+PROFILE_CARD = (1290, 868, 560, 130)
+CURRENT_PROFILE = (1318, 906, 470, 52)
 
 # The pull-down panels: the panel control, its place, its title, and its buttons.
-SINGLE = ("MenuSingleAnimation", (640, ROWS_Y, 790, 420), "SELECT EVENT",
+SINGLE = ("MenuSingleAnimation", (760, 330, 790, 420), "SELECT EVENT",
           [("ButBaja", "BAJA"), ("ButStuntQuarry", "STUNT QUARRY"), ("ButEnduro", "ENDURO"),
            ("ButNationals", "NATIONALS"), ("ButSupercross", "SUPERCROSS"),
            ("ButProCircuit", "PRO-CIRCUIT")])
-MULTI = ("MenuMultiAnimation", (640, ROWS_Y, 430, 400), "MULTIPLAYER",
+MULTI = ("MenuMultiAnimation", (760, 422, 440, 400), "MULTIPLAYER",
          [("ButIPX", "LOCAL NETWORK"), ("ButTCP", "INTERNET  TCP/IP"), ("ButZone", "MSN GAMING ZONE"),
           ("ButCable", "SERIAL CABLE"), ("ButModem", "MODEM")])
-USER = ("MenuUserAnimation", (1153, 186, 700, 420), "RIDER PROFILES",
+USER = ("MenuUserAnimation", (1290, 410, 560, 440), "RIDER PROFILES",
         [("ButNewProfile", "NEW"), ("ButLoadProfile", "LOAD"), ("ButRemoveProfile", "REMOVE"),
          ("ButCancelProfile", "CLOSE")])
 MOVIE_FRAME = (384, 70, 382, 280)           # ScreenOverCtl, on the single-player panel
-PROFILE_LIST = (24, 70, 400, 326)
-SCROLL_X, SCROLL_W = 430, 30
+PROFILE_LIST = (24, 70, 330, 340)
+SCROLL_X, SCROLL_W = 360, 30
 
 
 def px(box):
@@ -64,7 +76,7 @@ def build_version():
     """The version line's build: VERSION and the dev tree's commit."""
     try:
         commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
-                                text=True, cwd=Path(__file__).parent, check=True).stdout.strip()
+                                text=True, cwd=HERE, check=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return VERSION
     return "%s  %s" % (VERSION, commit)
@@ -72,18 +84,22 @@ def build_version():
 
 # ---- TGA and RS2 ----
 
-BAYER = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]) / 16.0
+HOLE = 0x7C1E                           # x1R5G5B5 31, 0, 30: where the photos show
+KEY = 0x7C1F
 
 
 def tga16(image):
-    """An opaque 16-bit TGA (x1R5G5B5, bottom up), dithered so the gradient does not band."""
-    rgb = np.asarray(image.convert("RGB"), dtype=np.float64)
-    h, w, _ = rgb.shape
-    threshold = np.tile(BAYER, (h // 4 + 1, w // 4 + 1))[:h, :w, None]
-    five = np.clip(np.floor(rgb / 255.0 * 31 + threshold), 0, 31).astype(np.uint16)
+    """An opaque 16-bit TGA (x1R5G5B5, bottom up). Clear pixels become HOLE, soft ones are
+    mixed with MATTE, and the colour key (opaque magenta) stays the key."""
+    rgba = np.asarray(image.convert("RGBA"), dtype=np.float64)
+    alpha = rgba[..., 3:4] / 255.0
+    rgb = rgba[..., :3] * alpha + np.array(MATTE) * (1 - alpha)
+    five = np.clip(np.round(rgb / 255.0 * 31), 0, 31).astype(np.uint16)
     pixels = (five[..., 0] << 10) | (five[..., 1] << 5) | five[..., 2]
-    keyed = (np.asarray(image.convert("RGB")) == MAGENTA).all(-1)
-    pixels = np.where(keyed, 0x7C1F, np.where(pixels == 0x7C1F, 0x7C3F, pixels))
+    pixels = np.where((pixels == HOLE) | (pixels == KEY), 0x7C1D, pixels)
+    keyed = (rgba[..., 3] == 255) & (rgba[..., :3] == MAGENTA).all(-1)
+    pixels = np.where(keyed, KEY, np.where(rgba[..., 3] < 32, HOLE, pixels))   # the faintest light, see-through
+    h, w = pixels.shape
     header = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, w, h, 16, 0)
     return header + pixels[::-1].astype("<u2").tobytes()
 
@@ -120,26 +136,79 @@ def rs2_entries(data):
 
 # ---- The art ----
 
-def label(canvas, words, x, y, colour=BLUE):
-    """A small mono label (pixels, its baseline at y), with its rule before it."""
-    dash(canvas, x, y - s(6), 10, colour)
-    text(canvas, words, x + s(20), y, mono(13), colour, spacing=1)
+def clear(size):
+    return Image.new("RGBA", size, (0, 0, 0, 0))
+
+
+def glow(canvas, mask, colour, radius, strength):
+    """A soft light of `colour` round `mask` (same size as canvas)."""
+    halo = mask.filter(ImageFilter.GaussianBlur(s(radius))).point(lambda v: min(255, int(v * strength)))
+    layer = Image.new("RGBA", canvas.size, colour + (0,))
+    layer.putalpha(halo)
+    canvas.alpha_composite(layer)
+
+
+def slant_box(w, h, slant):
+    """A parallelogram leaning forward, as a mask w x h."""
+    mask = Image.new("L", (w, h))
+    ImageDraw.Draw(mask).polygon([(slant, 0), (w, 0), (w - slant, h), (0, h)], fill=255)
+    return mask
+
+
+def chosen_bar(canvas, box, fill_from, fill_to, shine=True):
+    """The chosen row's bar on `canvas` (pixels): a blue gradient parallelogram, its light."""
+    x, y, w, h = box
+    slant = int(h * 0.22)
+    mask = Image.new("L", canvas.size)
+    mask.paste(slant_box(w, h, slant), (x, y))
+    if shine:
+        glow(canvas, mask, GLOW, 12, 1.1)
+    ramp = np.linspace(0, 1, w)[None, :, None]
+    bar = (np.array(fill_from) * (1 - ramp) + np.array(fill_to) * ramp).repeat(h, 0)
+    layer = clear(canvas.size)
+    layer.paste(Image.fromarray(bar.astype(np.uint8)).convert("RGBA"), (x, y))
+    layer.putalpha(mask)
+    canvas.alpha_composite(layer)
+    if shine:
+        edge = Image.new("L", canvas.size)
+        ImageDraw.Draw(edge).line([(x + slant, y), (x + w, y)], fill=200, width=max(s(2), 2))
+        light = Image.new("RGBA", canvas.size, PALE + (0,))
+        light.putalpha(edge)
+        canvas.alpha_composite(light)
+
+
+def shadowed(canvas, words, x, y, f, colour, italic=True, spacing=0):
+    """Type with a soft dark shadow, to read over the photos."""
+    layer = clear(canvas.size)
+    text(layer, words, x + s(2), y + s(3), f, (0, 0, 0), italic=italic, spacing=spacing)
+    shade = layer.split()[3].filter(ImageFilter.GaussianBlur(s(4))).point(lambda v: int(v * 0.8))
+    black = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    black.putalpha(shade)
+    canvas.alpha_composite(black)
+    text(canvas, words, x, y, f, colour, italic=italic, spacing=spacing)
+
+
+def title(canvas):
+    """The title: tools/modern/title.png fitted to its place, or the game's name in type."""
+    place = px((70, 40, 700, 250))
+    made = HERE / "title.png"
+    if made.exists():
+        art = Image.open(made).convert("RGBA")
+        art.thumbnail((place[2], place[3]), Image.LANCZOS)
+        canvas.alpha_composite(art, (place[0], place[1]))
+        return
+    shadowed(canvas, "MOTOCROSS", s(76), s(150), font(128), CREAM)
+    shadowed(canvas, "MADNESS", s(76), s(262), font(128), CREAM)
+    shadowed(canvas, "2", s(76) + int(width_of("MADNESS", font(128))) + s(26), s(266), font(140), BLUE)
 
 
 def background():
-    canvas = backdrop()
-    dash(canvas, s(67), s(56), 24, YELLOW)
-    text(canvas, "COMMUNITY REBUILT.  WIDE OPEN.", s(101), s(62), mono(13), GREY, spacing=1)
-    title = font(126)
-    text(canvas, "MOTOCROSS", s(64), s(184), title, CREAM, italic=True)
-    text(canvas, "MADNESS", s(64), s(296), title, CREAM, italic=True)
-    text(canvas, "2", s(64) + int(width_of("MADNESS", title)) + s(26), s(300), font(140), YELLOW,
-         italic=True)
-    label(canvas, "MAIN MENU", s(ROWS_X), s(ROWS_Y - 14))
-    text(canvas, "OPEN-SOURCE REIMPLEMENTATION  /  DEVELOPMENT BUILD " + build_version(),
-         s(1853), s(1008), mono(14), BLUE, right=True, spacing=0.5)
-    text(canvas, "An independent community project. Not affiliated with or endorsed by the "
-         "original creators.", s(1853), s(1034), body(14), GREY, right=True)
+    canvas = clear((W, H))
+    title(canvas)
+    small = font(15, style="SemiBold Condensed")
+    shadowed(canvas, "OPEN-SOURCE REIMPLEMENTATION  ·  DEVELOPMENT BUILD " + build_version()
+             + "  ·  NOT AFFILIATED WITH OR ENDORSED BY THE ORIGINAL CREATORS",
+             s(84), s(1046), small, SOFT, italic=False, spacing=0.6)
     return canvas
 
 
@@ -148,101 +217,94 @@ def crop(image, box):
     return image.crop((x, y, x + w, y + h))
 
 
-def row_states(base, box, number, title, tag=None, line=None, size=36):
-    """A row's four pictures (Up, Lit, Down, Grey), cut from `base` at grid `box`: grey with a
-    blue edge at rest, yellow with an arrow (and `line` under the title) when chosen."""
+def row_states(box, words, line=None, size=58):
+    """A row's four pictures: type on the photo at rest, a blue bar with a glow when chosen."""
     x, y, w, h = px(box)
-    middle = y + h // 2
+    pad = s(16)
+    big = font(size)
+    small = font(15, style="SemiBold Condensed")
     pictures = {}
     for state in ("Up", "Lit", "Down", "Grey"):
-        canvas = base.copy()
-        chosen = state in ("Lit", "Down")
-        if chosen:
-            rect(canvas, (x, y, x + w - 1, y + h - 1), YELLOW if state == "Lit" else YELLOW_DOWN)
-            ink = number_ink = INK
-        else:
-            rect(canvas, (x, y, x + w - 1, y + h - 1), ROW, 235)
-            rect(canvas, (x, y + h - s(1), x + w - 1, y + h - 1), ROW_LINE)
-            rect(canvas, (x, y, x + s(4) - 1, y + h - 1), BLUE if state == "Up" else DIM)
-            ink = CREAM if state == "Up" else DIM
-            number_ink = NUMBER_BLUE if state == "Up" else DIM
-        text(canvas, number, x + s(24), middle + s(5), mono(13), number_ink)
-        if chosen and line:
-            text(canvas, title, x + s(62), middle + s(6), font(size + 4), ink, italic=True)
-            text(canvas, line, x + s(64), middle + s(28), body(15), INK)
-        else:
-            text(canvas, title, x + s(62), middle + s(size * 0.36), font(size), ink, italic=True)
-        if chosen:
-            arrow(canvas, x + w - s(42), middle, 24, INK)
-        elif tag:
-            text(canvas, tag, x + w - s(24), middle + s(5), mono(13),
-                 BLUE if state == "Up" else DIM, right=True, spacing=1)
-        pictures[state] = canvas.crop((x, y, x + w, y + h))
-    return pictures
-
-
-def exit_states(base, box):
-    x, y, w, h = px(box)
-    pictures = {}
-    for state, ink, icon in (("Up", GREY, GREY), ("Lit", CREAM, YELLOW), ("Down", YELLOW, YELLOW),
-                             ("Grey", DIM, DIM)):
-        canvas = base.copy()
-        exit_icon(canvas, x + s(28), y + h // 2 - s(9), icon)
-        text(canvas, "EXIT GAME", x + s(60), y + h // 2 + s(10), font(28), ink, italic=True)
-        pictures[state] = canvas.crop((x, y, x + w, y + h))
-    return pictures
-
-
-def chip_states(base, box, words):
-    """A small outlined text button."""
-    x, y, w, h = px(box)
-    f = mono(14)
-    pictures = {}
-    for state, edge, ink in (("Up", (70, 74, 80), GREY), ("Lit", YELLOW, CREAM),
-                             ("Down", YELLOW, YELLOW), ("Grey", (50, 52, 56), DIM)):
-        canvas = base.copy()
-        ImageDraw.Draw(canvas).rectangle((x, y, x + w - 1, y + h - 1), outline=edge + (255,),
-                                         width=max(s(1.5), 1))
-        text(canvas, words, x + (w - int(width_of(words, f, 1))) // 2, y + h // 2 + s(5), f, ink,
-             spacing=1)
-        pictures[state] = canvas.crop((x, y, x + w, y + h))
-    return pictures
-
-
-def profile_states(base, box):
-    """The rider card: its tile, label and "Change rider". The name is the game's own text."""
-    x, y, w, h = px(box)
-    pictures = {}
-    for state in ("Up", "Lit", "Down", "Grey"):
-        canvas = base.copy()
-        rect(canvas, (x, y, x + w - 1, y + h - 1), CARD)
+        canvas = clear((w + 2 * pad, h + 2 * pad))
         if state in ("Lit", "Down"):
-            ImageDraw.Draw(canvas).rectangle((x, y, x + w - 1, y + h - 1), outline=YELLOW + (255,),
-                                             width=max(s(2), 2))
-        tile = {"Down": YELLOW_DOWN, "Grey": DIM}.get(state, YELLOW)
-        rect(canvas, (x + s(20), y + s(26), x + s(76) - 1, y + s(86) - 1), tile)
-        text(canvas, "MX", x + s(25), y + s(70), font(34), INK, italic=True)
-        text(canvas, "LOCAL RIDER", x + s(90), y + s(30), mono(11), BLUE, spacing=1)
-        ink = CREAM if state == "Lit" else YELLOW
-        f = body(14, semibold=True)
-        text(canvas, "Change rider", x + s(90), y + s(98), f, ink)
-        corner = (x + s(90) + int(width_of("Change rider", f)) + s(18), y + s(87))
-        d = ImageDraw.Draw(canvas)
-        d.line([(corner[0] - s(8), corner[1] + s(8)), corner], fill=ink + (255,), width=max(s(1.6), 2))
-        d.line([(corner[0] - s(6), corner[1]), corner, (corner[0], corner[1] + s(6))],
-               fill=ink + (255,), width=max(s(1.6), 2))
-        pictures[state] = canvas.crop((x, y, x + w, y + h))
+            chosen_bar(canvas, (pad, pad + s(4), w, h - s(8)),
+                       BLUE if state == "Lit" else BLUE_DOWN,
+                       BLUE_DEEP if state == "Lit" else BLUE_DOWN, shine=state == "Lit")
+        ink = {"Up": CREAM, "Lit": (255, 255, 255), "Down": PALE, "Grey": DIM}[state]
+        under = {"Up": SOFT, "Lit": PALE, "Down": PALE, "Grey": DIM}[state]
+        base = pad + (h // 2 + s(size * 0.30) if not line else h // 2 + s(6))
+        shadowed(canvas, words, pad + s(26), base, big, ink)
+        if line:
+            shadowed(canvas, line, pad + s(30), base + s(26), small, under, italic=False, spacing=0.8)
+        pictures[state] = canvas.crop((pad, pad, pad + w, pad + h))
     return pictures
 
 
-def panel_card(base, panel):
-    """A pull-down panel's card: dark, edged in blue on the left, its label at the top."""
-    _, (x, y, w, h), title, _ = panel
-    canvas = base.copy()
-    rect(canvas, px((x, y, x + w, y + h)), CARD, 245)
-    rect(canvas, px((x, y, x + 4, y + h)), BLUE)
-    label(canvas, title, s(x + 24), s(y + 40))
+def chip_states(box, words):
+    """A small button: dark, edged, its word; blue and lit when chosen."""
+    x, y, w, h = px(box)
+    f = font(17, style="SemiBold Condensed")
+    pictures = {}
+    for state in ("Up", "Lit", "Down", "Grey"):
+        canvas = Image.new("RGBA", (w, h), CARD + (255,))
+        d = ImageDraw.Draw(canvas)
+        if state == "Lit":
+            d.rectangle((0, 0, w - 1, h - 1), fill=BLUE_DEEP + (255,))
+            d.rectangle((0, 0, w - 1, h - 1), outline=GLOW + (255,), width=max(s(1.5), 2))
+        elif state == "Down":
+            d.rectangle((0, 0, w - 1, h - 1), fill=BLUE_DOWN + (255,))
+        else:
+            d.rectangle((0, 0, w - 1, h - 1), outline=EDGE + (255,), width=max(s(1), 1))
+        ink = {"Up": CREAM, "Lit": (255, 255, 255), "Down": PALE, "Grey": DIM}[state]
+        text(canvas, words, (w - int(width_of(words, f, 1))) // 2, h // 2 + s(6), f, ink, spacing=1)
+        pictures[state] = canvas
+    return pictures
+
+
+def profile_states(box):
+    """The rider card: its label and "change rider"; the name is the game's own text."""
+    x, y, w, h = px(box)
+    label = font(15, style="SemiBold Condensed")
+    pictures = {}
+    for state in ("Up", "Lit", "Down", "Grey"):
+        canvas = Image.new("RGBA", (w, h), CARD + (255,))
+        d = ImageDraw.Draw(canvas)
+        d.rectangle((0, 0, s(4) - 1, h - 1), fill=BLUE + (255,))
+        if state in ("Lit", "Down"):
+            d.rectangle((0, 0, w - 1, h - 1), outline=GLOW + (255,), width=max(s(2), 2))
+        text(canvas, "RIDER", s(28), s(30), label, BLUE if state != "Lit" else GLOW, spacing=1.2)
+        change = "CHANGE RIDER  ›"
+        text(canvas, change, w - s(28) - int(width_of(change, label, 1)), h - s(20), label,
+             PALE if state == "Lit" else SOFT, spacing=1)
+        pictures[state] = canvas
+    return pictures
+
+
+def panel_card(panel):
+    """A pull-down panel's card: dark, a blue edge, its label at the top."""
+    _, (x, y, w, h), label, _ = panel
+    canvas = Image.new("RGBA", px((0, 0, w, h))[2:], CARD + (255,))
+    d = ImageDraw.Draw(canvas)
+    d.rectangle((0, 0, s(4) - 1, canvas.height - 1), fill=BLUE + (255,))
+    d.rectangle((0, 0, canvas.width - 1, canvas.height - 1), outline=EDGE + (255,), width=1)
+    text(canvas, label, s(28), s(42), font(16, style="SemiBold Condensed"), BLUE, spacing=1.2)
     return canvas
+
+
+def panel_row_states(card, box, words):
+    """A panel's row: its word at rest, the blue bar when chosen; on the panel's card."""
+    x, y, w, h = px(box)
+    f = font(30)
+    pictures = {}
+    for state in ("Up", "Lit", "Down", "Grey"):
+        canvas = card.crop((x, y, x + w, y + h)).convert("RGBA")
+        if state in ("Lit", "Down"):
+            chosen_bar(canvas, (0, s(3), w, h - s(6)), BLUE if state == "Lit" else BLUE_DOWN,
+                       BLUE_DEEP if state == "Lit" else BLUE_DOWN, shine=False)
+        ink = {"Up": CREAM, "Lit": (255, 255, 255), "Down": PALE, "Grey": DIM}[state]
+        text(canvas, words, s(22), h // 2 + s(11), f, ink, italic=True)
+        pictures[state] = canvas
+    return pictures
 
 
 def scroll_arrow(size, up, colour):
@@ -257,10 +319,10 @@ def scroll_arrow(size, up, colour):
 
 # ---- The layout ----
 
-def read_dtm(text):
+def read_dtm(text_):
     """The dtm's sections in order: [name, [lines]]."""
     sections = []
-    for line in text.replace("\r\n", "\n").split("\n"):
+    for line in text_.replace("\r\n", "\n").split("\n"):
         if line.startswith("["):
             sections.append([line.strip()[1:-1], []])
         elif sections:
@@ -315,32 +377,32 @@ def put(pictures, controls, name, box, states, anchor=None, origin=(0, 0)):
     PLACED[name] = box[:2]
 
 
-def user_panel(card, controls, pictures, name, x, y):
-    """The profile list's frame, its scroll arrows and bar, on the profiles panel."""
+def user_panel(card, controls, pictures, name):
+    """The profile list's frame, its scroll arrows and bar, on the profiles panel's card."""
     lx, ly, lw, lh = PROFILE_LIST
-    ImageDraw.Draw(card).rectangle(px((x + lx, y + ly, x + lx + lw, y + ly + lh)),
-                                   outline=ROW_LINE + (255,), width=max(s(1), 1))
+    ImageDraw.Draw(card).rectangle(px((lx, ly, lx + lw, ly + lh)), outline=EDGE + (255,),
+                                   width=max(s(1), 1))
     controls["LstProfiles"] = {"Xywh": xywh((lx + 12, ly + 8, lw - 24, lh - 16)), "Anchor": name,
                                "RelAnchor": "1", "TextAlign": "LEFT", "TextDrop": "0",
-                               "TextColor": "14740720"}
+                               "TextColor": str(0xF2EEEC)}
     up_box = (SCROLL_X, ly, SCROLL_W, 34)
     down_box = (SCROLL_X, ly + lh - 34, SCROLL_W, 34)
     bar_box = (SCROLL_X, ly + 36, SCROLL_W, lh - 72)
     for control, (bx, by, bw, bh), up in (("ProfileScrollUp", up_box, True),
                                           ("ProfileScrollDown", down_box, False)):
-        base = crop(card, (x + bx, y + by, bw, bh))
-        for state, colour in (("Up", BLUE), ("Lit", YELLOW), ("Down", CREAM), ("Grey", DIM)):
+        base = crop(card, (bx, by, bw, bh))
+        for state, colour in (("Up", BLUE), ("Lit", GLOW), ("Down", PALE), ("Grey", DIM)):
             img = base.copy()
             img.alpha_composite(scroll_arrow(img.size, up, colour))
             pictures["M%s%s" % (control, state)] = img
         controls[control] = dict(anims(control), Xywh=xywh((bx, by, bw, bh)), Anchor=name,
                                  RelAnchor="1")
-    bar = crop(card, (x + bar_box[0], y + bar_box[1], bar_box[2], bar_box[3]))
-    ImageDraw.Draw(bar).line([(bar.width // 2, 0), (bar.width // 2, bar.height)],
-                             fill=ROW_LINE + (255,), width=max(s(1), 1))
+    bar = crop(card, bar_box)
+    ImageDraw.Draw(bar).line([(bar.width // 2, 0), (bar.width // 2, bar.height)], fill=EDGE + (255,),
+                             width=max(s(1), 1))
     pictures["MProfileBar"] = bar
     thumb = Image.new("RGBA", (s(SCROLL_W), s(40)), CARD + (255,))
-    ImageDraw.Draw(thumb).rectangle((s(9), s(2), s(SCROLL_W - 10), s(37)), fill=YELLOW + (255,))
+    ImageDraw.Draw(thumb).rectangle((s(9), s(2), s(SCROLL_W - 10), s(37)), fill=BLUE + (255,))
     pictures["MProfileThumb"] = thumb
     controls["SldProfile"] = {"Xywh": xywh(bar_box), "AnimNorm": '"MProfileBar"',
                               "AnimThumb": '"MProfileThumb"', "Anchor": name, "RelAnchor": "1"}
@@ -355,40 +417,40 @@ def build(original_dat):
     pictures["MBackground"] = bg
     controls["Set_Information"] = {"BackgroundImage": '"MBackground"', "ScreenWidth": str(W),
                                    "ScreenHeight": str(H), "Xywh": xywh((0, 0, 1920, 1080)),
-                                   "FontName": '"Bahnschrift"', "FontHeight": str(s(26))}
+                                   "FontName": '"Bahnschrift"', "FontHeight": str(s(26)),
+                                   "Photos": "1"}
 
-    for i, (name, title, tag, line) in enumerate(MAIN_ITEMS):
+    for i, (name, words, line) in enumerate(MAIN_ITEMS):
         box = (ROWS_X, ROWS_Y + i * ROW_H, ROW_W, ROW_H)
-        put(pictures, controls, name, box, row_states(bg, box, "%02d" % (i + 1), title, tag, line))
-    put(pictures, controls, EXIT[0], EXIT[1], exit_states(bg, EXIT[1]))
+        put(pictures, controls, name, box, row_states(box, words, line))
     for name, words, box in CHIPS:
-        put(pictures, controls, name, box, chip_states(bg, box, words))
-    put(pictures, controls, "MenuUserProfile", PROFILE_CARD, profile_states(bg, PROFILE_CARD))
-    controls["TxtCurrentProfile"] = {"Xywh": xywh(CURRENT_PROFILE), "TextColor": "14740720",
+        put(pictures, controls, name, box, chip_states(box, words))
+    put(pictures, controls, "MenuUserProfile", PROFILE_CARD, profile_states(PROFILE_CARD))
+    controls["TxtCurrentProfile"] = {"Xywh": xywh(CURRENT_PROFILE), "TextColor": str(0xF2EEEC),
                                      "TextAlign": "LEFT", "TextDrop": "0",
                                      "FontName": '"Bahnschrift SemiBold Condensed"',
-                                     "FontHeight": str(s(30)), "Bold": "700"}
+                                     "FontHeight": str(s(40)), "Bold": "700"}
 
     for panel in (SINGLE, MULTI, USER):
         name, (x, y, w, h), _, buttons = panel
-        card = panel_card(bg, panel)
+        card = panel_card(panel)
         if panel is USER:
-            user_panel(card, controls, pictures, name, x, y)
-            column = [(x + 448, y + 70 + i * 64, 228, 54) for i in range(len(buttons))]
+            user_panel(card, controls, pictures, name)
+            column = [(380, 70 + i * 64, 160, 54) for i in range(len(buttons))]
         else:
             step = 56 if panel is SINGLE else 62
             width = 340 if panel is SINGLE else w - 48
-            column = [(x + 24, y + 70 + i * step, width, step - 4) for i in range(len(buttons))]
-        pictures["M%sPanel" % name] = crop(card, (x, y, w, h))
+            column = [(24, 70 + i * step, width, step - 4) for i in range(len(buttons))]
+        pictures["M%sPanel" % name] = card
         controls[name] = {"Xywh": xywh((x, y, w, h)), "AnimNorm": '"M%sPanel"' % name,
                           "FXAnimIn": '"M%sPanel"' % name, "FXAnimOut": '"M%sPanel"' % name}
-        for i, ((button, words), box) in enumerate(zip(buttons, column)):
-            put(pictures, controls, button, box,
-                row_states(card, box, "%02d" % (i + 1), words, size=26), anchor=name, origin=(x, y))
+        for (button, words), (bx, by, bw, bh) in zip(buttons, column):
+            put(pictures, controls, button, (x + bx, y + by, bw, bh),
+                panel_row_states(card, (bx, by, bw, bh), words), anchor=name, origin=(x, y))
             drops[button] = TEXT_KEYS
         if panel is SINGLE:                     # the events movie's frame, its window keyed out
             fx, fy, fw, fh = MOVIE_FRAME
-            frame = crop(card, (x + fx, y + fy, fw, fh))
+            frame = crop(card, MOVIE_FRAME)
             d = ImageDraw.Draw(frame)
             d.rectangle((0, 0, frame.width - 1, frame.height - 1), outline=BLUE + (255,), width=s(2))
             d.rectangle((s(4), s(4), frame.width - s(5), frame.height - s(5)), fill=MAGENTA + (255,))
@@ -400,6 +462,7 @@ def build(original_dat):
     sections = read_dtm(original["mainmenu.dtm"].decode("latin-1"))
     missing = [c for c in controls if c not in {n for n, _ in sections}]
     assert not missing, missing
+
     # The original's sections stay in their order, its anims and sounds among them; the new
     # pictures go in at the start of Set_Anim, and the original's files stay in the archive.
     out = []
@@ -420,23 +483,28 @@ def build(original_dat):
     return rs2(entries), bg, pictures
 
 
-def preview(bg, pictures, lit, panel):
-    """The menu as it would show: every button at rest, `lit` lit, `panel` open, a sample name."""
-    canvas = bg.copy()
-    shown = [item[0] for item in MAIN_ITEMS] + [EXIT[0], "MenuUserProfile"] + [c[0] for c in CHIPS]
+def preview(bg, pictures, lit, panel, photo):
+    """The menu as it would show over `photo`: every button at rest, `lit` lit, `panel` open."""
+    canvas = Image.open(photo).convert("RGBA").resize((W, H))
+    layer = bg.copy()
+    shown = [item[0] for item in MAIN_ITEMS] + ["MenuUserProfile"] + [c[0] for c in CHIPS]
     if panel:
         name, (x, y, _, _), _, buttons = panel
-        canvas.alpha_composite(pictures["M%sPanel" % name], (s(x), s(y)))
+        layer.alpha_composite(pictures["M%sPanel" % name], (s(x), s(y)))
         shown += [button for button, _ in buttons]
         if panel is SINGLE:
-            canvas.alpha_composite(pictures["MScreenOver"], (s(x + MOVIE_FRAME[0]), s(y + MOVIE_FRAME[1])))
+            layer.alpha_composite(pictures["MScreenOver"], (s(x + MOVIE_FRAME[0]), s(y + MOVIE_FRAME[1])))
     for name in shown:
         gx, gy = PLACED[name]
-        canvas.alpha_composite(pictures["M%s%s" % (name, "Lit" if name == lit else "Up")], (s(gx), s(gy)))
-    text(canvas, "ROOKIE", s(CURRENT_PROFILE[0]), s(CURRENT_PROFILE[1] + 28),
-         font(30, style="SemiBold Condensed"), CREAM)
+        picture = pictures["M%s%s" % (name, "Lit" if name == lit else "Up")]
+        spot = layer.crop((s(gx), s(gy), s(gx) + picture.width, s(gy) + picture.height))
+        spot.alpha_composite(picture)
+        layer.paste(spot, (s(gx), s(gy)))
+    text(layer, "ROOKIE", s(CURRENT_PROFILE[0]), s(CURRENT_PROFILE[1] + 38),
+         font(40, style="SemiBold Condensed"), CREAM)
+    canvas.alpha_composite(layer)
     rgb = np.asarray(canvas.convert("RGB")).copy()
-    rgb[(rgb == MAGENTA).all(-1)] = (10, 11, 13)        # where the events movie plays
+    rgb[(rgb == MAGENTA).all(-1)] = (8, 9, 12)          # where the events movie plays
     return Image.fromarray(rgb)
 
 
@@ -444,7 +512,8 @@ if __name__ == "__main__":
     data, bg, pictures = build(open(sys.argv[1], "rb").read())
     open(sys.argv[2], "wb").write(data)
     out = Path(sys.argv[3])
-    preview(bg, pictures, "MenuSingle", None).save(out / "modern mainmenu.png")
-    preview(bg, pictures, "ButEnduro", SINGLE).save(out / "modern mainmenu - single open.png")
-    preview(bg, pictures, "ButLoadProfile", USER).save(out / "modern mainmenu - profiles open.png")
+    photos = sorted(out.glob("menu photo *.jpg"))
+    preview(bg, pictures, "MenuSingle", None, photos[2]).save(out / "modern mainmenu.png")
+    preview(bg, pictures, "ButEnduro", SINGLE, photos[0]).save(out / "modern mainmenu - single open.png")
+    preview(bg, pictures, "ButLoadProfile", USER, photos[3]).save(out / "modern mainmenu - profiles open.png")
     print("wrote", sys.argv[2], len(data), "bytes,", len(pictures), "pictures")

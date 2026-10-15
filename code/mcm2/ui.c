@@ -30,6 +30,10 @@ static float menu_fit(BYTE* screen, int* left, int* top)
     return scale;
 }
 
+/* The renderer's photo layer, for a layout that asks for it (Photos), while it is open. */
+void render_photos(BOOL on);
+static BYTE* photos_dialog = NULL;
+
 /* A 640x480 area moved onto the screen's centred one. */
 static void menu_place(BYTE* screen, RECT* area)
 {
@@ -194,6 +198,12 @@ void __fastcall dialog_destruct(BYTE* self)
     int i;
 
     *(void***) self = UIDIALOG_VTABLE;
+#ifdef OPENMCM2_DEV
+    if (self == photos_dialog) {
+        photos_dialog = NULL;
+        render_photos(FALSE);
+    }
+#endif
     if (manager) {
         if (FIELD(self, DLG_MODAL, int))
             gui_manager_swap(manager, NULL, FIELD(self, DLG_SWAP, int));
@@ -8817,8 +8827,15 @@ static void reader_info(dialog_reader* r)
         they are drawn at the menus' scale divided by it: 1:1 when the menus are scaled by that.
     */
     if (dev_settings.menus_widescreen) {
+        int photos = 0;
+
         reader_int(r, "ArtScale", 1, &art);
         dialog_art_set(self, art);
+        reader_int(r, "Photos", 0, &photos);
+        if (photos) {
+            photos_dialog = self;
+            render_photos(TRUE);
+        }
         if (art > 1) {
             int left, top;
             float scale = menu_fit(object_screen(self), &left, &top) / art;
