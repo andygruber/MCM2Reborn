@@ -135,6 +135,12 @@ static void cover_monitor(void)
     pictures in ui\modern\photo1.tga.. (32-bit, bottom up), cover-scaled to the window whatever
     its size. The menu shows them where it draws HOLE, which the render target keeps with no
     alpha while the layer is on.
+
+    The colours beside HOLE, red 29..31 with no green, are inks the photos show through: blue
+    the amount of a light blue glow (red 31, blue 0..29), of blue (red 30) or of shadow (red 29).
+    The target keeps them premultiplied, and they read back to the same colours. Only the
+    modern menus' own pictures (render_inks) are read so, and a target since one was drawn on
+    it, until it is cleared whole; with no photos they lie on MATTE.
 */
 #define PHOTOS_MOST 8
 #define PHOTO_HOLD  7000        /* milliseconds a photo shows */
@@ -149,10 +155,109 @@ static struct
     DWORD  start;
 } g_photos;
 
-/* The menu's see-through colour, as unpacked: x1R5G5B5 31, 0, 30, next to the colour key. */
-static BOOL is_hole(const BYTE* rgba)
+static void unpack(int format, WORD p, BYTE* rgba);
+static WORD pack(int format, const BYTE* rgba);
+
+/* The inks of red 29, 30 and 31: shadow, blue, light blue. */
+static const BYTE k_inks[3][3] = { { 0, 0, 0 }, { 34, 110, 255 }, { 110, 185, 255 } };
+
+/* A menu pixel, as unpacked, as the target keeps it over the photos: HOLE clear, an ink
+   premultiplied, anything else opaque. */
+static void photo_pixel(BYTE* rgba)
 {
-    return rgba[0] == 255 && rgba[1] == 0 && rgba[2] == 247;
+    int red = rgba[0] >> 3, blue = rgba[2] >> 3, n;
+    unsigned amount;
+
+    rgba[3] = 255;
+    if (red < 29 || rgba[1] >> 2)
+        return;
+    if (red == 31 && blue >= 30)
+    {
+        if (blue == 30)
+            rgba[0] = rgba[1] = rgba[2] = rgba[3] = 0;
+        return;
+    }
+    amount = red == 31 ? (blue + 1) * 255 / 30 : (blue + 1) * 255 / 32;
+    for (n = 0; n < 3; ++n)
+        rgba[n] = (BYTE) (k_inks[red - 29][n] * amount / 255);
+    rgba[3] = (BYTE) amount;
+}
+
+/* An ink with no photos under it: on the dark the menus' art was drawn for. */
+static void on_matte(BYTE* rgba)
+{
+    static const BYTE matte[3] = { 12, 13, 16 };
+    int n;
+
+    for (n = 0; n < 3; ++n)
+        rgba[n] = (BYTE) (rgba[n] + matte[n] * (255 - rgba[3]) / 255);
+    rgba[3] = 255;
+}
+
+/* A modern menu picture: its inks are read as inks. */
+void render_inks(void* picture_surface)
+{
+    surface* s = surface_of((IDirectDrawSurface7*) picture_surface);
+
+    if (s)
+        s->inks = TRUE;
+}
+
+/* The other way, for a target read back: the 565 colour a pixel of the target came from. */
+static WORD photo_code(const BYTE* rgba)
+{
+    int best = 0, n, i;
+    long nearest = -1;
+
+    if (!rgba[3])
+        return 31 << 11 | 30;
+    for (i = 0; i < 3; ++i)
+    {
+        long d = 0;
+
+        for (n = 0; n < 3; ++n)
+        {
+            long e = (long) rgba[n] - (long) k_inks[i][n] * rgba[3] / 255;
+            d += e * e;
+        }
+        if (nearest < 0 || d < nearest)
+        {
+            nearest = d;
+            best = i;
+        }
+    }
+    n = (rgba[3] * (best == 2 ? 30 : 32) + 127) / 255 - 1;
+    return (WORD) ((29 + best) << 11 | (n < 0 ? 0 : n));
+}
+
+static BOOL is_photo_code(WORD p)
+{
+    return p >> 11 >= 29 && !(p >> 5 & 63) && p != (31 << 11 | 31);
+}
+
+/* A 565 pixel as GDI should see it: a hole or ink as it shows with nothing under it, so the
+   game's type blends with something dark rather than with the codes' magentas. */
+static WORD photo_shown(WORD p)
+{
+    BYTE rgba[4];
+
+    if (!is_photo_code(p))
+        return p;
+    unpack(PF_565, p, rgba);
+    photo_pixel(rgba);
+    if (!g_photos.on)
+        on_matte(rgba);
+    return pack(PF_565, rgba);
+}
+
+/* GDI's copy of a target, `count` pixels, as photo_shown has them. */
+static void photo_show_all(WORD* p, SIZE_T count)
+{
+    while (count--)
+    {
+        *p = photo_shown(*p);
+        ++p;
+    }
 }
 
 /* The time in milliseconds, through kernel32 (the game does not import GetTickCount). */
@@ -166,9 +271,10 @@ static DWORD photo_clock(void)
     return tick ? tick() : 0;
 }
 
+/* The photos on or off; they carry on from screen to screen rather than starting again. */
 void render_photos(BOOL on)
 {
-    if (on && !g_photos.on)
+    if (on && !g_photos.start)
         g_photos.start = photo_clock();
     g_photos.on = on;
 }
@@ -296,14 +402,14 @@ static void present_over_photos(surface* target, LONG w, LONG h, LONG x, LONG y,
         gl.Disable(GL_BLEND);
     }
 
-    gl.Enable(GL_ALPHA_TEST);
-    gl.AlphaFunc(GL_NEVER + 4, 0.5f);       /* GL_GREATER */
+    gl.Enable(GL_BLEND);
+    gl.BlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);      /* the target is premultiplied */
     gl.BindTexture(GL_TEXTURE_2D, target->colour);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     gl.Color4f(1, 1, 1, 1);
     quad((GLfloat) x, (GLfloat) y, (GLfloat) (x + fit_w), (GLfloat) (y + fit_h), 0, 0, 1, 1);
-    gl.Disable(GL_ALPHA_TEST);
+    gl.Disable(GL_BLEND);
 }
 
 static void present(surface* target)
@@ -576,7 +682,8 @@ static void target_read(surface* s)
         WORD* to = (WORD*) (row + (SIZE_T) y * pitch);
 
         for (x = 0; x < s->desc.dwWidth; ++x)
-            to[x] = pack(PF_565, from + x * 4);
+            to[x] = s->inks && from[x * 4 + 3] < 255 ? photo_code(from + x * 4)
+                                                      : pack(PF_565, from + x * 4);
     }
     mem_free(rgba);
     s->pixels_current = TRUE;
@@ -585,7 +692,7 @@ static void target_read(surface* s)
 /* Draw a rectangle of 16-bit memory pixels onto the bound render target, scaled to `to`. With
    `keyed`, pixels matching `key` are left out. */
 static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int format, const RECT* part,
-                        const RECT* to, BOOL keyed, DWORD key)
+                        const RECT* to, BOOL keyed, DWORD key, BOOL inks)
 {
     LONG w = part->right - part->left, h = part->bottom - part->top, x, y;
     BYTE* rgba = (BYTE*) mem_alloc((SIZE_T) w * h * 4);
@@ -607,9 +714,13 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
             unpack(format, row[x], out);
             if (keyed && row[x] == key)
                 out[3] = 0;
-            else if (g_photos.on)
-                out[3] = is_hole(out) ? 0 : 255;
-            else if (format == PF_565 || keyed)
+            else if (inks)
+            {
+                photo_pixel(out);
+                if (!g_photos.on)
+                    on_matte(out);
+            }
+            else if (g_photos.on || format == PF_565 || keyed)
                 out[3] = 255;
         }
     }
@@ -681,7 +792,7 @@ static void target_write(surface* s)
 {
     RECT all = { 0, 0, (LONG) s->desc.dwWidth, (LONG) s->desc.dwHeight };
 
-    draw_pixels(s, s->pixels, surface_pitch(s), PF_565, &all, &all, FALSE, 0);
+    draw_pixels(s, s->pixels, surface_pitch(s), PF_565, &all, &all, FALSE, 0, s->inks);
     s->pixels_current = TRUE;
 }
 
@@ -689,12 +800,21 @@ static void target_write(surface* s)
     The part of a render target that changed in its memory image, from `before` (a copy taken
     when it was handed out): drawn back, the rest left alone. Returns whether anything changed.
 */
-static BOOL target_write_changes(surface* s, const BYTE* changed, const BYTE* before)
+static BOOL target_write_changes(surface* s, BYTE* changed, const BYTE* before)
 {
     LONG pitch = surface_pitch(s), w = (LONG) s->desc.dwWidth, h = (LONG) s->desc.dwHeight;
     RECT part = { w, h, 0, 0 };
     LONG x, y;
 
+    for (y = 0; s->inks && y < h; ++y)          /* what GDI left as shown goes back to its code */
+    {
+        WORD* a = (WORD*) (changed + (SIZE_T) y * pitch);
+        const WORD* b = (const WORD*) (before + (SIZE_T) y * pitch);
+
+        for (x = 0; x < w; ++x)
+            if (a[x] != b[x] && a[x] == photo_shown(b[x]))
+                a[x] = b[x];
+    }
     for (y = 0; y < h; ++y)
     {
         const WORD* a = (const WORD*) (changed + (SIZE_T) y * pitch);
@@ -716,7 +836,7 @@ static BOOL target_write_changes(surface* s, const BYTE* changed, const BYTE* be
     if (part.left >= part.right)
         return FALSE;
     __movsb(s->pixels, changed, (SIZE_T) pitch * h);
-    draw_pixels(s, s->pixels, pitch, PF_565, &part, &part, FALSE, 0);
+    draw_pixels(s, s->pixels, pitch, PF_565, &part, &part, FALSE, 0, s->inks);
     s->pixels_current = TRUE;
     return TRUE;
 }
@@ -1009,6 +1129,9 @@ static void fill_target(surface* to, const RECT* r, WORD colour)
 {
     BYTE rgba[4];
 
+    if (r->left <= 0 && r->top <= 0 && r->right >= (LONG) to->desc.dwWidth
+        && r->bottom >= (LONG) to->desc.dwHeight)
+        to->inks = FALSE;
     unpack(PF_565, colour, rgba);
     target_bind(to);
     gl.Enable(GL_SCISSOR_TEST);
@@ -1070,7 +1193,9 @@ static HRESULT blit(surface* to, const RECT* to_rect, surface* from, const RECT*
     {
         BOOL current = to->pixels_current;
 
-        draw_pixels(to, pixels(from), surface_pitch(from), from->format, &f, &t, keyed, from->key.dwColorSpaceLowValue);
+        draw_pixels(to, pixels(from), surface_pitch(from), from->format, &f, &t, keyed,
+                    from->key.dwColorSpaceLowValue, from->top->inks);
+        to->inks |= from->top->inks;
         if (current)
         {
             blit_memory(to, &t, from, &f, keyed);
@@ -1082,6 +1207,7 @@ static HRESULT blit(surface* to, const RECT* to_rect, surface* from, const RECT*
         if (is_target(from))
             target_read(from);
         blit_memory(to, &t, from, &f, keyed);
+        to->top->inks |= from->top->inks;
     }
     return DD_OK;
 }
@@ -1261,6 +1387,8 @@ static HRESULT WINAPI s_GetDC(IDirectDrawSurface7* self, HDC* out)
         return DDERR_GENERIC;
 
     __movsb((unsigned char*) s->dib_bits, s->pixels, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);
+    if (is_target(s) && s->inks)
+        photo_show_all((WORD*) s->dib_bits, (SIZE_T) surface_pitch(s) / 2 * s->desc.dwHeight);
     s->old_bitmap = (HBITMAP) select(s->dc, s->dib);
     *out = s->dc;
     return DD_OK;
@@ -1280,7 +1408,7 @@ static HRESULT WINAPI s_ReleaseDC(IDirectDrawSurface7* self, HDC dc)
     if (flush)
         flush();
     if (is_target(s))
-        target_write_changes(s, (const BYTE*) s->dib_bits, s->pixels);
+        target_write_changes(s, (BYTE*) s->dib_bits, s->pixels);
     else
     {
         __movsb(s->pixels, (const unsigned char*) s->dib_bits, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);

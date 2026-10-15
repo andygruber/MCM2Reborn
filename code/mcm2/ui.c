@@ -32,6 +32,7 @@ static float menu_fit(BYTE* screen, int* left, int* top)
 
 /* The renderer's photo layer, for a layout that asks for it (Photos), while it is open. */
 void render_photos(BOOL on);
+void render_inks(void* picture_surface);
 static BYTE* photos_dialog = NULL;
 
 /* A 640x480 area moved onto the screen's centred one. */
@@ -2377,8 +2378,10 @@ static struct {
 static void modern_mark(const char* name, void* picture)
 {
     if (picture && modern_count < MODERN_MOST
-        && (game_FUN_0053b910(name, "_Modern\\") || game_FUN_0053b910(name, "_modern\\")))
+        && (game_FUN_0053b910(name, "_Modern\\") || game_FUN_0053b910(name, "_modern\\"))) {
         modern_pictures[modern_count++] = picture;
+        render_inks(FIELD(picture, 0x70, void*));          /* the picture's surface */
+    }
 }
 
 static void modern_forget(void* picture)

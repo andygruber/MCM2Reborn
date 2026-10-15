@@ -51,6 +51,7 @@ typedef struct surface
 
     DDCOLORKEY           key;           /* source colour key, if `keyed` */
     BOOL                 keyed;
+    BOOL                 inks;          /* a modern menu picture, or a target one is on: see render_inks */
 
     HDC                  dc;            /* GetDC: a DIB section over a copy of the pixels */
     HBITMAP              dib, old_bitmap;

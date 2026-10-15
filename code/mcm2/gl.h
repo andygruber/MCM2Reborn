@@ -31,6 +31,7 @@ typedef void           GLvoid;
 #define GL_TRIANGLES                    0x0004
 #define GL_TRIANGLE_STRIP               0x0005
 #define GL_TRIANGLE_FAN                 0x0006
+#define GL_ONE                          1
 #define GL_NEVER                        0x0200
 #define GL_SRC_COLOR                    0x0300
 #define GL_ONE_MINUS_SRC_COLOR          0x0301
