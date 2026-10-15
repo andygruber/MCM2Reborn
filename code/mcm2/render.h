@@ -39,6 +39,7 @@ typedef struct surface
     BYTE*                pixels;        /* the surface in memory: textures, offscreen, a locked target */
     BOOL                 locked_target; /* a render target's pixels hold a Lock or GetDC readback */
     BOOL                 pixels_current;    /* a render target's pixels are what it shows */
+    RECT                 ahead;         /* ...but for this part, drawn since: see target_bind_part */
 
     GLuint               fbo, colour, depth;    /* a render target */
     GLuint               texture;       /* a texture, uploaded when `dirty` */
@@ -95,6 +96,7 @@ void describe_format(int format, DDPIXELFORMAT* pf);
 
 /* Make a render target the one OpenGL draws into, creating its framebuffer on first use. */
 void target_bind(surface* target);
+void target_bind_part(surface* target, const RECT* part);
 
 /* Bind a texture surface to the active texture unit, uploading it if the game changed it. */
 void texture_bind(surface* texture);

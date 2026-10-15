@@ -31,15 +31,23 @@ INK_NEAR = 30 ** 2 * 3              # how far a soft pixel's colour may be from 
 BAYER = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]) / 16 - 0.5
 
 
-def encode(image, inks=True):
+def encode(image, inks=True, window=None):
     """An RGBA picture as x1R5G5B5 pixels (rows top first). With `inks`, what is see-through is
-    HOLE or an ink; without, it is mixed with MATTE (HOLE where it is nearly clear)."""
+    HOLE or an ink; without, it is mixed with MATTE (HOLE where it is nearly clear). Where the
+    mask `window` is set, what shows under the picture is the game's 3D, which inks would hide:
+    there it is the colour key where mostly clear, and solid on MATTE where not."""
     rgba = np.asarray(image.convert("RGBA"), dtype=np.float64)
     alpha = rgba[..., 3] / 255.0
     rgb = rgba[..., :3]
     keyed = (rgba[..., 3] == 255) & (rgba[..., :3] == MAGENTA).all(-1)
+    over_3d = np.asarray(window) > 127 if window is not None else np.zeros(alpha.shape, bool)
     if not inks:
         rgb = rgb * alpha[..., None] + np.array(MATTE) * (1 - alpha[..., None])
+    else:
+        solid = rgb * alpha[..., None] + np.array(MATTE) * (1 - alpha[..., None])
+        rgb = np.where(over_3d[..., None], solid, rgb)
+        keyed |= over_3d & (alpha < 0.5)
+        alpha = np.where(over_3d, 1.0, alpha)
     h, w = alpha.shape
     dither = np.tile(BAYER, (h // 4 + 1, w // 4 + 1))[:h, :w, None]       # no banding in gradients
     five = np.clip(np.round(rgb / 255.0 * 31 + dither), 0, 31).astype(np.uint16)
@@ -61,17 +69,17 @@ def encode(image, inks=True):
     return np.where(keyed, KEY, pixels).astype(np.uint16)
 
 
-def tga16(image, inks=True):
+def tga16(image, inks=True, window=None):
     """encode() as an uncompressed 16-bit TGA, bottom row first."""
-    pixels = encode(image, inks)
+    pixels = encode(image, inks, window)
     h, w = pixels.shape
     header = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, w, h, 16, 0)
     return header + pixels[::-1].astype("<u2").tobytes()
 
 
-def shown(image, inks=True):
+def shown(image, inks=True, window=None):
     """What the renderer makes of encode(image): RGBA, for laying over a photo in a preview."""
-    p = encode(image, inks).astype(int)
+    p = encode(image, inks, window).astype(int)
     r, g, b = p >> 10 & 31, p >> 5 & 31, p & 31
     out = np.zeros(p.shape + (4,))
     out[..., :3] = np.stack([r, g, b], -1) * 255.0 / 31

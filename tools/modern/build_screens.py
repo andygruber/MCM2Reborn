@@ -16,6 +16,7 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -240,6 +241,21 @@ def plate(base):
 
 # ---- A screen's ground ----
 
+def key_mask(entries, globals_, anims, anim):
+    """Where the original picture `anim` is the colour key, at ART times: a mask."""
+    for line in anims.get(anim.lower(), []):
+        if line.lower().startswith("files1"):
+            path = line.split("=", 1)[1].strip().strip('"').lower()
+            data = entries.get(path) or globals_.get(path)
+            if data and len(data) >= 18 and data[16] == 16:
+                w, h = int.from_bytes(data[12:14], "little"), int.from_bytes(data[14:16], "little")
+                pixels = np.frombuffer(data[18 + data[0]:18 + data[0] + w * h * 2], "<u2").reshape(h, w)
+                if not data[17] & 0x20:                     # bottom row first
+                    pixels = pixels[::-1]
+                mask = Image.fromarray(((pixels & 0x7FFF) == 0x7C1F).astype(np.uint8) * 255)
+                return mask.resize((a(w), a(h)), Image.NEAREST)
+    return Image.new("L", (1, 1))
+
 def full_backdrop(size, side, title):
     """A full screen: the photo, glass at the left with the title on it, and the 4:3 on a glass
     panel in the middle."""
@@ -313,14 +329,20 @@ def theme(dat, globals_, global_anims, preview_dir, photo):
     size = (a(width) + 2 * side, a(height))
     anims = dict(global_anims, **{n.lower(): l for n, l in sections})
 
-    pictures, keys, drops = {}, {}, {}
+    pictures, places, keys, drops = {}, {}, {}, {}
     if full:
         ground = full_backdrop(size, side, TITLES.get(stem))
     else:
         # A screen drawn in another with no ground of its own is on that one's glass.
         ground = card_backdrop(size, POPUP if POPUPS.match(stem) else PANEL)
+    # Where the original's ground is the colour key, the game shows its 3D (a bike, the screens
+    # drawn in this one): nothing is drawn there.
+    windows = Image.new("L", size)
     if has_back:
+        windows.paste(key_mask(entries, globals_, anims, background), (side, 0))
+        ground.paste((0, 0, 0, 0), mask=windows)
         pictures["MBack"] = ground.copy()
+        places["MBack"] = (0, 0)
     info_keys = {"ScreenWidth": str(size[0]), "ScreenHeight": str(size[1]), "ArtScale": str(ART),
                  "FontName": '"Bahnschrift"', "TextColor": colorref(CREAM)}
     if full:
@@ -352,6 +374,11 @@ def theme(dat, globals_, global_anims, preview_dir, photo):
             left, top = at[0] + offset[0], at[1] + offset[1]
             return ground.crop((left, top, left + max(bw, 1), top + max(bh, 1)))
 
+        def put(anim, picture, offset=(0, 0)):
+            """A picture of the control's, `offset` from its corner."""
+            pictures[anim] = picture
+            places[anim] = (at[0] + offset[0], at[1] + offset[1])
+
         k = {"Xywh": scale_xywh(value(lines, "Xywh"), 0 if anchor else side)}
         if value(lines, "FontHeight"):
             k["FontHeight"] = "%g" % (float(value(lines, "FontHeight")) * ART)
@@ -378,24 +405,24 @@ def theme(dat, globals_, global_anims, preview_dir, photo):
                 states = button_states(base(), label_of(name, lines), bool(PRIMARY.search(name)))
             drops[name] = ("Text", "LocalTextId")
             for state in made.values():
-                pictures["M%s%s" % (name, state)] = states[state]
+                put("M%s%s" % (name, state), states[state])
         elif kind in ("SCROLLUP", "SCROLLDOWN") and has("AnimNorm"):
             made = {"AnimNorm": "Up", "AnimFocus": "Lit", "AnimPush": "Down", "AnimDisable": "Grey"}
             states = arrow_states(base(), "up" if kind == "SCROLLUP" else "down")
             for state in made.values():
-                pictures["M%s%s" % (name, state)] = states[state]
+                put("M%s%s" % (name, state), states[state])
         elif kind == "RADIOBUTTON" and has("AnimOn"):
             made = {"AnimOn": "On", "AnimOff": "Off", "AnimOnDisable": "OnGrey", "AnimOffDisable": "OffGrey"}
             for key, state in made.items():
-                pictures["M%s%s" % (name, state)] = radio(base(original(key)), state.startswith("On"),
-                                                          "Grey" not in state)
+                put("M%s%s" % (name, state), radio(base(original(key)), state.startswith("On"),
+                                                   "Grey" not in state))
         elif kind in ("VSCROLLBAR", "HSCROLLBAR"):
             for key, maker in (("AnimNorm", track), ("AnimThumb", thumb), ("AnimFocus", track),
                                ("AnimPush", track), ("AnimDisable", track)):
                 if has(key):
                     made[key] = key[4:]
                     of = original(key) if key == "AnimThumb" else None
-                    pictures["M%s%s" % (name, key[4:])] = maker(base(of))
+                    put("M%s%s" % (name, key[4:]), maker(base(of)))
         elif kind == "DROPDOWNLIST":
             # The text's field, the arrow button after it, and the list that opens under it with
             # its scroll bar down the right: each at the original picture's size.
@@ -409,25 +436,28 @@ def theme(dat, globals_, global_anims, preview_dir, photo):
                                ("AnimDisable", "Grey")):
                 if has(key):
                     made[key] = key[4:]
-                    pictures["M%s%s" % (name, key[4:])] = arrows[state]
+                    put("M%s%s" % (name, key[4:]), arrows[state], (text_size[0], 0))
             listing = drop_list(base(list_size, (0, text_size[1])))
             scroll = track(listing.crop((list_size[0] - scroll_size[0], 0) + list_size))
-            for key, picture in (("AnimTextBack", field(base(text_size), BLUE)), ("AnimListBack", listing),
-                                 ("AnimScrollBack", scroll),
-                                 ("AnimThumb", thumb(scroll.crop((0, 0) + thumb_size)))):
+            scroll_at = (list_size[0] - scroll_size[0], text_size[1])
+            for key, picture, offset in (
+                    ("AnimTextBack", field(base(text_size), BLUE), (0, 0)),
+                    ("AnimListBack", listing, (0, text_size[1])),
+                    ("AnimScrollBack", scroll, scroll_at),
+                    ("AnimThumb", thumb(scroll.crop((0, 0) + thumb_size)), scroll_at)):
                 if has(key):
                     made[key] = key[4:]
-                    pictures["M%s%s" % (name, key[4:])] = picture
+                    put("M%s%s" % (name, key[4:]), picture, offset)
             if has("AnimTextBack"):
                 placed.append(("M%sTextBack" % name, at))
             if has("AnimNorm"):
                 placed.append(("M%sNorm" % name, (at[0] + text_size[0], at[1])))
         elif kind in ("LISTBOX", "EDITBOX", "STATICTEXT") and has("AnimNorm"):
             made = {"AnimNorm": "Back"}
-            pictures["M%sBack" % name] = field(base(), BLUE if kind == "EDITBOX" else None)
+            put("M%sBack" % name, field(base(), BLUE if kind == "EDITBOX" else None))
         elif kind == "STATIC" and has("AnimNorm") and PLATE_NAME.search(name):
             made = {"AnimNorm": "Plate"}
-            pictures["M%sPlate" % name] = plate(base())
+            put("M%sPlate" % name, plate(base()))
             ground.paste(pictures["M%sPlate" % name], at)      # what is on the plate is drawn on it
             for fx in ("FXAnimIn", "FXAnimOut"):
                 if has(fx):
@@ -459,17 +489,23 @@ def theme(dat, globals_, global_anims, preview_dir, photo):
                     "LoopCount = 0", ""]
 
     kept = [(n, blob) for n, blob in files if not n.lower().endswith(".dtm")]
-    new_entries = kept + [(FOLDER + anim + ".tga", tga16(img)) for anim, img in pictures.items()]
+    def window_of(anim):
+        x, y = places[anim]
+        return windows.crop((x, y, x + pictures[anim].width, y + pictures[anim].height))
+
+    new_entries = kept + [(FOLDER + anim + ".tga", tga16(img, window=window_of(anim)))
+                          for anim, img in pictures.items()]
     new_entries.append((layout, "\r\n".join(out).encode("latin-1")))
 
     if preview_dir:
         # As the game shows it: over a photo, each picture drawn over what is under it.
         canvas = Image.open(photo).convert("RGBA").resize((a(640) + 2 * SIDE, a(480)), Image.LANCZOS)
         canvas = canvas.crop((0, 0) + size) if not full else canvas
-        layer = shown(pictures["MBack"]) if "MBack" in pictures else shown(ground)
+        layer = shown(pictures["MBack"], window=windows) if "MBack" in pictures else shown(ground)
         for anim, at in placed:
-            layer.paste(shown(pictures[anim]), at)
+            layer.paste(shown(pictures[anim], window=window_of(anim)), at)
         canvas.alpha_composite(layer)
+        canvas.paste((40, 44, 52, 255), mask=windows)      # the 3D, standing in
         canvas.convert("RGB").save(Path(preview_dir) / ("modern %s.png" % stem.lower()))
     return rs2(new_entries), len(pictures)
 

@@ -210,12 +210,29 @@ static void colour_of(DWORD argb, float* rgba)
     rgba[3] = (argb >> 24) / 255.0f;
 }
 
+/* Where a draw can land: the viewport, or anywhere for pretransformed vertices. */
+static RECT drawn_part(device* d, BOOL pretransformed)
+{
+    const D3DVIEWPORT7* v = &d->viewport;
+    RECT r = { 0, 0, (LONG) d->target->desc.dwWidth, (LONG) d->target->desc.dwHeight };
+
+    if (!pretransformed)
+    {
+        r.left = (LONG) v->dwX;
+        r.top = (LONG) v->dwY;
+        r.right = (LONG) (v->dwX + v->dwWidth);
+        r.bottom = (LONG) (v->dwY + v->dwHeight);
+    }
+    return r;
+}
+
 static void apply_states(device* d)
 {
+    static const RECT nothing = { 0, 0, 0, 0 };
     const DWORD* rs = d->rs;
     bits start, end, density;
 
-    target_bind(d->target);
+    target_bind_part(d->target, &nothing);
 
     if (rs[D3DRENDERSTATE_ZENABLE])
         gl.Enable(GL_DEPTH_TEST);
@@ -260,7 +277,7 @@ static void apply_states(device* d)
 
     gl.ShadeModel(rs[D3DRENDERSTATE_SHADEMODE] == D3DSHADE_FLAT ? GL_FLAT : GL_SMOOTH);
     gl.Disable(GL_SCISSOR_TEST);
-    gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);      /* the target has no alpha to write */
 
     /*
         Fog with a table or vertex mode is by distance, which OpenGL measures as Direct3D does,
@@ -592,12 +609,14 @@ static void submit(device* d, D3DPRIMITIVETYPE type, const float* v, DWORD count
 static HRESULT draw(device* d, D3DPRIMITIVETYPE type, DWORD fvf, const BYTE* vertices, DWORD count,
                     const WORD* indices, DWORD index_count)
 {
+    RECT part;
     float* v;
 
     if (!d->target)
         return D3DERR_SCENE_NOT_IN_SCENE;
 
-    target_bind(d->target);
+    part = drawn_part(d, (fvf & D3DFVF_XYZRHW) != 0);
+    target_bind_part(d->target, &part);
     v = convert(d, vertices, count, fvf, NULL);
     if (!v)
         return DDERR_OUTOFMEMORY;
@@ -616,6 +635,7 @@ static HRESULT draw_buffer(device* d, D3DPRIMITIVETYPE type, vertex_buffer* vb, 
                            const WORD* indices, DWORD index_count)
 {
     layout l = layout_of(vb->desc.dwFVF);
+    RECT part;
     float* v;
 
     if (!d->target)
@@ -623,7 +643,8 @@ static HRESULT draw_buffer(device* d, D3DPRIMITIVETYPE type, vertex_buffer* vb, 
     if (start + count > vb->desc.dwNumVertices)
         return DDERR_INVALIDPARAMS;
 
-    target_bind(d->target);
+    part = drawn_part(d, !vb->processed && l.pretransformed);
+    target_bind_part(d->target, &part);
     if (vb->processed)
     {
         /* Already in OpenGL's clip space, depth included (see b_ProcessVertices). */
@@ -759,7 +780,9 @@ static HRESULT WINAPI v_EnumTextureFormats(IDirect3DDevice7* self, LPD3DENUMPIXE
 
 static HRESULT WINAPI v_BeginScene(IDirect3DDevice7* self)
 {
-    target_bind(DEV->target);
+    static const RECT nothing = { 0, 0, 0, 0 };
+
+    target_bind_part(DEV->target, &nothing);
     return D3D_OK;
 }
 
@@ -808,9 +831,13 @@ static HRESULT WINAPI v_Clear(IDirect3DDevice7* self, DWORD count, LPD3DRECT rec
     if (!d->target)
         return D3D_OK;
 
-    target_bind(d->target);
+    {
+        RECT part = drawn_part(d, count != 0);      /* rectangles of its own: anywhere */
+
+        target_bind_part(d->target, &part);
+    }
     colour_of(colour, rgba);
-    gl.ClearColor(rgba[0], rgba[1], rgba[2], rgba[3]);
+    gl.ClearColor(rgba[0], rgba[1], rgba[2], 1);       /* solid: the target has no alpha */
     gl.ClearDepth(z);
     gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     gl.DepthMask(GL_TRUE);

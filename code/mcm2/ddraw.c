@@ -502,6 +502,7 @@ static void present(surface* target)
     gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     gl.Disable(GL_SCISSOR_TEST);
     gl.Viewport(0, 0, w, h);
+    gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     gl.ClearColor(0, 0, 0, 1);
     gl.Clear(GL_COLOR_BUFFER_BIT);
     if (g_photos.on && !g_photos.loaded)
@@ -655,6 +656,45 @@ static BYTE* pixels(surface* s)
     return s->pixels;
 }
 
+/* `r` added to where the target's GL pixels are ahead of its memory image. */
+static void ahead_add(surface* s, const RECT* r)
+{
+    if (r->left >= r->right || r->top >= r->bottom)
+        return;
+    if (s->ahead.left >= s->ahead.right)
+        s->ahead = *r;
+    else
+    {
+        s->ahead.left = min(s->ahead.left, r->left);
+        s->ahead.top = min(s->ahead.top, r->top);
+        s->ahead.right = max(s->ahead.right, r->right);
+        s->ahead.bottom = max(s->ahead.bottom, r->bottom);
+    }
+    s->ahead.left = max(s->ahead.left, 0);
+    s->ahead.top = max(s->ahead.top, 0);
+    s->ahead.right = min(s->ahead.right, (LONG) s->desc.dwWidth);
+    s->ahead.bottom = min(s->ahead.bottom, (LONG) s->desc.dwHeight);
+}
+
+/*
+    Bind a target that is about to be drawn on in `part` only (NULL: anywhere): a memory image
+    that was current stays so outside it, and a readback fetches just that (see target_read).
+*/
+void target_bind_part(surface* target, const RECT* part)
+{
+    BOOL current;
+
+    if (!target)
+        return;
+    current = target->pixels_current;
+    target_bind(target);
+    if (current && part)
+    {
+        target->pixels_current = TRUE;
+        ahead_add(target, part);
+    }
+}
+
 void target_bind(surface* target)
 {
     if (!ensure_gl() || !target)
@@ -725,14 +765,24 @@ void texture_bind(surface* s)
     s->dirty = FALSE;
 }
 
-/* Copy a render target's pixels into its memory image, top row first, as 16-bit 565. */
+/* Bring a render target's memory image up to date, top row first, as 16-bit 565: all of it,
+   or when the rest is current only the part drawn since (`ahead`), or nothing. */
 static void target_read(surface* s)
 {
-    LONG pitch = surface_pitch(s);
+    RECT part = { 0, 0, (LONG) s->desc.dwWidth, (LONG) s->desc.dwHeight };
+    LONG pitch = surface_pitch(s), w, h, x, y;
     BYTE* row = pixels(s);
-    BYTE* rgba = (BYTE*) mem_alloc((SIZE_T) s->desc.dwWidth * s->desc.dwHeight * 4);
-    DWORD x, y;
+    BYTE* rgba;
 
+    if (s->pixels_current)
+    {
+        if (s->ahead.left >= s->ahead.right)
+            return;
+        part = s->ahead;
+    }
+    w = part.right - part.left;
+    h = part.bottom - part.top;
+    rgba = (BYTE*) mem_alloc((SIZE_T) w * h * 4);
     if (!rgba || !row || !ensure_gl())
     {
         mem_free(rgba);
@@ -741,20 +791,21 @@ static void target_read(surface* s)
 
     target_bind(s);
     gl.PixelStorei(GL_PACK_ALIGNMENT, 4);
-    gl.ReadPixels(0, 0, s->desc.dwWidth, s->desc.dwHeight, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    gl.ReadPixels(part.left, (GLint) s->desc.dwHeight - part.bottom, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 
-    for (y = 0; y < s->desc.dwHeight; ++y)
+    for (y = 0; y < h; ++y)
     {
-        const BYTE* from = rgba + (SIZE_T) (s->desc.dwHeight - 1 - y) * s->desc.dwWidth * 4;
-        WORD* to = (WORD*) (row + (SIZE_T) y * pitch);
+        const BYTE* from = rgba + (SIZE_T) (h - 1 - y) * w * 4;
+        WORD* to = (WORD*) (row + (SIZE_T) (part.top + y) * pitch) + part.left;
 
-        for (x = 0; x < s->desc.dwWidth; ++x)
+        for (x = 0; x < w; ++x)
             to[x] = s->inks && from[x * 4 + 3] < 255 ? photo_code(from + x * 4)
                                                       : pack(PF_565, from + x * 4);
     }
     mem_free(rgba);
     s->pixels_current = TRUE;
-    shown_stale(s, NULL);
+    s->ahead.left = s->ahead.top = s->ahead.right = s->ahead.bottom = 0;
+    shown_stale(s, &part);
 }
 
 /* Every pixel of `format` as draw_pixels shows it from a picture with inks, photos off or on
@@ -844,6 +895,7 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
     gl.Disable(GL_FOG);
     gl.Disable(GL_SCISSOR_TEST);
     gl.DepthMask(GL_FALSE);
+    gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     if (keyed)
     {
         gl.Enable(GL_ALPHA_TEST);
@@ -893,6 +945,7 @@ static void target_write(surface* s)
 
     draw_pixels(s, s->pixels, surface_pitch(s), PF_565, &all, &all, FALSE, 0, s->inks);
     s->pixels_current = TRUE;
+    s->ahead.left = s->ahead.top = s->ahead.right = s->ahead.bottom = 0;
     shown_stale(s, NULL);
 }
 
@@ -1270,6 +1323,7 @@ static void blit_targets(surface* to, const RECT* t, surface* from, const RECT* 
 {
     target_bind(to);
     target_bind(from);
+    gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, to->fbo);
     gl.BindFramebuffer(GL_READ_FRAMEBUFFER, from->fbo);
     gl.BlitFramebuffer(f->left, (GLint) from->desc.dwHeight - f->bottom, f->right, (GLint) from->desc.dwHeight - f->top,
@@ -1478,7 +1532,7 @@ static HRESULT WINAPI s_GetDC(IDirectDrawSurface7* self, HDC* out)
     if (!create_dib || !create_dc || !select || !pixels(s))
         return DDERR_GENERIC;
 
-    if (is_target(s) && !s->pixels_current)
+    if (is_target(s))
         target_read(s);
 
     bmi.h.biWidth = (LONG) s->desc.dwWidth;
@@ -1604,8 +1658,7 @@ static HRESULT WINAPI s_Lock(IDirectDrawSurface7* self, LPRECT rect, LPDDSURFACE
 
     if (is_target(s))
     {
-        if (!s->pixels_current)
-            target_read(s);
+        target_read(s);
         s->locked_target = !(flags & DDLOCK_READONLY);
     }
 
