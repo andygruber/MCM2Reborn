@@ -177,22 +177,20 @@ def arrow_states(base, way):
 
 
 def field(base, edge=None):
-    """A darker well for lists, edit boxes and text, a blue rule along the bottom with `edge`."""
+    """A darker well with a fine edge for lists, edit boxes and text, a blue rule along the
+    bottom with `edge`."""
     img = base.copy()
     w, h = img.size
-    glass(img, (0, 0, w, h), a(1.6), 0.3)
+    glass(img, (0, 0, w, h), a(1.6), 0.3, EDGE)
     if edge:
         paint(img, rounded((w - a(4), max(a(0.6), 2)), 1), edge, (a(2), h - max(a(0.6), 2) - a(1)))
     return img
 
 
-def dropdown(base, colour):
-    img = field(base, colour)
-    w, h = img.size
-    cx, cy = w - h // 2, h // 2
-    ImageDraw.Draw(img).line([(cx - h * 0.14, cy - h * 0.07), (cx, cy + h * 0.08),
-                              (cx + h * 0.14, cy - h * 0.07)], fill=CREAM + (255,),
-                             width=max(a(0.8), 2), joint="curve")
+def drop_list(base):
+    """An open list: glass nearly solid, so what it covers hardly shows, with a fine edge."""
+    img = base.copy()
+    glass(img, (0, 0) + img.size, a(1.6), 0.9, EDGE)
     return img
 
 
@@ -299,7 +297,7 @@ def scale_xywh(text_value, shift=0):
     return ", ".join(str(v) for v in n)
 
 
-def theme(dat, globals_, preview_dir, photo):
+def theme(dat, globals_, global_anims, preview_dir, photo):
     files = rs2_files(dat.read_bytes())
     entries = {n.lower(): blob for n, blob in files}
     layout = next(n for n, _ in files if n.lower().endswith(".dtm"))
@@ -313,7 +311,7 @@ def theme(dat, globals_, preview_dir, photo):
     stem = dat.stem.upper()
     side = SIDE if full else 0
     size = (a(width) + 2 * side, a(height))
-    anims = {n.lower(): l for n, l in sections}
+    anims = dict(global_anims, **{n.lower(): l for n, l in sections})
 
     pictures, keys, drops = {}, {}, {}
     if full:
@@ -348,10 +346,11 @@ def theme(dat, globals_, preview_dir, photo):
         origins[name.lower()] = (ox + x, oy + y)
         at = (a(ox + x) + side, a(oy + y))
 
-        def base(of=None):
-            """The screen under the control, `of` (w, h) or its own size."""
+        def base(of=None, offset=(0, 0)):
+            """The screen under the control, `of` (w, h) or its own size, `offset` into it."""
             bw, bh = of or (a(w), a(h))
-            return ground.crop((at[0], at[1], at[0] + max(bw, 1), at[1] + max(bh, 1)))
+            left, top = at[0] + offset[0], at[1] + offset[1]
+            return ground.crop((left, top, left + max(bw, 1), top + max(bh, 1)))
 
         k = {"Xywh": scale_xywh(value(lines, "Xywh"), 0 if anchor else side)}
         if value(lines, "FontHeight"):
@@ -366,7 +365,8 @@ def theme(dat, globals_, preview_dir, photo):
         made = {}
 
         def original(key):
-            found = picture_size(entries, globals_, anims, value(lines, key))
+            """The size of the original picture the control's `key` names, or None."""
+            found = has(key) and picture_size(entries, globals_, anims, value(lines, key))
             return (a(found[0]), a(found[1])) if found else None
 
         if kind == "BUTTON" and has("AnimNorm"):
@@ -397,15 +397,31 @@ def theme(dat, globals_, preview_dir, photo):
                     of = original(key) if key == "AnimThumb" else None
                     pictures["M%s%s" % (name, key[4:])] = maker(base(of))
         elif kind == "DROPDOWNLIST":
-            for key in ("AnimNorm", "AnimFocus", "AnimPush", "AnimDisable"):
+            # The text's field, the arrow button after it, and the list that opens under it with
+            # its scroll bar down the right: each at the original picture's size.
+            text_size = original("AnimTextBack") or (a(w), a(h))
+            arrow_size = original("AnimNorm") or (max(a(w) - text_size[0], text_size[1]), text_size[1])
+            list_size = original("AnimListBack") or (text_size[0], a(80))
+            scroll_size = original("AnimScrollBack") or (a(21), list_size[1])
+            thumb_size = original("AnimThumb") or (scroll_size[0], scroll_size[0])
+            arrows = arrow_states(base(arrow_size, (text_size[0], 0)), "down")
+            for key, state in (("AnimNorm", "Up"), ("AnimFocus", "Lit"), ("AnimPush", "Down"),
+                               ("AnimDisable", "Grey")):
                 if has(key):
                     made[key] = key[4:]
-                    pictures["M%s%s" % (name, key[4:])] = dropdown(base(), GLOW if key == "AnimFocus" else BLUE)
-            for key, maker in (("AnimThumb", thumb), ("AnimListBack", field),
-                               ("AnimScrollBack", track), ("AnimTextBack", field)):
+                    pictures["M%s%s" % (name, key[4:])] = arrows[state]
+            listing = drop_list(base(list_size, (0, text_size[1])))
+            scroll = track(listing.crop((list_size[0] - scroll_size[0], 0) + list_size))
+            for key, picture in (("AnimTextBack", field(base(text_size), BLUE)), ("AnimListBack", listing),
+                                 ("AnimScrollBack", scroll),
+                                 ("AnimThumb", thumb(scroll.crop((0, 0) + thumb_size)))):
                 if has(key):
                     made[key] = key[4:]
-                    pictures["M%s%s" % (name, key[4:])] = maker(base(original(key)))
+                    pictures["M%s%s" % (name, key[4:])] = picture
+            if has("AnimTextBack"):
+                placed.append(("M%sTextBack" % name, at))
+            if has("AnimNorm"):
+                placed.append(("M%sNorm" % name, (at[0] + text_size[0], at[1])))
         elif kind in ("LISTBOX", "EDITBOX", "STATICTEXT") and has("AnimNorm"):
             made = {"AnimNorm": "Back"}
             pictures["M%sBack" % name] = field(base(), BLUE if kind == "EDITBOX" else None)
@@ -422,7 +438,7 @@ def theme(dat, globals_, preview_dir, photo):
         for key, state in made.items():
             k[key] = '"M%s%s"' % (name, state)
         keys[name] = k
-        if "AnimNorm" in made or "AnimOff" in made:
+        if kind != "DROPDOWNLIST" and ("AnimNorm" in made or "AnimOff" in made):
             first = "M%s%s" % (name, made.get("AnimNorm") or made.get("AnimOff"))
             placed.append((first, at))
 
@@ -461,13 +477,16 @@ def theme(dat, globals_, preview_dir, photo):
 def main(ui, out, preview_dir):
     ui, out = Path(ui), Path(out)
     globals_ = rs2_entries((ui / "GLOBAL.DAT").read_bytes())
+    layout = next(blob for name, blob in globals_.items() if name.endswith(".dtm"))
+    global_anims = {n.lower(): l for n, l in read_dtm(layout.decode("latin-1"))}
     out.mkdir(parents=True, exist_ok=True)
     photos = sorted(Path(preview_dir).parent.glob("menu photo *.jpg")) if preview_dir else []
     for n, dat in enumerate(sorted(ui.glob("*.DAT"))):
         stem = dat.stem.upper()
         if stem in SKIP or stem.startswith(SKIP_PREFIX):
             continue
-        data, count = theme(dat, globals_, preview_dir, photos[n % len(photos)] if photos else None)
+        data, count = theme(dat, globals_, global_anims, preview_dir,
+                            photos[n % len(photos)] if photos else None)
         (out / dat.name).write_bytes(data)
         print("%-13s %3d pictures, %d bytes" % (dat.name, count, len(data)))
 

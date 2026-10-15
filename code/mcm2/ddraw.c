@@ -235,29 +235,96 @@ static BOOL is_photo_code(WORD p)
     return p >> 11 >= 29 && !(p >> 5 & 63) && p != (31 << 11 | 31);
 }
 
-/* A 565 pixel as GDI should see it: a hole or ink as it shows with nothing under it, so the
-   game's type blends with something dark rather than with the codes' magentas. */
-static WORD photo_shown(WORD p)
+/*
+    Every 565 pixel as GDI should see it, with the photos off and on: a hole or ink as it shows
+    with nothing under it, so the game's type blends with something dark rather than with the
+    codes' magentas.
+*/
+static const WORD* photo_shown_table(void)
 {
-    BYTE rgba[4];
+    static WORD* table[2];
+    int on = g_photos.on ? 1 : 0;
+    DWORD p;
 
-    if (!is_photo_code(p))
-        return p;
-    unpack(PF_565, p, rgba);
-    photo_pixel(rgba);
-    if (!g_photos.on)
-        on_matte(rgba);
-    return pack(PF_565, rgba);
+    if (table[on])
+        return table[on];
+    table[on] = (WORD*) mem_alloc(65536 * sizeof(WORD));
+    if (!table[on])
+        return NULL;
+    for (p = 0; p < 65536; ++p)
+    {
+        BYTE rgba[4];
+
+        table[on][p] = (WORD) p;
+        if (!is_photo_code((WORD) p))
+            continue;
+        unpack(PF_565, (WORD) p, rgba);
+        photo_pixel(rgba);
+        if (!on)
+            on_matte(rgba);
+        table[on][p] = pack(PF_565, rgba);
+    }
+    return table[on];
 }
 
-/* GDI's copy of a target, `count` pixels, as photo_shown has them. */
-static void photo_show_all(WORD* p, SIZE_T count)
+/*
+    A target with inks keeps `shown`, its memory image as GDI should see it, brought up to date
+    only where the memory has changed since (`stale`), so GetDC is a copy.
+*/
+static void shown_stale(surface* s, const RECT* r)
 {
-    while (count--)
+    RECT all = { 0, 0, (LONG) s->desc.dwWidth, (LONG) s->desc.dwHeight };
+
+    if (!s->shown)
+        return;
+    if (!r)
+        r = &all;
+    if (s->stale.left >= s->stale.right)
+        s->stale = *r;
+    else
     {
-        *p = photo_shown(*p);
-        ++p;
+        s->stale.left = min(s->stale.left, r->left);
+        s->stale.top = min(s->stale.top, r->top);
+        s->stale.right = max(s->stale.right, r->right);
+        s->stale.bottom = max(s->stale.bottom, r->bottom);
     }
+    s->stale.left = max(s->stale.left, 0);
+    s->stale.top = max(s->stale.top, 0);
+    s->stale.right = min(s->stale.right, all.right);
+    s->stale.bottom = min(s->stale.bottom, all.bottom);
+}
+
+/* `shown` up to date, or NULL when it cannot be. */
+static BYTE* shown_current(surface* s)
+{
+    const WORD* table = photo_shown_table();
+    LONG pitch = surface_pitch(s), x, y;
+
+    if (!table || !s->pixels)
+        return NULL;
+    if (!s->shown)
+    {
+        s->shown = (BYTE*) mem_alloc((SIZE_T) pitch * s->desc.dwHeight);
+        if (!s->shown)
+            return NULL;
+        s->shown_photos = !g_photos.on;
+    }
+    if (s->shown_photos != g_photos.on)
+    {
+        s->shown_photos = g_photos.on;
+        s->stale.right = 0;
+        shown_stale(s, NULL);
+    }
+    for (y = s->stale.top; y < s->stale.bottom; ++y)
+    {
+        const WORD* from = (const WORD*) (s->pixels + (SIZE_T) y * pitch);
+        WORD* to = (WORD*) (s->shown + (SIZE_T) y * pitch);
+
+        for (x = s->stale.left; x < s->stale.right; ++x)
+            to[x] = table[from[x]];
+    }
+    s->stale.left = s->stale.top = s->stale.right = s->stale.bottom = 0;
+    return s->shown;
 }
 
 /* The time in milliseconds, through kernel32 (the game does not import GetTickCount). */
@@ -687,6 +754,32 @@ static void target_read(surface* s)
     }
     mem_free(rgba);
     s->pixels_current = TRUE;
+    shown_stale(s, NULL);
+}
+
+/* Every pixel of `format` as draw_pixels shows it from a picture with inks, photos off or on
+   as they are now: 8-bit RGBA. NULL when there is no memory for it. */
+static const BYTE* ink_table(int format)
+{
+    static BYTE* table[PF_FORMATS][2];
+    BYTE** made = &table[format][g_photos.on ? 1 : 0];
+    DWORD p;
+
+    if (*made)
+        return *made;
+    *made = (BYTE*) mem_alloc(65536 * 4);
+    if (!*made)
+        return NULL;
+    for (p = 0; p < 65536; ++p)
+    {
+        BYTE* out = *made + p * 4;
+
+        unpack(format, (WORD) p, out);
+        photo_pixel(out);
+        if (!g_photos.on)
+            on_matte(out);
+    }
+    return *made;
 }
 
 /* Draw a rectangle of 16-bit memory pixels onto the bound render target, scaled to `to`. With
@@ -696,6 +789,7 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
 {
     LONG w = part->right - part->left, h = part->bottom - part->top, x, y;
     BYTE* rgba = (BYTE*) mem_alloc((SIZE_T) w * h * 4);
+    const BYTE* inked = inks ? ink_table(format) : NULL;
 
     if (!rgba || w <= 0 || h <= 0)
     {
@@ -711,17 +805,22 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
         {
             BYTE* out = rgba + ((SIZE_T) y * w + x) * 4;
 
-            unpack(format, row[x], out);
+            if (inked)
+                *(DWORD*) out = *(const DWORD*) (inked + row[x] * 4);
+            else
+            {
+                unpack(format, row[x], out);
+                if (inks)
+                {
+                    photo_pixel(out);
+                    if (!g_photos.on)
+                        on_matte(out);
+                }
+                else if (g_photos.on || format == PF_565 || keyed)
+                    out[3] = 255;
+            }
             if (keyed && row[x] == key)
                 out[3] = 0;
-            else if (inks)
-            {
-                photo_pixel(out);
-                if (!g_photos.on)
-                    on_matte(out);
-            }
-            else if (g_photos.on || format == PF_565 || keyed)
-                out[3] = 255;
         }
     }
 
@@ -794,27 +893,20 @@ static void target_write(surface* s)
 
     draw_pixels(s, s->pixels, surface_pitch(s), PF_565, &all, &all, FALSE, 0, s->inks);
     s->pixels_current = TRUE;
+    shown_stale(s, NULL);
 }
 
 /*
     The part of a render target that changed in its memory image, from `before` (a copy taken
     when it was handed out): drawn back, the rest left alone. Returns whether anything changed.
 */
-static BOOL target_write_changes(surface* s, BYTE* changed, const BYTE* before)
+static BOOL target_write_changes(surface* s, const BYTE* changed, const BYTE* before)
 {
     LONG pitch = surface_pitch(s), w = (LONG) s->desc.dwWidth, h = (LONG) s->desc.dwHeight;
     RECT part = { w, h, 0, 0 };
+    const WORD* table = before == s->shown ? photo_shown_table() : NULL;
     LONG x, y;
 
-    for (y = 0; s->inks && y < h; ++y)          /* what GDI left as shown goes back to its code */
-    {
-        WORD* a = (WORD*) (changed + (SIZE_T) y * pitch);
-        const WORD* b = (const WORD*) (before + (SIZE_T) y * pitch);
-
-        for (x = 0; x < w; ++x)
-            if (a[x] != b[x] && a[x] == photo_shown(b[x]))
-                a[x] = b[x];
-    }
     for (y = 0; y < h; ++y)
     {
         const WORD* a = (const WORD*) (changed + (SIZE_T) y * pitch);
@@ -835,7 +927,21 @@ static BOOL target_write_changes(surface* s, BYTE* changed, const BYTE* before)
     }
     if (part.left >= part.right)
         return FALSE;
-    __movsb(s->pixels, changed, (SIZE_T) pitch * h);
+    /* Only what GDI changed goes into the memory image: the rest keeps its holes and inks. */
+    for (y = part.top; y < part.bottom; ++y)
+    {
+        const WORD* a = (const WORD*) (changed + (SIZE_T) y * pitch);
+        WORD* memory = (WORD*) (s->pixels + (SIZE_T) y * pitch);
+        WORD* seen = table ? (WORD*) (s->shown + (SIZE_T) y * pitch) : NULL;
+
+        for (x = part.left; x < part.right; ++x)
+            if (a[x] != (seen ? seen[x] : memory[x]))
+            {
+                memory[x] = a[x];
+                if (seen)
+                    seen[x] = table[a[x]];
+            }
+    }
     draw_pixels(s, s->pixels, pitch, PF_565, &part, &part, FALSE, 0, s->inks);
     s->pixels_current = TRUE;
     return TRUE;
@@ -880,6 +986,7 @@ static void free_surface(surface* s)
         if (s->palette)
             s->palette->lpVtbl->Release(s->palette);
         mem_free(s->pixels);
+        mem_free(s->shown);
         mem_free(s);
         s = next;
     }
@@ -1105,6 +1212,7 @@ static void blit_memory(surface* to, const RECT* to_rect, surface* from, const R
         }
     }
     to->top->dirty = TRUE;
+    shown_stale(to, to_rect);
 }
 
 static void fill_memory(surface* to, const RECT* r, WORD colour)
@@ -1123,6 +1231,7 @@ static void fill_memory(surface* to, const RECT* r, WORD colour)
             row[x] = colour;
     }
     to->top->dirty = TRUE;
+    shown_stale(to, r);
 }
 
 static void fill_target(surface* to, const RECT* r, WORD colour)
@@ -1386,9 +1495,10 @@ static HRESULT WINAPI s_GetDC(IDirectDrawSurface7* self, HDC* out)
     if (!s->dc || !s->dib)
         return DDERR_GENERIC;
 
-    __movsb((unsigned char*) s->dib_bits, s->pixels, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);
-    if (is_target(s) && s->inks)
-        photo_show_all((WORD*) s->dib_bits, (SIZE_T) surface_pitch(s) / 2 * s->desc.dwHeight);
+    s->dib_from = is_target(s) && s->inks ? shown_current(s) : NULL;
+    if (!s->dib_from)
+        s->dib_from = s->pixels;
+    __movsb((unsigned char*) s->dib_bits, s->dib_from, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);
     s->old_bitmap = (HBITMAP) select(s->dc, s->dib);
     *out = s->dc;
     return DD_OK;
@@ -1408,7 +1518,7 @@ static HRESULT WINAPI s_ReleaseDC(IDirectDrawSurface7* self, HDC dc)
     if (flush)
         flush();
     if (is_target(s))
-        target_write_changes(s, (BYTE*) s->dib_bits, s->pixels);
+        target_write_changes(s, (const BYTE*) s->dib_bits, s->dib_from);
     else
     {
         __movsb(s->pixels, (const unsigned char*) s->dib_bits, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);

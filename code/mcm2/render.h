@@ -56,6 +56,11 @@ typedef struct surface
     HDC                  dc;            /* GetDC: a DIB section over a copy of the pixels */
     HBITMAP              dib, old_bitmap;
     void*                dib_bits;
+    const BYTE*          dib_from;      /* what the DIB was copied from: pixels, or shown */
+
+    BYTE*                shown;         /* a target with inks, as GDI sees it: see shown_current */
+    RECT                 stale;         /* where `shown` is behind the pixels */
+    BOOL                 shown_photos;  /* whether it was made for the photos on */
 
     IDirectDrawPalette*  palette;
 } surface;
