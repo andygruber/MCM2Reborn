@@ -83,6 +83,30 @@ void dev_install(void)
         load_menu_fonts();
 }
 
+/* A clock for timing: milliseconds since it was first read. */
+double dev_milliseconds(void)
+{
+    typedef BOOL (WINAPI* counter_fn)(LARGE_INTEGER* value);
+    static counter_fn counter;
+    static LARGE_INTEGER start;
+    static double per_ms;
+    LARGE_INTEGER now;
+
+    if (!counter) {
+        counter_fn frequency = (counter_fn) api("kernel32.dll", "QueryPerformanceFrequency");
+        LARGE_INTEGER rate;
+
+        counter = (counter_fn) api("kernel32.dll", "QueryPerformanceCounter");
+        if (!counter || !frequency || !frequency(&rate) || !rate.QuadPart || !counter(&start)) {
+            counter = NULL;
+            return 0;
+        }
+        per_ms = (double) rate.QuadPart / 1000;
+    }
+    counter(&now);
+    return (double) (now.QuadPart - start.QuadPart) / per_ms;
+}
+
 void dev_trace(const char* area, const char* fmt, ...)
 {
     char text[900];

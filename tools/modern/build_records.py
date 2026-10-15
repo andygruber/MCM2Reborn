@@ -74,6 +74,7 @@ def worded_radio(screen, name, area, pictures, chosen, size=28):
 
 def build_scores(data):
     screen, board = full_screen(data, "HISCORES", "RECORDS", "HIGH SCORES")
+    screen.prune = False                    # its code is still the game's, which may ask for any of them
     # What the records are of: the game's title for them, beside the screen's.
     keys = {"Xywh": xywh((LEFT + kit.heading_ink("HIGH SCORES", 92) + 48, kit.TOP + 96, RIGHT, kit.TOP + 150)),
             "TextLMargin": "0", "TextTMargin": "0"}

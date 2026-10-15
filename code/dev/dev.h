@@ -59,6 +59,9 @@ void dev_install(void);
 /* A line in the log, prefixed with its area ("screen", "event", ...). */
 void dev_trace(const char* area, const char* fmt, ...);
 
+/* Milliseconds since the clock was first read (dev.c). */
+double dev_milliseconds(void);
+
 /* The mouse wheel moves a bike preview's camera (at 0x7F70 of its page) in or out: TRUE when
    it did, for the page to place its camera again (dlgprocs.c). */
 BOOL preview_zoom(unsigned char* page);

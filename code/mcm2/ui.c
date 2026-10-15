@@ -9880,7 +9880,13 @@ int __fastcall dialog_read(BYTE* self, void* edx_unused, void* data, DWORD size)
     r->more.select_box_colour = 0xFF000000;
     r->more.item_box_colour = 0xFF000000;
 
+#ifdef OPENMCM2_DEV
+    double pass_time[5];
+#endif
     for (pass = 0; pass < 4; pass++) {
+#ifdef OPENMCM2_DEV
+        pass_time[pass] = dev_milliseconds();
+#endif
         for (i = 0; i < FIELD(self, DLG_ENTRY_COUNT, int); i++) {
             BYTE* entry = self + DLG_ENTRIES + ENTRY_SIZE * i;
 
@@ -9908,6 +9914,15 @@ int __fastcall dialog_read(BYTE* self, void* edx_unused, void* data, DWORD size)
             }
         }
     }
+#ifdef OPENMCM2_DEV
+    /* What reading a layout costs: its settings, its pictures, its sounds, its controls. */
+    pass_time[4] = dev_milliseconds();
+    if (dev_settings.trace_display)
+        dev_trace("load", "%s: settings %d ms, %d pictures %d ms, sounds %d ms, controls %d ms",
+                  (char*) self + DLG_NAME, (int) (pass_time[1] - pass_time[0]),
+                  FIELD(self, DLG_CONTROL_COUNT, int), (int) (pass_time[2] - pass_time[1]),
+                  (int) (pass_time[3] - pass_time[2]), (int) (pass_time[4] - pass_time[3]));
+#endif
 
     /* The backdrop picture: the dialog becomes its size. */
     if (r->background_image[0]) {
