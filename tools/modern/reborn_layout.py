@@ -189,13 +189,14 @@ def well(board, area, line=True):
 class Screen:
     """The original archive `data`, and what is to change in its layout."""
 
-    def __init__(self, data, stem):
+    def __init__(self, data, stem, origin=(0, 0)):
         self.files = rs2_files(data)
         self.layout = next(n for n, _ in self.files if n.lower().endswith(".dtm"))
         blobs = dict(self.files)
         self.sections = read_dtm(blobs[self.layout].decode("latin-1"))
         self.names = {n for n, _ in self.sections}
         self.stem = stem
+        self.origin = origin                        # where its controls' places are from, on the screen
         self.pictures = {}                          # anim -> (image, mask of the 3D under it)
         self.keys, self.drops, self.added = {}, {}, []
         self.shown = []                             # (picture, where on the screen), for previews
@@ -225,9 +226,9 @@ class Screen:
         self.added.append((section, before, keys))
         self.names.add(section)
 
-    def button(self, name, area, pictures, origin=(0, 0), **more):
+    def button(self, name, area, pictures, origin=None, **more):
         """A button (or step arrow) at `area` on the screen, `origin` its anchor's corner."""
-        self.set(name, TEXT_KEYS, Xywh=xywh(area, origin),
+        self.set(name, TEXT_KEYS, Xywh=xywh(area, origin or self.origin),
                  **self.states(name, pictures, {"AnimNorm": "Up", "AnimFocus": "Lit", "AnimPush": "Down",
                                                 "AnimDisable": "Grey"}, at=area[:2]), **more)
 

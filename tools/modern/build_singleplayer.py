@@ -44,6 +44,7 @@ CARDS = [("CardSupercross", 3, "SUPERCROSS", "STADIUM", "LOADSX"),
          ("CardEnduro", 5, "ENDURO", "CHECKPOINTS", "LOADEND"),
          ("CardQuarry", 0, "STUNT QUARRY", "SCORE ATTACK", "LOADQUAR")]
 CARD_GROUP = 150
+TRACK_GROUP = 151
 
 # The bike page's stage, where the 3D shows.
 STAGE = (LEFT, PLACE[1], 1640, PLACE[3])
@@ -85,12 +86,13 @@ def keyed_outside(picture, points, at):
     return out
 
 
-def combo(screen, name, board, text_area, arrow=True, list_h=170, size=28, align="LEFT", origin=None):
-    """A drop-down list: its text in `text_area`, the arrow just after it when `arrow`, the list
-    below as wide as the text."""
+def combo(screen, name, board, text_area, arrow=True, list_h=170, size=28, align="LEFT", origin=None,
+          arrow_w=None):
+    """A drop-down list: its text in `text_area`, the arrow just after it when `arrow` (`arrow_w`
+    wide, square by default), the list below as wide as the text."""
     x0, y0, x1, y1 = text_area
     origin = origin or PLACE[:2]
-    h = y1 - y0
+    h = arrow_w or y1 - y0
     keys = {"Xywh": xywh(text_area, origin), "ListHeight": str(list_h), "TextLMargin": "18"}
     keys.update(font(size, PAPER, align))
     keys["SelectColor"] = colorref(ORANGE)
@@ -100,7 +102,7 @@ def combo(screen, name, board, text_area, arrow=True, list_h=170, size=28, align
     keys["AnimListBack"] = screen.picture("M%sList" % name, listing)
     if arrow:
         area = (x1 + 1, y0, x1 + 1 + h, y1)
-        states = arrow_states(board, area, "down")
+        states = arrow_states(board, area, "down", well=arrow_w is None)
         for key, state in (("AnimNorm", "Up"), ("AnimFocus", "Lit"), ("AnimPush", "Down"), ("AnimDisable", "Grey")):
             screen.picture("M%s%s" % (name, state), states[state])
             keys[key] = '"M%s%s"' % (name, state)
@@ -245,18 +247,43 @@ def event_cards(screen, board, ui):
 
 
 def track_panel(screen, board):
+    """The tracks: TrackList, in a group of its own with its scroll bar and arrows (in the game's
+    track group, a scroll bar would scroll the track's picture too), kept by dlgprocs.c on the
+    track the game's list has."""
     area = (LEFT, 614, 900, PLACE[3])
     box(board, area, PANEL + (255,), 10)
     heading(board, "TRACKS", area[0] + 36, area[1] + 58, 30, ORANGE)
-    listing = (area[0] + 12, area[1] + 84, area[2] - 12, area[3] - 12)
-    keys = {"Type": "LISTBOX", "AttachId": "105", "Xywh": local(listing), "MaxItems": "100", "Selectable": "1",
-            "AllowWScroll": "-1", "TextLMargin": "24", "TextTMargin": "0", "SelectColor": colorref(ORANGE),
-            "SelectBoxColor": colorref(SELECTED), "ItemBoxColor": colorref(PANEL)}
+    bar_x0, bar_x1 = area[2] - 56, area[2] - 12
+    listing = (area[0] + 12, area[1] + 84, bar_x0 - 8, area[3] - 12)
+    keys = {"Type": "LISTBOX", "AttachId": str(TRACK_GROUP), "Xywh": local(listing), "MaxItems": "100",
+            "Selectable": "1", "AllowWScroll": "0", "TextLMargin": "24", "TextTMargin": "0",
+            "SelectColor": colorref(ORANGE), "SelectBoxColor": colorref(SELECTED), "ItemBoxColor": colorref(PANEL)}
     keys.update(font(34, SOFT))
     screen.add("TrackList", **keys)
     # Rows like the game's, for the preview.
     for k, words in enumerate(["01   Bela's Backwards", "02   Third Degree Berms", "03   El Centro"]):
         screen.shown.append((text_row(listing, words, k == 1), (listing[0], int(listing[1] + k * 46))))
+
+    up = (bar_x0, listing[1], bar_x1, listing[1] + 44)
+    down = (bar_x0, listing[3] - 44, bar_x1, listing[3])
+    for name, where, kind, way in (("TrackUp", up, "SCROLLUP", "up"), ("TrackDown", down, "SCROLLDOWN", "down")):
+        screen.add(name, Type=kind, AttachId=str(TRACK_GROUP))
+        screen.button(name, where, arrow_states(board, where, way))
+    bar = (bar_x0, up[3] + 8, bar_x1, down[1] - 8)
+    groove = under(board, bar)
+    ImageDraw.Draw(groove).rounded_rectangle((groove.width // 2 - 3, 0, groove.width // 2 + 3, groove.height - 1), 3,
+                                             fill=RAISED + (255,))
+    # The thumb on the groove's middle, which is the same all the way down: see-through, it
+    # would show the photos through the panel.
+    middle = groove.height // 2 - 36
+    thumb = groove.crop((0, middle, groove.width, middle + 72))
+    ImageDraw.Draw(thumb).rounded_rectangle((thumb.width // 2 - 7, 0, thumb.width // 2 + 7, 71), 7,
+                                            fill=ORANGE + (255,))
+    groove_name = screen.picture("MTrackBar", groove)
+    screen.add("TrackSlider", Type="VSCROLLBAR", AttachId=str(TRACK_GROUP), Xywh=local(bar), AnimNorm=groove_name,
+               AnimFocus=groove_name, AnimPush=groove_name, AnimDisable=groove_name,
+               AnimThumb=screen.picture("MTrackThumb", thumb))
+    screen.shown += [(groove, bar[:2]), (thumb, bar[:2])]
 
 
 def text_row(listing, words, chosen):
@@ -369,7 +396,7 @@ def settings_column(screen, board):
 
 
 def build_event(data, ui):
-    screen = Screen(data, "SPEVENT")
+    screen = Screen(data, "SPEVENT", PLACE[:2])
     board = ground()
     event_cards(screen, board, ui)
     track_panel(screen, board)
@@ -382,7 +409,7 @@ def build_event(data, ui):
 # ---- The bike page ----
 
 def build_bike(data):
-    screen = Screen(data, "SPBIKER")
+    screen = Screen(data, "SPBIKER", PLACE[:2])
     board = ground()
     window = Image.new("L", (W, H))
     ImageDraw.Draw(window).rectangle((STAGE[0], STAGE[1], STAGE[2] - 1, STAGE[3] - 1), fill=255)
@@ -410,12 +437,18 @@ def build_bike(data):
     picker(PLACE[1] + 252, "BIKE", ("BikeLeft", "DDLBikes", "BikeRight"))
 
     heading(board, "MACHINE", x0, PLACE[1] + 392, 28, ORANGE)
+    # The engine's size shows only for a bike that has a choice (dlgprocs.c, with TxtEngineSize):
+    # its well is drawn by the two, the name on TxtEngineSize and the rest under the list's text.
     engine = (x0, PLACE[1] + 412, x1, PLACE[1] + 488)
-    chip(board, engine, "ENGINE")
+    engine_board = board.copy()
+    chip(engine_board, engine, "ENGINE")
+    name_area = (engine[0], engine[1], engine[0] + 180, engine[3])
+    screen.set("TxtEngineSize", ("Text", "LocalTextId"), Xywh=local(name_area),
+               AnimNorm=screen.picture("MTxtEngineSize", under(engine_board, name_area)))
+    screen.shown.append((under(engine_board, name_area), name_area[:2]))
+    combo(screen, "DDLEngineSize", engine_board, (name_area[2], engine[1], engine[2] - side - 1, engine[3]),
+          list_h=230, arrow_w=side)
     inset = (76 - side) / 2
-    combo(screen, "DDLEngineSize", board, (engine[0] + 180, engine[1] + inset, engine[2] - 12 - side - 1,
-                                           engine[3] - inset), list_h=230)
-    screen.hide("TxtEngineSize")
 
     plate = (x0, engine[3] + 12, x1, engine[3] + 88)
     chip(board, plate, "PLATE NUMBER")
@@ -439,7 +472,7 @@ def build_bike(data):
 # ---- The race information page ----
 
 def build_results(data):
-    screen = Screen(data, "SPRINFO")
+    screen = Screen(data, "SPRINFO", PLACE[:2])
     board = ground()
     area = PLACE
     kit.panel(board, area, 230)

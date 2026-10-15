@@ -49,6 +49,30 @@ static void menu_place(BYTE* screen, RECT* area)
 
 static BOOL dialog_view(BYTE* dialog, RECT* view);
 
+#define MOUSE_VTABLE    ((void*) 0x0055B208)
+#define MOUSE_WHEEL     (0x2D8 + 8)     /* its DIMOUSESTATE's lZ: the wheel since the last poll */
+#define WHEEL_NOTCH     120
+
+int menu_wheel(void* user, void* object)
+{
+    static DWORD read_in;               /* the frame the wheel was last read in */
+    static LONG partial;                /* what a fine-stepping wheel has moved short of a notch */
+    static int notches;
+    gui_input* input = user ? ((gui_user*) user)->input : NULL;
+    BYTE* mouse = input ? input->device : NULL;
+    DWORD frame = FIELD(object_screen(object), 0x1C, DWORD);
+
+    if (!mouse || *(void**) mouse != MOUSE_VTABLE)
+        return 0;
+    if (frame != read_in) {
+        read_in = frame;
+        partial += FIELD(mouse, MOUSE_WHEEL, LONG);
+        notches = partial / WHEEL_NOTCH;
+        partial -= notches * WHEEL_NOTCH;
+    }
+    return notches;
+}
+
 /* The same for a rectangle on `dialog`'s screen: the bike previews' views, which the game gives
    in the original's pixels. A modern layout's View is where its own art leaves room for it. */
 void menu_place_view(BYTE* dialog, RECT* view)
@@ -6543,6 +6567,15 @@ int __fastcall list_tick(BYTE* self, void* edx_unused, DWORD time)
         }
     }
 
+#ifdef OPENMCM2_DEV
+    /* The wheel scrolls the list under the pointer, a row a notch. */
+    if (control_user(self)->focus == self && list_count(self) > FIELD(self, LIST_ROWS, int)) {
+        int notches = menu_wheel(control_user(self), self);
+
+        if (notches)
+            list_scroll(self, NULL, FIELD(self, LIST_FIRST, int) - notches, TRUE);
+    }
+#endif
     FIELD(self, LIST_HOVER, int) = -1;
     pointer = (gui_input*) control_user(self)->input;
     if (pointer && control_user(self)->focus == self && FIELD(self, LIST_CLICKABLE, int)) {

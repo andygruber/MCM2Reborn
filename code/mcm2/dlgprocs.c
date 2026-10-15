@@ -2145,9 +2145,10 @@ __declspec(noinline) void __fastcall sp_event_refresh(BYTE* self);
 #ifdef OPENMCM2_DEV
 /*
     MCM2:Reborn's event page (tools/modern/build_singleplayer.py) has event cards in place of
-    EventTypeDropDown, and TrackList beside the game's track list: in that list's group, so a
-    track chosen in either is chosen in both, and filled here with the same tracks. A layout
-    without them is left as it is.
+    EventTypeDropDown, and TrackList beside the game's track list: filled here with the same
+    tracks and kept on the same one. It is in a group of its own with its scroll bar, which in
+    the game's track group would scroll the track's picture too. A layout without them is left
+    as it is.
 */
 static const struct {
     const char* name;
@@ -2183,6 +2184,16 @@ static void event_page_show(BYTE* self)
         list_add_text(mirror, NULL, row, list_data(tracks, NULL, i), 0);
     }
     list_select_all(mirror, NULL, list_selected(tracks));
+}
+
+/* TrackList on the track the game's list has, after the arrows or that list chose one. */
+static void track_list_follow(BYTE* self)
+{
+    BYTE* tracks = combo_list(self, LIST_TEXT_BOX);
+    BYTE* mirror = dialog_find_control(self, NULL, "TrackList", 0);
+
+    if (mirror && list_selected(mirror) != list_selected(tracks))
+        list_select_all(mirror, NULL, list_selected(tracks));
 }
 
 /* A card clicked: its event chosen, as EventTypeDropDown's would be. TRUE when it was one. */
@@ -2542,6 +2553,7 @@ void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
 #ifdef OPENMCM2_DEV
         else if (clicked(event, "TrackList")) {
             list = combo_list(self, LIST_TEXT_BOX);
+            list_select_all(list, NULL, list_selected(dialog_find_control(self, NULL, "TrackList", 0)));
             ghosts_fill(self);
             text_copy((char*) game_main + race_kind * 0x80 + 0xC6C, list_text(list, NULL, -1));
         }
@@ -2584,6 +2596,10 @@ void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
         if (FIELD(race_settings, SET_MODE, int) == GHOST_RACE)
             ghosts_fill(self);
     }
+#ifdef OPENMCM2_DEV
+    if (event->type == EVENT_CLICK || event->type == EVENT_SELECT)
+        track_list_follow(self);
+#endif
 }
 
 /* ---- Single player: the screen ---- */
@@ -4496,41 +4512,20 @@ void __fastcall bike_rider_handle(BYTE* self, void* edx_unused, ui_event* event)
 }
 
 #ifdef OPENMCM2_DEV
-#define MOUSE_VTABLE    ((void*) 0x0055B208)
-#define MOUSE_WHEEL     (0x2D8 + 8)     /* its DIMOUSESTATE's lZ: the wheel since the last poll */
-#define WHEEL_NOTCH     120
 #define ZOOM_STEP       0.9f            /* each notch towards the bike */
 #define ZOOM_NEAREST    5.0f
 #define ZOOM_FARTHEST   24.0f
 
 BOOL preview_zoom(BYTE* page)
 {
-    static DWORD read_in;               /* the frame the wheel was last read in */
-    static LONG partial;                /* what a fine-stepping wheel has moved short of a notch */
-    gui_user* user = FIELD(page, 0x34, gui_user*);
-    BYTE* mouse = user && user->input ? user->input->device : NULL;
-    DWORD frame = FIELD(object_screen(page), 0x1C, DWORD);
+    int notches = menu_wheel(FIELD(page, 0x34, gui_user*), page);
     float distance = FIELD(page, BR_DISTANCE, float);
 
-    if (mouse && *(void**) mouse != MOUSE_VTABLE)
-    {
-        static BOOL told;
-
-        if (!told)
-            dev_trace("display", "preview zoom: the cursor's device is not the mouse (vtable %08X)",
-                      (DWORD) *(void**) mouse);
-        told = TRUE;
+    if (!notches)
         return FALSE;
-    }
-    if (!mouse || frame == read_in)
-        return FALSE;
-    read_in = frame;
-    partial += FIELD(mouse, MOUSE_WHEEL, LONG);
-    if (partial > -WHEEL_NOTCH && partial < WHEEL_NOTCH)
-        return FALSE;
-    for (; partial >= WHEEL_NOTCH; partial -= WHEEL_NOTCH)
+    for (; notches > 0; notches--)
         distance *= ZOOM_STEP;
-    for (; partial <= -WHEEL_NOTCH; partial += WHEEL_NOTCH)
+    for (; notches < 0; notches++)
         distance /= ZOOM_STEP;
     FIELD(page, BR_DISTANCE, float) = min(max(distance, ZOOM_NEAREST), ZOOM_FARTHEST);
     return TRUE;

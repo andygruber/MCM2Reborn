@@ -63,6 +63,10 @@ void dev_trace(const char* area, const char* fmt, ...);
    it did, for the page to place its camera again (dlgprocs.c). */
 BOOL preview_zoom(unsigned char* page);
 
+/* The mouse wheel's notches turned since the last frame, away from you positive: the same to
+   every caller in a frame. `user` is the gui_user, `object` anything on the screen (ui.c). */
+int menu_wheel(void* user, void* object);
+
 /* A rectangle on the 640x480 menu screen, where the scaled menus put it (ui.c). */
 void menu_place_view(unsigned char* dialog, RECT* view);
 
