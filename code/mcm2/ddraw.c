@@ -32,7 +32,7 @@ static struct
     counter_fn    now;
     LARGE_INTEGER frequency, frame, report;
     LONG          frames, worst, gdi, read;         /* in counter ticks */
-    LONG          gdi_calls, read_pixels, blit_pixels, converted;
+    LONG          gdi_calls, reads, whole_reads, read_pixels, blit_pixels, converted;
 } g_perf;
 
 static void perf_mark(LARGE_INTEGER* t)
@@ -87,14 +87,16 @@ static void perf_frame(void)
         return;
 
     n = g_perf.frames;
-    log_line("[perf] %ld fps, worst frame %ld.%ld ms; a frame: %ld DCs in %ld.%ld ms, %ld px read back"
-             " in %ld.%ld ms, %ld px blitted in memory, %ld px converted", n,
+    log_line("[perf] %ld fps, worst frame %ld.%ld ms; a frame: %ld DCs in %ld.%ld ms, %ld readbacks"
+             " (%ld whole) of %ld px in %ld.%ld ms, %ld px blitted in memory, %ld px converted", n,
              perf_tenths(g_perf.worst) / 10, perf_tenths(g_perf.worst) % 10, g_perf.gdi_calls / n,
-             perf_tenths(g_perf.gdi / n) / 10, perf_tenths(g_perf.gdi / n) % 10, g_perf.read_pixels / n,
+             perf_tenths(g_perf.gdi / n) / 10, perf_tenths(g_perf.gdi / n) % 10, g_perf.reads / n,
+             g_perf.whole_reads / n, g_perf.read_pixels / n,
              perf_tenths(g_perf.read / n) / 10, perf_tenths(g_perf.read / n) % 10,
              g_perf.blit_pixels / n, g_perf.converted / n);
     g_perf.frames = g_perf.worst = g_perf.gdi = g_perf.read = 0;
-    g_perf.gdi_calls = g_perf.read_pixels = g_perf.blit_pixels = g_perf.converted = 0;
+    g_perf.gdi_calls = g_perf.reads = g_perf.whole_reads = g_perf.read_pixels = 0;
+    g_perf.blit_pixels = g_perf.converted = 0;
     perf_mark(&g_perf.report);
 }
 
@@ -899,6 +901,8 @@ static void target_read(surface* s)
         return;
     }
 
+    PERF_COUNT(reads, 1);
+    PERF_COUNT(whole_reads, !s->pixels_current);
     PERF_COUNT(read_pixels, w * h);
     target_bind(s);
     gl.PixelStorei(GL_PACK_ALIGNMENT, 4);

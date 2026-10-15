@@ -210,18 +210,47 @@ static void colour_of(DWORD argb, float* rgba)
     rgba[3] = (argb >> 24) / 255.0f;
 }
 
-/* Where a draw can land: the viewport, or anywhere for pretransformed vertices. */
-static RECT drawn_part(device* d, BOOL pretransformed)
+/* Where a draw can land: the viewport, or for `count` pretransformed vertices (NULL: none
+   given) the box around their screen positions, a pixel wider for the edges they cover. */
+static RECT drawn_part(device* d, const BYTE* vertices, DWORD count, DWORD stride)
 {
     const D3DVIEWPORT7* v = &d->viewport;
     RECT r = { 0, 0, (LONG) d->target->desc.dwWidth, (LONG) d->target->desc.dwHeight };
+    float left, top, right, bottom;
+    DWORD i;
 
-    if (!pretransformed)
+    if (!vertices)
     {
         r.left = (LONG) v->dwX;
         r.top = (LONG) v->dwY;
         r.right = (LONG) (v->dwX + v->dwWidth);
         r.bottom = (LONG) (v->dwY + v->dwHeight);
+        return r;
+    }
+    if (!count)
+    {
+        r.right = r.bottom = 0;
+        return r;
+    }
+    left = right = ((const float*) vertices)[0];
+    top = bottom = ((const float*) vertices)[1];
+    for (i = 1; i < count; ++i)
+    {
+        const float* at = (const float*) (vertices + (SIZE_T) i * stride);
+
+        left = min(left, at[0]);
+        right = max(right, at[0]);
+        top = min(top, at[1]);
+        bottom = max(bottom, at[1]);
+    }
+    /* Positions far off the screen (or not numbers) leave the whole of it. */
+    if (left >= (float) r.left - 1 && top >= (float) r.top - 1
+        && right <= (float) r.right + 1 && bottom <= (float) r.bottom + 1)
+    {
+        r.left = max(r.left, (LONG) left - 1);
+        r.top = max(r.top, (LONG) top - 1);
+        r.right = min(r.right, (LONG) right + 2);
+        r.bottom = min(r.bottom, (LONG) bottom + 2);
     }
     return r;
 }
@@ -615,7 +644,7 @@ static HRESULT draw(device* d, D3DPRIMITIVETYPE type, DWORD fvf, const BYTE* ver
     if (!d->target)
         return D3DERR_SCENE_NOT_IN_SCENE;
 
-    part = drawn_part(d, (fvf & D3DFVF_XYZRHW) != 0);
+    part = drawn_part(d, (fvf & D3DFVF_XYZRHW) ? vertices : NULL, count, layout_of(fvf).stride);
     target_bind_part(d->target, &part);
     v = convert(d, vertices, count, fvf, NULL);
     if (!v)
@@ -643,7 +672,8 @@ static HRESULT draw_buffer(device* d, D3DPRIMITIVETYPE type, vertex_buffer* vb, 
     if (start + count > vb->desc.dwNumVertices)
         return DDERR_INVALIDPARAMS;
 
-    part = drawn_part(d, !vb->processed && l.pretransformed);
+    part = drawn_part(d, !vb->processed && l.pretransformed ? vb->data + start * l.stride : NULL,
+                      count, l.stride);
     target_bind_part(d->target, &part);
     if (vb->processed)
     {
@@ -832,8 +862,25 @@ static HRESULT WINAPI v_Clear(IDirect3DDevice7* self, DWORD count, LPD3DRECT rec
         return D3D_OK;
 
     {
-        RECT part = drawn_part(d, count != 0);      /* rectangles of its own: anywhere */
+        /* What changes colour: the rectangles, or the viewport, and nothing for depth alone. */
+        RECT part = drawn_part(d, NULL, 0, 0);
 
+        if (!(flags & D3DCLEAR_TARGET))
+            part.right = part.bottom = 0;
+        else if (count)
+        {
+            part.left = rects[0].x1;
+            part.top = rects[0].y1;
+            part.right = rects[0].x2;
+            part.bottom = rects[0].y2;
+            for (i = 1; i < count; ++i)
+            {
+                part.left = min(part.left, rects[i].x1);
+                part.top = min(part.top, rects[i].y1);
+                part.right = max(part.right, rects[i].x2);
+                part.bottom = max(part.bottom, rects[i].y2);
+            }
+        }
         target_bind_part(d->target, &part);
     }
     colour_of(colour, rgba);
