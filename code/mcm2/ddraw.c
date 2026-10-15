@@ -33,6 +33,8 @@ static struct
     LARGE_INTEGER frequency, frame, report;
     LONG          frames, worst, gdi, read;         /* in counter ticks */
     LONG          gdi_calls, reads, whole_reads, read_pixels, blit_pixels, converted;
+    void*         dropped_by;   /* the last target_bind caller that left a memory image behind */
+    void*         whole_after;  /* ...as it was at the last whole readback */
 } g_perf;
 
 static void perf_mark(LARGE_INTEGER* t)
@@ -94,6 +96,8 @@ static void perf_frame(void)
              g_perf.whole_reads / n, g_perf.read_pixels / n,
              perf_tenths(g_perf.read / n) / 10, perf_tenths(g_perf.read / n) % 10,
              g_perf.blit_pixels / n, g_perf.converted / n);
+    if (g_perf.whole_reads)
+        log_line("[perf] the whole readbacks followed a bind from %08X", (DWORD) g_perf.whole_after);
     g_perf.frames = g_perf.worst = g_perf.gdi = g_perf.read = 0;
     g_perf.gdi_calls = g_perf.reads = g_perf.whole_reads = g_perf.read_pixels = 0;
     g_perf.blit_pixels = g_perf.converted = 0;
@@ -810,6 +814,10 @@ void target_bind(surface* target)
 {
     if (!ensure_gl() || !target)
         return;
+#ifdef OPENMCM2_DEV
+    if (target->pixels_current)
+        g_perf.dropped_by = _ReturnAddress();
+#endif
     target->pixels_current = FALSE;
 
     if (!target->fbo)
@@ -903,6 +911,10 @@ static void target_read(surface* s)
 
     PERF_COUNT(reads, 1);
     PERF_COUNT(whole_reads, !s->pixels_current);
+#ifdef OPENMCM2_DEV
+    if (!s->pixels_current)
+        g_perf.whole_after = g_perf.dropped_by;
+#endif
     PERF_COUNT(read_pixels, w * h);
     target_bind(s);
     gl.PixelStorei(GL_PACK_ALIGNMENT, 4);
@@ -1561,18 +1573,21 @@ static void fill_target_and_memory(surface* to, const RECT* r, WORD colour)
     }
 }
 
-/* One render target onto another, through the framebuffers. */
+/* One render target onto another, through the framebuffers: only `t` of `to` is ahead of its
+   memory image after, and `from` is not drawn on at all. */
 static void blit_targets(surface* to, const RECT* t, surface* from, const RECT* f)
 {
-    target_bind(to);
-    target_bind(from);
+    static const RECT nothing = { 0, 0, 0, 0 };
+
+    target_bind_part(to, t);
+    target_bind_part(from, &nothing);
     gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, to->fbo);
     gl.BindFramebuffer(GL_READ_FRAMEBUFFER, from->fbo);
     gl.BlitFramebuffer(f->left, (GLint) from->desc.dwHeight - f->bottom, f->right, (GLint) from->desc.dwHeight - f->top,
                        t->left, (GLint) to->desc.dwHeight - t->bottom, t->right, (GLint) to->desc.dwHeight - t->top,
                        GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    target_bind(to);
+    target_bind_part(to, &nothing);
     g_state_lost = TRUE;
 }
 
