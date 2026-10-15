@@ -16,8 +16,8 @@ from pathlib import Path
 
 import reborn_kit as kit
 from reborn_kit import EDGE, GREY, LEFT, ORANGE, PAPER, RIGHT, box, heading, sub
-from reborn_layout import Screen, button_states, clear, font, segment_states, under, xywh
-from reborn_pages import (FOOT, PLACE, build_base, build_bike, chip, footer, full_info, full_screen, ground,
+from reborn_layout import Screen, button_states, font, segment_states, under, xywh
+from reborn_pages import (FOOT, PLACE, build_base, build_bike, card_ground, card_info, chip, footer, full_info, full_screen, ground,
                           info_row, local, page_info, preview, radio, scroll_bar, stepper, table, text_button)
 
 TABS = ["TabNext", "TabBikeRider", "TabStandings"]          # the pages' order (procircuitprocs.c)
@@ -132,18 +132,8 @@ def build_new(data):
         x1 = w - 48 - k * 340
         where = (x1 - 320, y, x1, y + 72)
         screen.button(control, where, button_states(board, where, words, primary=primary, size=32))
-    screen.set("Set_Information", BackgroundImage=screen.picture("MBack", board), ScreenWidth=str(w),
-               ScreenHeight=str(h), ArtScale="3", Xywh=xywh((0, 0, w, h)), FontName='"Helvetica"',
-               DlgAlignH="CENTER", DlgAlignV="MIDDLE")
+    card_info(screen, board)
     return screen, board, None
-
-
-def card_ground(w, h):
-    """A card's ground: solid, with an orange edge (what is see-through shows the photos, not
-    the screen under it)."""
-    board = clear((w, h))
-    box(board, (0, 0, w - 1, h - 1), (14, 15, 18, 255), 4, ORANGE + (255,))
-    return board
 
 
 # ---- PCC and its pages ----

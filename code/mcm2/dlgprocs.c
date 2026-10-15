@@ -1777,6 +1777,10 @@ void __fastcall records_filter_show(BYTE* self, void* edx_unused, int kind)
     BYTE* panel;
 
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (kind == FILTER_GHOSTS || kind == FILTER_REPLAYS)
+        page_title_show(self, kind == FILTER_GHOSTS ? 0 : 1);
+#endif
     if (FIELD(self, 0x7F58, BYTE*) && kind != FILTER_GHOSTS)
         filter_close(self, 0x7F58);
     if (FIELD(self, 0x7F5C, BYTE*) && kind != FILTER_REPLAYS)
@@ -1823,6 +1827,10 @@ static void tab_setup(BYTE* self, const char* name, UINT id)
 {
     BYTE* tab = dialog_find_control(self, NULL, name, TAB_CONTROL);
 
+#ifdef OPENMCM2_DEV
+    if (menu_reborn(self))                      /* its tabs' words are in their pictures */
+        return;
+#endif
     option_load_text(tab, NULL, 0, game_language, id);
     option_load_text(tab, NULL, 1, game_language, id);
     control_set_align(tab, NULL, 0x22);

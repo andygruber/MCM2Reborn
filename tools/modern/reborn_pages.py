@@ -220,6 +220,22 @@ def full_screen(data, stem, kicker, title):
     return screen, board
 
 
+def card_ground(w, h):
+    """A card's ground: solid, with an orange edge (what is see-through shows the photos, not
+    the screen under it)."""
+    board = clear((w, h))
+    box(board, (0, 0, w - 1, h - 1), (14, 15, 18, 255), 4, ORANGE + (255,))
+    return board
+
+
+def card_info(screen, board):
+    """A card's own keys: its ground and size, in the middle of the screen it opens over."""
+    w, h = board.size
+    screen.set("Set_Information", BackgroundImage=screen.picture("MBack", board), ScreenWidth=str(w),
+               ScreenHeight=str(h), ArtScale=str(ART), Xywh=xywh((0, 0, w, h)), FontName='"Helvetica"',
+               DlgAlignH="CENTER", DlgAlignV="MIDDLE")
+
+
 def scroll_bar(screen, board, name, bar, origin=None, anchor=None):
     """A slider (VSCROLLBAR, or HSCROLLBAR when `bar` is wider than tall) in `bar`: a groove and
     an orange thumb, the thumb cut from the groove's middle (see-through, it would show the
