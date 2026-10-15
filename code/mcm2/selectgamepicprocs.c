@@ -2814,6 +2814,10 @@ int __fastcall mp_preview_tick(BYTE* self, void* edx_unused, float seconds)
     } else if (!FIELD(self, BR_MANUAL, int)) {
         mp_preview_orbit(self, seconds * TURN_PER_SECOND);
     }
+#ifdef OPENMCM2_DEV
+    if (preview_zoom(self))
+        mp_preview_orbit(self, 0.0f);
+#endif
 
     model = session_rider;
     VIRTUAL(model, 0x1C, model_step)(model, NULL, seconds, 0, 0);

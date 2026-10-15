@@ -4344,6 +4344,48 @@ void __fastcall bike_rider_handle(BYTE* self, void* edx_unused, ui_event* event)
     }
 }
 
+#ifdef OPENMCM2_DEV
+#define MOUSE_VTABLE    ((void*) 0x0055B208)
+#define MOUSE_WHEEL     (0x2D8 + 8)     /* its DIMOUSESTATE's lZ: the wheel since the last poll */
+#define WHEEL_NOTCH     120
+#define ZOOM_STEP       0.9f            /* each notch towards the bike */
+#define ZOOM_NEAREST    5.0f
+#define ZOOM_FARTHEST   24.0f
+
+BOOL preview_zoom(BYTE* page)
+{
+    static DWORD read_in;               /* the frame the wheel was last read in */
+    static LONG partial;                /* what a fine-stepping wheel has moved short of a notch */
+    gui_user* user = FIELD(page, 0x34, gui_user*);
+    BYTE* mouse = user && user->input ? user->input->device : NULL;
+    DWORD frame = FIELD(object_screen(page), 0x1C, DWORD);
+    float distance = FIELD(page, BR_DISTANCE, float);
+
+    if (mouse && *(void**) mouse != MOUSE_VTABLE)
+    {
+        static BOOL told;
+
+        if (!told)
+            dev_trace("display", "preview zoom: the cursor's device is not the mouse (vtable %08X)",
+                      (DWORD) *(void**) mouse);
+        told = TRUE;
+        return FALSE;
+    }
+    if (!mouse || frame == read_in)
+        return FALSE;
+    read_in = frame;
+    partial += FIELD(mouse, MOUSE_WHEEL, LONG);
+    if (partial > -WHEEL_NOTCH && partial < WHEEL_NOTCH)
+        return FALSE;
+    for (; partial >= WHEEL_NOTCH; partial -= WHEEL_NOTCH)
+        distance *= ZOOM_STEP;
+    for (; partial <= -WHEEL_NOTCH; partial += WHEEL_NOTCH)
+        distance /= ZOOM_STEP;
+    FIELD(page, BR_DISTANCE, float) = min(max(distance, ZOOM_NEAREST), ZOOM_FARTHEST);
+    return TRUE;
+}
+#endif
+
 /* Turn the camera about the session's point by `angle`, keeping its distance; it looks on. */
 static void preview_orbit(BYTE* self, float angle)
 {
@@ -4400,6 +4442,10 @@ int __fastcall preview_tick(BYTE* self, void* edx_unused, float seconds)
     } else if (!FIELD(self, BR_MANUAL, int)) {
         preview_orbit(self, seconds * TURN_PER_SECOND);
     }
+#ifdef OPENMCM2_DEV
+    if (preview_zoom(self))
+        preview_orbit(self, 0.0f);
+#endif
 
     model = session_rider;
     VIRTUAL(model, 0x1C, model_step)(model, NULL, seconds, 0, 0);

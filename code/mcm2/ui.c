@@ -8855,16 +8855,24 @@ static void reader_info(dialog_reader* r)
         }
     }
 
-    /* A screen made wider than 4:3 (the modern menus' 1920x1080) is its own area, centred. */
+    /*
+        A screen made wider than 4:3 (the modern menus' 1920x1080) is its own area: centred when
+        it is the whole screen, and where it was placed when it is drawn in another, whose window
+        for it is there (moved, it would leave part of that window that nothing draws).
+    */
     if (dev_settings.menus_widescreen && (FIELD(self, DLG_SCALED, int) || art > 1)
         && !FIELD(self, DLG_POPUP, int)
         && FIELD(self, DLG_DESIGN_W, int) * 3 > FIELD(self, DLG_DESIGN_H, int) * 4) {
         RECT* area = &FIELD(self, DLG_AREA, RECT);
+        int screen_w = FIELD(object_screen(self), 0xC, int);
+        int screen_h = FIELD(object_screen(self), 0x10, int);
         int across = (int) (FIELD(self, DLG_DESIGN_W, int) * FIELD(self, 0x9C4, float));
         int down = (int) (FIELD(self, DLG_DESIGN_H, int) * FIELD(self, 0x9C8, float));
 
-        area->left = (FIELD(object_screen(self), 0xC, int) - across) / 2;
-        area->top = (FIELD(object_screen(self), 0x10, int) - down) / 2;
+        if (across >= screen_w || down >= screen_h) {
+            area->left = (screen_w - across) / 2;
+            area->top = (screen_h - down) / 2;
+        }
         area->right = area->left + across;
         area->bottom = area->top + down;
     }
