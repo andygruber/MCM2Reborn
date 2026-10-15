@@ -38,6 +38,7 @@ typedef struct surface
 
     BYTE*                pixels;        /* the surface in memory: textures, offscreen, a locked target */
     BOOL                 locked_target; /* a render target's pixels hold a Lock or GetDC readback */
+    BOOL                 pixels_current;    /* a render target's pixels are what it shows */
 
     GLuint               fbo, colour, depth;    /* a render target */
     GLuint               texture;       /* a texture, uploaded when `dirty` */

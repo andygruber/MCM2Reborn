@@ -5532,6 +5532,22 @@ void __fastcall list_set_data(BYTE* self, void* edx_unused, int index, DWORD dat
     list_entries(self)[index].data = data;
 }
 
+#ifdef OPENMCM2_DEV
+/*
+    A list's picture entry in a modern dialog that is the game's own (a track's, a bike's): its
+    row and picture ArtScale times its pixels, as the layout around it is.
+*/
+static int list_entry_art(BYTE* self, int index)
+{
+    list_entry* entry = &list_entries(self)[index];
+    int art = dialog_art(FIELD(self, CTL_DIALOG, BYTE*));
+
+    if (art <= 1 || (entry->kind != 2 && entry->kind != 3) || !entry->anim)
+        return 1;
+    return modern_marked(anim_current(entry->anim)->picture) ? 1 : art;
+}
+#endif
+
 /* The selected entry, or -1 when the list is empty. */
 PORT(0x004778E0)
 int __fastcall list_selected(BYTE* self)
@@ -5553,7 +5569,11 @@ int __fastcall list_height(BYTE* self, void* edx_unused, int index)
 {
     (void) edx_unused;
     if (list_count(self) && index > -1 && index < list_count(self))
+#ifdef OPENMCM2_DEV
+        return list_entries(self)[index].height * list_entry_art(self, index);
+#else
         return list_entries(self)[index].height;
+#endif
     return 0;
 }
 
@@ -6657,6 +6677,10 @@ int __fastcall list_render(BYTE* self)
                         break;
                     width = anim_current(anim)->width;
                     tall = anim_current(list_entries(self)[i].anim)->height;
+#ifdef OPENMCM2_DEV
+                    width *= list_entry_art(self, i);
+                    tall *= list_entry_art(self, i);
+#endif
                     cell.left = FIELD(self, LIST_SHIFT, int) + area.left;
                     cell.top = y;
                     cell.right = cell.left + width < area.right ? cell.left + width : area.right;

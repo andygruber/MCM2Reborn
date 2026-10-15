@@ -164,7 +164,12 @@ static void present(surface* target)
                        GL_COLOR_BUFFER_BIT, GL_LINEAR);
     gl_present();
 
-    target_bind(target);
+    {
+        BOOL current = target->pixels_current;
+
+        target_bind(target);
+        target->pixels_current = current;
+    }
     g_state_lost = TRUE;
 }
 
@@ -290,6 +295,7 @@ void target_bind(surface* target)
 {
     if (!ensure_gl() || !target)
         return;
+    target->pixels_current = FALSE;
 
     if (!target->fbo)
     {
@@ -382,6 +388,7 @@ static void target_read(surface* s)
             to[x] = pack(PF_565, from + x * 4);
     }
     mem_free(rgba);
+    s->pixels_current = TRUE;
 }
 
 /* Draw a rectangle of 16-bit memory pixels onto the bound render target, scaled to `to`. With
@@ -482,6 +489,43 @@ static void target_write(surface* s)
     RECT all = { 0, 0, (LONG) s->desc.dwWidth, (LONG) s->desc.dwHeight };
 
     draw_pixels(s, s->pixels, surface_pitch(s), PF_565, &all, &all, FALSE, 0);
+    s->pixels_current = TRUE;
+}
+
+/*
+    The part of a render target that changed in its memory image, from `before` (a copy taken
+    when it was handed out): drawn back, the rest left alone. Returns whether anything changed.
+*/
+static BOOL target_write_changes(surface* s, const BYTE* changed, const BYTE* before)
+{
+    LONG pitch = surface_pitch(s), w = (LONG) s->desc.dwWidth, h = (LONG) s->desc.dwHeight;
+    RECT part = { w, h, 0, 0 };
+    LONG x, y;
+
+    for (y = 0; y < h; ++y)
+    {
+        const WORD* a = (const WORD*) (changed + (SIZE_T) y * pitch);
+        const WORD* b = (const WORD*) (before + (SIZE_T) y * pitch);
+
+        if (!memcmp(a, b, (SIZE_T) w * 2))
+            continue;
+        if (y < part.top)
+            part.top = y;
+        part.bottom = y + 1;
+        for (x = 0; x < part.left && a[x] == b[x]; ++x)
+            ;
+        part.left = x;
+        for (x = w - 1; x >= part.right && a[x] == b[x]; --x)
+            ;
+        if (x + 1 > part.right)
+            part.right = x + 1;
+    }
+    if (part.left >= part.right)
+        return FALSE;
+    __movsb(s->pixels, changed, (SIZE_T) pitch * h);
+    draw_pixels(s, s->pixels, pitch, PF_565, &part, &part, FALSE, 0);
+    s->pixels_current = TRUE;
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ creating surfaces */
@@ -783,6 +827,19 @@ static void fill_target(surface* to, const RECT* r, WORD colour)
     g_state_lost = TRUE;
 }
 
+/* The same on a target, kept in its memory image when that is current. */
+static void fill_target_and_memory(surface* to, const RECT* r, WORD colour)
+{
+    BOOL current = to->pixels_current;
+
+    fill_target(to, r, colour);
+    if (current)
+    {
+        fill_memory(to, r, colour);
+        to->pixels_current = TRUE;
+    }
+}
+
 /* One render target onto another, through the framebuffers. */
 static void blit_targets(surface* to, const RECT* t, surface* from, const RECT* f)
 {
@@ -817,7 +874,16 @@ static HRESULT blit(surface* to, const RECT* to_rect, surface* from, const RECT*
     if (is_target(to) && is_target(from))
         blit_targets(to, &t, from, &f);
     else if (is_target(to))
+    {
+        BOOL current = to->pixels_current;
+
         draw_pixels(to, pixels(from), surface_pitch(from), from->format, &f, &t, keyed, from->key.dwColorSpaceLowValue);
+        if (current)
+        {
+            blit_memory(to, &t, from, &f, keyed);
+            to->pixels_current = TRUE;
+        }
+    }
     else
     {
         if (is_target(from))
@@ -838,7 +904,7 @@ static HRESULT WINAPI s_Blt(IDirectDrawSurface7* self, LPRECT to_rect, IDirectDr
         WORD colour = fx ? (WORD) fx->dwFillColor : 0;
 
         if (is_target(SELF))
-            fill_target(SELF, &r, colour);
+            fill_target_and_memory(SELF, &r, colour);
         else if (!is_primary(SELF))
             fill_memory(SELF, &r, colour);
         return DD_OK;
@@ -984,7 +1050,7 @@ static HRESULT WINAPI s_GetDC(IDirectDrawSurface7* self, HDC* out)
     if (!create_dib || !create_dc || !select || !pixels(s))
         return DDERR_GENERIC;
 
-    if (is_target(s))
+    if (is_target(s) && !s->pixels_current)
         target_read(s);
 
     bmi.h.biWidth = (LONG) s->desc.dwWidth;
@@ -1020,17 +1086,18 @@ static HRESULT WINAPI s_ReleaseDC(IDirectDrawSurface7* self, HDC dc)
 
     if (flush)
         flush();
-    __movsb(s->pixels, (const unsigned char*) s->dib_bits, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);
+    if (is_target(s))
+        target_write_changes(s, (const BYTE*) s->dib_bits, s->pixels);
+    else
+    {
+        __movsb(s->pixels, (const unsigned char*) s->dib_bits, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);
+        s->top->dirty = TRUE;
+    }
     select(s->dc, s->old_bitmap);
     delete_object(s->dib);
     delete_dc(s->dc);
     s->dc = NULL;
     s->dib = NULL;
-
-    if (is_target(s))
-        target_write(s);
-    else
-        s->top->dirty = TRUE;
     return DD_OK;
 }
 
@@ -1106,7 +1173,8 @@ static HRESULT WINAPI s_Lock(IDirectDrawSurface7* self, LPRECT rect, LPDDSURFACE
 
     if (is_target(s))
     {
-        target_read(s);
+        if (!s->pixels_current)
+            target_read(s);
         s->locked_target = !(flags & DDLOCK_READONLY);
     }
 

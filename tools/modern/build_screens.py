@@ -23,6 +23,10 @@ from mainmenu_art import (BLUE, CARD, CREAM, DIM, INK, ROW, ROW_LINE, YELLOW,   
 ART = 3                         # the pictures' pixels to the original's
 SIDE = 320                      # what a full screen gains each side: 1920 wide becomes 2560
 GROUND = (24, 26, 30)           # behind everything on a full screen
+PLATE = (44, 47, 53)            # a group's plate (Opponents, Laps...), on a card
+LIT_YELLOW = (255, 226, 92)
+PRIMARY = re.compile(r"(Start|Race(?!s)|Continue|Accept|Done|Play|OK$|Ok$)")
+PLATE_NAME = re.compile(r"(Box|Plate|Panel)$")
 FOLDER = "03_Modern\\"
 CREAM_BGR = str(0xE0ECF0)       # COLORREF of CREAM
 INK_BGR = str(0x141212)
@@ -120,7 +124,7 @@ def centred_text(img, words, f, colour, italic=True, left=None):
     text(img, words, x, y, f, colour, italic=italic)
 
 
-def button_states(size, ground, words):
+def button_states(size, ground, words, primary=False):
     """Up, Lit, Down, Grey of a button: a grey field with a blue edge, yellow when chosen; a small
     one is an outlined chip."""
     w, h = size
@@ -139,12 +143,18 @@ def button_states(size, ground, words):
             edge = {"Up": (78, 82, 88), "Lit": YELLOW, "Down": YELLOW, "Grey": (50, 52, 56)}[state]
             ink = {"Up": CREAM, "Lit": YELLOW, "Down": YELLOW_DOWN, "Grey": DIM}[state]
             d = ImageDraw.Draw(img)
-            if state == "Lit":
-                d.rectangle(chip_box, fill=(40, 42, 46, 255))
-            d.rectangle(chip_box, outline=edge + (255,), width=max(a(0.7), 2))
+            if primary and state != "Grey":
+                d.rectangle(chip_box, fill={"Up": YELLOW, "Lit": LIT_YELLOW,
+                                            "Down": YELLOW_DOWN}[state] + (255,))
+                ink = INK
+            else:
+                if state == "Lit":
+                    d.rectangle(chip_box, fill=(40, 42, 46, 255))
+                d.rectangle(chip_box, outline=edge + (255,), width=max(a(0.7), 2))
         else:
-            if state in ("Lit", "Down"):
-                fill(img, YELLOW if state == "Lit" else YELLOW_DOWN)
+            if state in ("Lit", "Down") or (primary and state == "Up"):
+                fill(img, {"Up": YELLOW, "Lit": LIT_YELLOW if primary else YELLOW,
+                           "Down": YELLOW_DOWN}[state])
                 ink = INK
             else:
                 fill(img, ROW)
@@ -229,11 +239,54 @@ def radio(size, ground, on, enabled):
     return img
 
 
-def backdrop(size, title, card):
-    """A screen's ground: flat dark, its title as a label; a panel's: a card edged in blue."""
+def backdrop(size, card, side, title):
+    """A screen's ground, or a panel's card."""
     img = new(size, CARD if card else GROUND)
+    w, h = img.size
     if card:
-        fill(img, BLUE, (0, 0, a(1.2) - 1, img.height - 1))
+        fill(img, BLUE, (0, 0, a(1.2) - 1, h - 1))
+        accent = Image.new("L", (w, max(a(0.8), 2)))
+        accent.putdata([int(255 * max(0.0, 1 - x / (w * 0.6))) for x in range(w)] * accent.height)
+        layer = Image.new("RGBA", accent.size, BLUE + (0,))
+        layer.putalpha(accent)
+        img.alpha_composite(layer)
+        return img
+    if side:
+        side_panel(img, side, title)
+    return img
+
+
+def side_panel(img, side, title):
+    """The left of a full screen: the game's name small, the screen's large, its last word yellow;
+    a hairline down each side of the 4:3."""
+    w, h = img.size
+    d = ImageDraw.Draw(img)
+    bar = max(a(0.9), 3) - 1
+    d.rectangle((0, 0, side - 1, bar), fill=YELLOW + (255,))
+    d.rectangle((w - side, 0, w - 1, bar), fill=YELLOW + (255,))
+    d.line([(side - 1, a(6)), (side - 1, h - a(6))], fill=ROW_LINE + (255,), width=1)
+    d.line([(w - side, a(6)), (w - side, h - a(6))], fill=ROW_LINE + (255,), width=1)
+    art.dash(img, art.s(36), art.s(70), 24, YELLOW)
+    text(img, "MOTOCROSS MADNESS 2", art.s(70), art.s(76), art.mono(12), (150, 152, 156), spacing=1)
+    if not title:
+        return
+    words = title.split()
+    size = 76
+    while size > 30 and max(width_of(word, art.font(size)) for word in words) > side - art.s(56):
+        size -= 2
+    f = art.font(size)
+    y = art.s(110) + f.getmetrics()[0]
+    for i, word in enumerate(words):
+        text(img, word, art.s(32), y, f, YELLOW if i == len(words) - 1 else CREAM, italic=True)
+        y += int(f.getmetrics()[0] * 1.02)
+    text(img, "OPENMCM2  /  DEVELOPMENT BUILD", w - art.s(28), h - art.s(30), art.mono(11), BLUE,
+         right=True, spacing=0.5)
+
+
+def plate(size):
+    """A group's plate: a lighter field with a blue edge."""
+    img = new(size, PLATE)
+    fill(img, BLUE, (0, 0, max(a(0.8), 2) - 1, img.height - 1))
     return img
 
 
@@ -280,7 +333,8 @@ def theme(dat, globals_, preview_dir):
 
     pictures, keys, drops = {}, {}, {}
     if background and background.lower() != "none":
-        pictures["MBack"] = backdrop((a(width) + 2 * side, a(height)), None, card)
+        pictures["MBack"] = backdrop((a(width) + 2 * side, a(height)), card, side,
+                                     TITLES.get(stem) if side else None)
     info_keys = {"ScreenWidth": str(a(width) + 2 * side), "ScreenHeight": str(a(height)),
                  "ArtScale": str(ART),
                  "FontName": '"Bahnschrift"', "TextColor": CREAM_BGR}
@@ -293,6 +347,7 @@ def theme(dat, globals_, preview_dir):
     keys["Set_Information"] = info_keys
 
     placed = []                                     # (picture, absolute box) for the preview
+    plates = set()                                  # the groups' plates, by lower-case name
     boxes = []                                      # every control's, in the original's pixels
     origins = {}
     for name, lines in sections:
@@ -306,6 +361,7 @@ def theme(dat, globals_, preview_dir):
         origins[name.lower()] = (ox + x, oy + y)
         boxes.append((ox + x, oy + y, ox + x + w, oy + y + h))
         size = (a(w), a(h))
+        on = PLATE if anchor and anchor.lower() in plates else ground
         k = {"Xywh": scale_xywh(value(lines, "Xywh"), 0 if anchor else side)}
         if value(lines, "FontHeight"):
             k["FontHeight"] = "%g" % (float(value(lines, "FontHeight")) * ART)
@@ -329,33 +385,34 @@ def theme(dat, globals_, preview_dir):
             made = {"AnimNorm": "Up", "AnimFocus": "Lit", "AnimPush": "Down", "AnimDisable": "Grey"}
             way = direction_of(name)
             if way and w < 2.4 * h:
-                states = arrow_states(size, ground, way)
+                states = arrow_states(size, on, way)
             else:
-                states = button_states(size, ground, label_of(name, lines))
+                states = button_states(size, on, label_of(name, lines),
+                                       bool(PRIMARY.search(name)))
             drops[name] = ("Text", "LocalTextId")
             for key, state in made.items():
                 pictures["M%s%s" % (name, state)] = states[state]
         elif kind in ("SCROLLUP", "SCROLLDOWN") and has("AnimNorm"):
             made = {"AnimNorm": "Up", "AnimFocus": "Lit", "AnimPush": "Down", "AnimDisable": "Grey"}
-            states = arrow_states(size, ground, "up" if kind == "SCROLLUP" else "down")
+            states = arrow_states(size, on, "up" if kind == "SCROLLUP" else "down")
             for key, state in made.items():
                 pictures["M%s%s" % (name, state)] = states[state]
         elif kind == "RADIOBUTTON" and has("AnimOn"):
             made = {"AnimOn": "On", "AnimOff": "Off", "AnimOnDisable": "OnGrey", "AnimOffDisable": "OffGrey"}
             for key, state in made.items():
-                pictures["M%s%s" % (name, state)] = radio(picture_of(key, True), ground,
+                pictures["M%s%s" % (name, state)] = radio(picture_of(key, True), on,
                                                           state.startswith("On"), "Grey" not in state)
         elif kind in ("VSCROLLBAR", "HSCROLLBAR"):
             for key, maker in (("AnimNorm", track), ("AnimThumb", thumb), ("AnimFocus", track),
                                ("AnimPush", track), ("AnimDisable", track)):
                 if has(key):
                     made[key] = key[4:]
-                    pictures["M%s%s" % (name, key[4:])] = maker(picture_of(key, key == "AnimThumb"), ground)
+                    pictures["M%s%s" % (name, key[4:])] = maker(picture_of(key, key == "AnimThumb"), on)
         elif kind == "DROPDOWNLIST":
             for key in ("AnimNorm", "AnimFocus", "AnimPush", "AnimDisable"):
                 if has(key):
                     made[key] = key[4:]
-                    img = field(size, ground, YELLOW if key == "AnimFocus" else BLUE)
+                    img = field(size, on, YELLOW if key == "AnimFocus" else BLUE)
                     w2, h2 = img.size
                     d = ImageDraw.Draw(img)
                     cx, cy = w2 - h2 // 2, h2 // 2
@@ -367,12 +424,19 @@ def theme(dat, globals_, preview_dir):
                                ("AnimScrollBack", track), ("AnimTextBack", lambda s, g: field(s, g, underline=False))):
                 if has(key):
                     made[key] = key[4:]
-                    pictures["M%s%s" % (name, key[4:])] = maker(picture_of(key, True), ground)
+                    pictures["M%s%s" % (name, key[4:])] = maker(picture_of(key, True), on)
         elif kind in ("LISTBOX", "EDITBOX", "STATICTEXT") and has("AnimNorm"):
             made = {"AnimNorm": "Back"}
-            pictures["M%sBack" % name] = field(size, ground, underline=kind == "EDITBOX")
+            pictures["M%sBack" % name] = field(size, on, underline=kind == "EDITBOX")
+        elif kind == "STATIC" and has("AnimNorm") and PLATE_NAME.search(name):
+            made = {"AnimNorm": "Plate"}
+            pictures["M%sPlate" % name] = plate(size)
+            plates.add(name.lower())
+            for fx in ("FXAnimIn", "FXAnimOut"):
+                if has(fx):
+                    k[fx] = '"M%sPlate"' % name
         elif kind == "STATIC" and has("AnimNorm"):
-            # Decoration: none. (As big colour-keyed outlines they cost every frame.)
+            # Other decoration: none.
             drops[name] = ("AnimNorm", "FXAnimIn", "FXAnimOut")
         for key, state in made.items():
             k[key] = '"M%s%s"' % (name, state)
@@ -381,8 +445,6 @@ def theme(dat, globals_, preview_dir):
             first = "M%s%s" % (name, made.get("AnimNorm") or made.get("AnimOff"))
             placed.append((pictures[first], (a(ox + x) + side, a(oy + y))))
 
-    if full and stem in TITLES and "MBack" in pictures             and not any(overlaps(TITLE_BOX, box) for box in boxes):
-        draw_title(pictures["MBack"], TITLES[stem], side)
 
     out = []
     for name, lines in sections:
