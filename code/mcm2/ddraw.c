@@ -161,7 +161,8 @@ static WORD pack(int format, const BYTE* rgba);
 /* The inks of red 29, 30 and 31: shadow, blue, light blue. */
 static const BYTE k_inks[3][3] = { { 0, 0, 0 }, { 34, 110, 255 }, { 110, 185, 255 } };
 
-/* A menu pixel, as unpacked, as the target keeps it over the photos: HOLE clear, an ink
+/* A menu pixel, as unpacked, as the target keeps it over the photos: HOLE clear (alpha 1 of
+   255, so a keyed draw's alpha test, which drops the key's 0, still writes it), an ink
    premultiplied, anything else opaque. */
 static void photo_pixel(BYTE* rgba)
 {
@@ -174,7 +175,10 @@ static void photo_pixel(BYTE* rgba)
     if (red == 31 && blue >= 30)
     {
         if (blue == 30)
-            rgba[0] = rgba[1] = rgba[2] = rgba[3] = 0;
+        {
+            rgba[0] = rgba[1] = rgba[2] = 0;
+            rgba[3] = 1;
+        }
         return;
     }
     amount = red == 31 ? (blue + 1) * 255 / 30 : (blue + 1) * 255 / 32;
@@ -209,7 +213,7 @@ static WORD photo_code(const BYTE* rgba)
     int best = 0, n, i;
     long nearest = -1;
 
-    if (!rgba[3])
+    if (rgba[3] < 4)
         return 31 << 11 | 30;
     for (i = 0; i < 3; ++i)
     {
@@ -833,21 +837,17 @@ static const BYTE* ink_table(int format)
     return *made;
 }
 
-/* Draw a rectangle of 16-bit memory pixels onto the bound render target, scaled to `to`. With
-   `keyed`, pixels matching `key` are left out. */
-static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int format, const RECT* part,
-                        const RECT* to, BOOL keyed, DWORD key, BOOL inks)
+/* A rectangle of 16-bit memory pixels as 8-bit RGBA, w x h, in a new buffer (NULL when out of
+   memory). With `keyed`, pixels matching `key` get no alpha; with `inks`, see photo_pixel. */
+static BYTE* convert_pixels(const BYTE* from, LONG pitch, int format, const RECT* part, BOOL keyed,
+                            DWORD key, BOOL inks)
 {
     LONG w = part->right - part->left, h = part->bottom - part->top, x, y;
-    BYTE* rgba = (BYTE*) mem_alloc((SIZE_T) w * h * 4);
+    BYTE* rgba = w > 0 && h > 0 ? (BYTE*) mem_alloc((SIZE_T) w * h * 4) : NULL;
     const BYTE* inked = inks ? ink_table(format) : NULL;
 
-    if (!rgba || w <= 0 || h <= 0)
-    {
-        mem_free(rgba);
-        return;
-    }
-
+    if (!rgba)
+        return NULL;
     for (y = 0; y < h; ++y)
     {
         const WORD* row = (const WORD*) (from + (SIZE_T) (part->top + y) * pitch) + part->left;
@@ -874,20 +874,17 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
                 out[3] = 0;
         }
     }
+    return rgba;
+}
 
-    target_bind(target);
-    gl.ActiveTexture(GL_TEXTURE0 + 1);
-    gl.Disable(GL_TEXTURE_2D);
-    gl.ActiveTexture(GL_TEXTURE0);
-    gl.Enable(GL_TEXTURE_2D);
-    gl.BindTexture(GL_TEXTURE_2D, g_scratch);
+/* The bound texture's u0..u1, v0..v1 drawn onto `target` at `to`, as convert_pixels made it. */
+static void draw_texture(surface* target, const RECT* to, GLfloat u0, GLfloat v0, GLfloat u1,
+                         GLfloat v1, BOOL keyed, BOOL inks)
+{
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
     gl.TexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-    gl.PixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-    mem_free(rgba);
 
     gl.Disable(GL_DEPTH_TEST);
     gl.Disable(GL_CULL_FACE);
@@ -898,8 +895,9 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
     gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     if (keyed)
     {
+        /* Only the key is left out: a picture with inks has see-through pixels to write. */
         gl.Enable(GL_ALPHA_TEST);
-        gl.AlphaFunc(GL_NEVER + 4, 0.5f);       /* GL_GREATER */
+        gl.AlphaFunc(GL_NEVER + 4, inks ? 0.0f : 0.5f);     /* GL_GREATER */
     }
     else
     {
@@ -915,10 +913,10 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
 
     {
         GLfloat quad[4][4] = {
-            { (GLfloat) to->left, (GLfloat) to->top, 0, 0 },
-            { (GLfloat) to->right, (GLfloat) to->top, 1, 0 },
-            { (GLfloat) to->right, (GLfloat) to->bottom, 1, 1 },
-            { (GLfloat) to->left, (GLfloat) to->bottom, 0, 1 },
+            { (GLfloat) to->left, (GLfloat) to->top, u0, v0 },
+            { (GLfloat) to->right, (GLfloat) to->top, u1, v0 },
+            { (GLfloat) to->right, (GLfloat) to->bottom, u1, v1 },
+            { (GLfloat) to->left, (GLfloat) to->bottom, u0, v1 },
         };
 
         /* Every array the device's draws enable is turned off: OpenGL reads all enabled arrays,
@@ -936,6 +934,78 @@ static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int forma
     }
 
     g_state_lost = TRUE;
+}
+
+/* Bind texture unit 0 alone, with `texture` on it. */
+static void bind_2d_texture(GLuint texture)
+{
+    gl.ActiveTexture(GL_TEXTURE0 + 1);
+    gl.Disable(GL_TEXTURE_2D);
+    gl.ActiveTexture(GL_TEXTURE0);
+    gl.Enable(GL_TEXTURE_2D);
+    gl.BindTexture(GL_TEXTURE_2D, texture);
+}
+
+/* Draw a rectangle of 16-bit memory pixels onto the bound render target, scaled to `to`. With
+   `keyed`, pixels matching `key` are left out. */
+static void draw_pixels(surface* target, const BYTE* from, LONG pitch, int format, const RECT* part,
+                        const RECT* to, BOOL keyed, DWORD key, BOOL inks)
+{
+    BYTE* rgba = convert_pixels(from, pitch, format, part, keyed, key, inks);
+
+    if (!rgba)
+        return;
+    target_bind(target);
+    bind_2d_texture(g_scratch);
+    gl.PixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, part->right - part->left, part->bottom - part->top, 0,
+                  GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    mem_free(rgba);
+    draw_texture(target, to, 0, 0, 1, 1, keyed, inks);
+}
+
+/*
+    Draw part of a memory surface onto a render target. The menus' pictures are drawn every frame
+    and never change, so each keeps a texture of all of itself, converted once and again only
+    when its pixels or the way it is drawn (key, inks, photos) change.
+*/
+static void draw_surface(surface* target, surface* from, const RECT* part, const RECT* to, BOOL keyed)
+{
+    DWORD key = from->key.dwColorSpaceLowValue;
+    BOOL inks = from->top->inks;
+    DWORD how = (keyed ? 1u : 0u) | (inks ? 2u : 0u) | (g_photos.on ? 4u : 0u) | key << 8;
+    GLfloat w = (GLfloat) from->desc.dwWidth, h = (GLfloat) from->desc.dwHeight;
+
+    if (from != from->top)
+    {
+        draw_pixels(target, pixels(from), surface_pitch(from), from->format, part, to, keyed, key, inks);
+        return;
+    }
+    target_bind(target);
+    if (!from->blit_texture || from->blit_stale || from->blit_how != how)
+    {
+        RECT all = { 0, 0, (LONG) from->desc.dwWidth, (LONG) from->desc.dwHeight };
+        BYTE* rgba = convert_pixels(pixels(from), surface_pitch(from), from->format, &all, keyed,
+                                    key, inks);
+
+        if (!rgba)
+            return;
+        if (!from->blit_texture)
+            gl.GenTextures(1, &from->blit_texture);
+        bind_2d_texture(from->blit_texture);
+        gl.PixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, all.right, all.bottom, 0, GL_RGBA,
+                      GL_UNSIGNED_BYTE, rgba);
+        mem_free(rgba);
+        from->blit_stale = FALSE;
+        from->blit_how = how;
+    }
+    else
+    {
+        bind_2d_texture(from->blit_texture);
+    }
+    draw_texture(target, to, part->left / w, part->top / h, part->right / w, part->bottom / h,
+                 keyed, inks);
 }
 
 /* Put a render target's memory image back after the game wrote to it. */
@@ -1032,6 +1102,7 @@ static void free_surface(surface* s)
         if (g_gl)
         {
             if (s->texture) gl.DeleteTextures(1, &s->texture);
+            if (s->blit_texture) gl.DeleteTextures(1, &s->blit_texture);
             if (s->colour) gl.DeleteTextures(1, &s->colour);
             if (s->fbo) gl.DeleteFramebuffers(1, &s->fbo);
             if (s->depth) gl.DeleteRenderbuffers(1, &s->depth);
@@ -1265,6 +1336,7 @@ static void blit_memory(surface* to, const RECT* to_rect, surface* from, const R
         }
     }
     to->top->dirty = TRUE;
+    to->top->blit_stale = TRUE;
     shown_stale(to, to_rect);
 }
 
@@ -1284,6 +1356,7 @@ static void fill_memory(surface* to, const RECT* r, WORD colour)
             row[x] = colour;
     }
     to->top->dirty = TRUE;
+    to->top->blit_stale = TRUE;
     shown_stale(to, r);
 }
 
@@ -1356,8 +1429,7 @@ static HRESULT blit(surface* to, const RECT* to_rect, surface* from, const RECT*
     {
         BOOL current = to->pixels_current;
 
-        draw_pixels(to, pixels(from), surface_pitch(from), from->format, &f, &t, keyed,
-                    from->key.dwColorSpaceLowValue, from->top->inks);
+        draw_surface(to, from, &f, &t, keyed);
         to->inks |= from->top->inks;
         if (current)
         {
@@ -1577,6 +1649,7 @@ static HRESULT WINAPI s_ReleaseDC(IDirectDrawSurface7* self, HDC dc)
     {
         __movsb(s->pixels, (const unsigned char*) s->dib_bits, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);
         s->top->dirty = TRUE;
+        s->top->blit_stale = TRUE;
     }
     select(s->dc, s->old_bitmap);
     delete_object(s->dib);
@@ -1683,6 +1756,7 @@ static HRESULT WINAPI s_Unlock(IDirectDrawSurface7* self, LPRECT rect)
     else if (!is_target(SELF) && !is_primary(SELF))
     {
         SELF->top->dirty = TRUE;
+        SELF->top->blit_stale = TRUE;
     }
     return DD_OK;
 }

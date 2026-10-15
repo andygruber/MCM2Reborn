@@ -44,6 +44,9 @@ typedef struct surface
     GLuint               fbo, colour, depth;    /* a render target */
     GLuint               texture;       /* a texture, uploaded when `dirty` */
     BOOL                 dirty;
+    GLuint               blit_texture;  /* all of it as Blt draws it on a target: see draw_surface */
+    BOOL                 blit_stale;
+    DWORD                blit_how;
 
     struct surface*      back;          /* the primary's back buffer */
     struct surface*      mip;           /* the next smaller mipmap level */

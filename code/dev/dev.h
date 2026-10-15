@@ -56,6 +56,9 @@ void dev_install(void);
 /* A line in the log, prefixed with its area ("screen", "event", ...). */
 void dev_trace(const char* area, const char* fmt, ...);
 
+/* A rectangle on the 640x480 menu screen, where the scaled menus put it (ui.c). */
+void menu_place_view(unsigned char* dialog, RECT* view);
+
 /* An event a control is about to send its dialog (when events are traced). */
 void dev_trace_event(DWORD type, const char* control, const void* dialog);
 

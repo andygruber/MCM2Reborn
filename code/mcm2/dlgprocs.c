@@ -4246,6 +4246,9 @@ static void bike_rider_open(BYTE* self)
     view->right = 543;
     view->top = 108;
     view->bottom = 328;
+#ifdef OPENMCM2_DEV
+    menu_place_view(self, view);         /* where the scaled menus put it */
+#endif
     *position = vector_zero;
     position->z = 15.0f;
     position->y = 1.0f;

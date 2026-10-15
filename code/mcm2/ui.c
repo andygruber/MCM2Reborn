@@ -46,6 +46,13 @@ static void menu_place(BYTE* screen, RECT* area)
     area->right = left + (int) (area->right * scale);
     area->bottom = top + (int) (area->bottom * scale);
 }
+
+/* The same for a rectangle on `dialog`'s screen: the bike previews' views, which the game gives
+   in the original's pixels. */
+void menu_place_view(BYTE* dialog, RECT* view)
+{
+    menu_place(object_screen(dialog), view);
+}
 #endif
 
 /* UIDialog fields, by offset. */

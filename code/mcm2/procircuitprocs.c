@@ -11,6 +11,10 @@
 
 #include "menus.h"
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 BYTE*       __fastcall dialog_find_control(BYTE* self, void* edx_unused, const char* name, int type);
 BYTE*       __fastcall dialog_construct(BYTE* self, void* edx_unused, DWORD flag, const char* name);
 void        __fastcall dialog_end(BYTE* self, void* edx_unused, DWORD code);
@@ -931,6 +935,9 @@ static void central_bike_rider_open(BYTE* self)
     view->right = 534;
     view->top = 116;
     view->bottom = 336;
+#ifdef OPENMCM2_DEV
+    menu_place_view(self, view);         /* where the scaled menus put it */
+#endif
     *position = next_vector_zero;
     position->z = 15.0f;
     position->y = 1.0f;

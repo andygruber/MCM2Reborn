@@ -8,6 +8,10 @@
 */
 
 #include "menus.h"
+
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
 #include "dirlist.h"
 
 #define SGP_CPP NAME(0x00579D90)        /* "D:\aardvark\VC\krusty2\SelectGamePicProcs.cpp" */
@@ -2497,6 +2501,9 @@ static void mp_bike_rider_open(BYTE* self)
     view->right = 312;
     view->top = 105;
     view->bottom = 246;
+#ifdef OPENMCM2_DEV
+    menu_place_view(self, view);         /* where the scaled menus put it */
+#endif
     *position = mp_vector_zero;
     position->z = 15.0f;
     position->y = 1.0f;
