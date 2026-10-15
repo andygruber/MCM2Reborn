@@ -6,6 +6,12 @@
 
 #include <intrin.h>
 
+#ifndef OPENMCM2_DEV
+#define PERF_START(t)        (void) 0
+#define PERF_TIME(field, t)  (void) 0
+#define PERF_COUNT(field, n) (void) 0
+#endif
+
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
 
@@ -13,6 +19,88 @@
 #define BLUR_H 36
 
 static GLuint g_blur_fbo, g_blur_colour;
+
+/*
+    What the renderer spends a frame on, logged once a second with [trace] display: the frame
+    rate and worst frame, the time in GDI's DCs and in readbacks, and the pixels read back,
+    blitted in memory and converted for the GPU.
+*/
+typedef BOOL (WINAPI* counter_fn)(LARGE_INTEGER* value);
+
+static struct
+{
+    counter_fn    now;
+    LARGE_INTEGER frequency, frame, report;
+    LONG          frames, worst, gdi, read;         /* in counter ticks */
+    LONG          gdi_calls, read_pixels, blit_pixels, converted;
+} g_perf;
+
+static void perf_mark(LARGE_INTEGER* t)
+{
+    if (!g_perf.now)
+    {
+        counter_fn frequency = (counter_fn) api("kernel32.dll", "QueryPerformanceFrequency");
+
+        g_perf.now = (counter_fn) api("kernel32.dll", "QueryPerformanceCounter");
+        if (!frequency || !g_perf.now || !frequency(&g_perf.frequency) || !g_perf.frequency.QuadPart)
+            g_perf.now = NULL;
+    }
+    t->QuadPart = 0;
+    if (g_perf.now)
+        g_perf.now(t);
+}
+
+/* Ticks since `t`; a second's worth fits easily. */
+static LONG perf_since(const LARGE_INTEGER* t)
+{
+    LARGE_INTEGER now;
+
+    perf_mark(&now);
+    return (LONG) (now.QuadPart - t->QuadPart);
+}
+
+/* Tenths of a millisecond in `ticks`. */
+static LONG perf_tenths(LONG ticks)
+{
+    return (LONG) ((double) ticks * 10000.0 / (double) g_perf.frequency.LowPart);
+}
+
+/* A frame was shown: count it, and once a second say how the last ones went. */
+static void perf_frame(void)
+{
+    LONG frame, n;
+
+    if (!dev_settings.trace_display)
+        return;
+    if (!g_perf.frame.QuadPart)
+    {
+        perf_mark(&g_perf.frame);
+        g_perf.report = g_perf.frame;
+        return;
+    }
+    frame = perf_since(&g_perf.frame);
+    perf_mark(&g_perf.frame);
+    g_perf.frames++;
+    if (frame > g_perf.worst)
+        g_perf.worst = frame;
+    if (perf_since(&g_perf.report) < (LONG) g_perf.frequency.LowPart)
+        return;
+
+    n = g_perf.frames;
+    log_line("[perf] %ld fps, worst frame %ld.%ld ms; a frame: %ld DCs in %ld.%ld ms, %ld px read back"
+             " in %ld.%ld ms, %ld px blitted in memory, %ld px converted", n,
+             perf_tenths(g_perf.worst) / 10, perf_tenths(g_perf.worst) % 10, g_perf.gdi_calls / n,
+             perf_tenths(g_perf.gdi / n) / 10, perf_tenths(g_perf.gdi / n) % 10, g_perf.read_pixels / n,
+             perf_tenths(g_perf.read / n) / 10, perf_tenths(g_perf.read / n) % 10,
+             g_perf.blit_pixels / n, g_perf.converted / n);
+    g_perf.frames = g_perf.worst = g_perf.gdi = g_perf.read = 0;
+    g_perf.gdi_calls = g_perf.read_pixels = g_perf.blit_pixels = g_perf.converted = 0;
+    perf_mark(&g_perf.report);
+}
+
+#define PERF_START(t)        LARGE_INTEGER t; perf_mark(&t)
+#define PERF_TIME(field, t)  (g_perf.field += perf_since(&t))
+#define PERF_COUNT(field, n) (g_perf.field += (LONG) (n))
 
 /* Darken the window's part from `left` to `right` (black at `alpha`). */
 static void darken(LONG left, LONG right, LONG width, LONG height, GLfloat alpha)
@@ -157,6 +245,7 @@ static struct
 
 static void unpack(int format, WORD p, BYTE* rgba);
 static WORD pack(int format, const BYTE* rgba);
+static void free_dc(surface* s);
 
 /* The inks of red 29, 30 and 31: shadow, blue, light blue. */
 static const BYTE k_inks[3][3] = { { 0, 0, 0 }, { 34, 110, 255 }, { 110, 185, 255 } };
@@ -272,14 +361,15 @@ static const WORD* photo_shown_table(void)
 }
 
 /*
-    A target with inks keeps `shown`, its memory image as GDI should see it, brought up to date
-    only where the memory has changed since (`stale`), so GetDC is a copy.
+    `r` of the memory image changed (NULL: all of it). GetDC's DIB, and for a target with inks
+    `shown` (its memory image as GDI should see it), are brought up to date only where the memory
+    has changed since (`stale`), so a GetDC copies little or nothing.
 */
-static void shown_stale(surface* s, const RECT* r)
+static void mark_stale(surface* s, const RECT* r)
 {
     RECT all = { 0, 0, (LONG) s->desc.dwWidth, (LONG) s->desc.dwHeight };
 
-    if (!s->shown)
+    if (r && (r->left >= r->right || r->top >= r->bottom))
         return;
     if (!r)
         r = &all;
@@ -298,8 +388,9 @@ static void shown_stale(surface* s, const RECT* r)
     s->stale.bottom = min(s->stale.bottom, all.bottom);
 }
 
-/* `shown` up to date, or NULL when it cannot be. */
-static BYTE* shown_current(surface* s)
+/* `shown` up to date where it is stale (which stays marked, for the DIB), or NULL when it
+   cannot be. */
+static BYTE* shown_update(surface* s)
 {
     const WORD* table = photo_shown_table();
     LONG pitch = surface_pitch(s), x, y;
@@ -316,8 +407,7 @@ static BYTE* shown_current(surface* s)
     if (s->shown_photos != g_photos.on)
     {
         s->shown_photos = g_photos.on;
-        s->stale.right = 0;
-        shown_stale(s, NULL);
+        mark_stale(s, NULL);
     }
     for (y = s->stale.top; y < s->stale.bottom; ++y)
     {
@@ -327,7 +417,6 @@ static BYTE* shown_current(surface* s)
         for (x = s->stale.left; x < s->stale.right; ++x)
             to[x] = table[from[x]];
     }
-    s->stale.left = s->stale.top = s->stale.right = s->stale.bottom = 0;
     return s->shown;
 }
 
@@ -490,6 +579,9 @@ static void present(surface* target)
 
     if (!target || !target->fbo || !GetClientRect(g_window, &client))
         return;
+#ifdef OPENMCM2_DEV
+    perf_frame();
+#endif
 
     w = client.right;
     h = client.bottom;
@@ -660,6 +752,19 @@ static BYTE* pixels(surface* s)
     return s->pixels;
 }
 
+/* The part of `a` inside `b`, in `out`: FALSE (and `out` empty) when they do not meet. */
+static BOOL clip_rect(RECT* out, const RECT* a, const RECT* b)
+{
+    out->left = max(a->left, b->left);
+    out->top = max(a->top, b->top);
+    out->right = min(a->right, b->right);
+    out->bottom = min(a->bottom, b->bottom);
+    if (out->left < out->right && out->top < out->bottom)
+        return TRUE;
+    out->left = out->top = out->right = out->bottom = 0;
+    return FALSE;
+}
+
 /* `r` added to where the target's GL pixels are ahead of its memory image. */
 static void ahead_add(surface* s, const RECT* r)
 {
@@ -777,6 +882,7 @@ static void target_read(surface* s)
     LONG pitch = surface_pitch(s), w, h, x, y;
     BYTE* row = pixels(s);
     BYTE* rgba;
+    PERF_START(started);
 
     if (s->pixels_current)
     {
@@ -793,6 +899,7 @@ static void target_read(surface* s)
         return;
     }
 
+    PERF_COUNT(read_pixels, w * h);
     target_bind(s);
     gl.PixelStorei(GL_PACK_ALIGNMENT, 4);
     gl.ReadPixels(part.left, (GLint) s->desc.dwHeight - part.bottom, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
@@ -807,9 +914,10 @@ static void target_read(surface* s)
                                                       : pack(PF_565, from + x * 4);
     }
     mem_free(rgba);
+    PERF_TIME(read, started);
     s->pixels_current = TRUE;
     s->ahead.left = s->ahead.top = s->ahead.right = s->ahead.bottom = 0;
-    shown_stale(s, &part);
+    mark_stale(s, &part);
 }
 
 /* Every pixel of `format` as draw_pixels shows it from a picture with inks, photos off or on
@@ -837,6 +945,28 @@ static const BYTE* ink_table(int format)
     return *made;
 }
 
+/* Every pixel of `format` as unpacked, solid when `opaque`: 8-bit RGBA, or NULL when there is no
+   memory for it. */
+static const BYTE* plain_table(int format, BOOL opaque)
+{
+    static BYTE* table[PF_FORMATS][2];
+    BYTE** made = &table[format][opaque ? 1 : 0];
+    DWORD p;
+
+    if (*made)
+        return *made;
+    *made = (BYTE*) mem_alloc(65536 * 4);
+    if (!*made)
+        return NULL;
+    for (p = 0; p < 65536; ++p)
+    {
+        unpack(format, (WORD) p, *made + p * 4);
+        if (opaque)
+            (*made)[p * 4 + 3] = 255;
+    }
+    return *made;
+}
+
 /* A rectangle of 16-bit memory pixels as 8-bit RGBA, w x h, in a new buffer (NULL when out of
    memory). With `keyed`, pixels matching `key` get no alpha; with `inks`, see photo_pixel. */
 static BYTE* convert_pixels(const BYTE* from, LONG pitch, int format, const RECT* part, BOOL keyed,
@@ -844,10 +974,12 @@ static BYTE* convert_pixels(const BYTE* from, LONG pitch, int format, const RECT
 {
     LONG w = part->right - part->left, h = part->bottom - part->top, x, y;
     BYTE* rgba = w > 0 && h > 0 ? (BYTE*) mem_alloc((SIZE_T) w * h * 4) : NULL;
-    const BYTE* inked = inks ? ink_table(format) : NULL;
+    BOOL opaque = g_photos.on || format == PF_565 || keyed;
+    const BYTE* table = inks ? ink_table(format) : plain_table(format, opaque);
 
     if (!rgba)
         return NULL;
+    PERF_COUNT(converted, w * h);
     for (y = 0; y < h; ++y)
     {
         const WORD* row = (const WORD*) (from + (SIZE_T) (part->top + y) * pitch) + part->left;
@@ -856,8 +988,8 @@ static BYTE* convert_pixels(const BYTE* from, LONG pitch, int format, const RECT
         {
             BYTE* out = rgba + ((SIZE_T) y * w + x) * 4;
 
-            if (inked)
-                *(DWORD*) out = *(const DWORD*) (inked + row[x] * 4);
+            if (table)
+                *(DWORD*) out = *(const DWORD*) (table + row[x] * 4);
             else
             {
                 unpack(format, row[x], out);
@@ -867,7 +999,7 @@ static BYTE* convert_pixels(const BYTE* from, LONG pitch, int format, const RECT
                     if (!g_photos.on)
                         on_matte(out);
                 }
-                else if (g_photos.on || format == PF_565 || keyed)
+                else if (opaque)
                     out[3] = 255;
             }
             if (keyed && row[x] == key)
@@ -1008,42 +1140,44 @@ static void draw_surface(surface* target, surface* from, const RECT* part, const
                  keyed, inks);
 }
 
-/* Put a render target's memory image back after the game wrote to it. */
-static void target_write(surface* s)
+/* Put `part` of a render target's memory image back after the game wrote to it. */
+static void target_write(surface* s, const RECT* part)
 {
-    RECT all = { 0, 0, (LONG) s->desc.dwWidth, (LONG) s->desc.dwHeight };
+    RECT all = { 0, 0, (LONG) s->desc.dwWidth, (LONG) s->desc.dwHeight }, r;
 
-    draw_pixels(s, s->pixels, surface_pitch(s), PF_565, &all, &all, FALSE, 0, s->inks);
+    if (clip_rect(&r, part, &all))
+        draw_pixels(s, s->pixels, surface_pitch(s), PF_565, &r, &r, FALSE, 0, s->inks);
     s->pixels_current = TRUE;
     s->ahead.left = s->ahead.top = s->ahead.right = s->ahead.bottom = 0;
-    shown_stale(s, NULL);
+    mark_stale(s, &r);
 }
 
 /*
-    The part of a render target that changed in its memory image, from `before` (a copy taken
-    when it was handed out): drawn back, the rest left alone. Returns whether anything changed.
+    The part of a render target's DIB that GDI changed within `area`, against what the DIB was
+    copied from (`before`): into the memory image and drawn back, the rest left alone. The DIB
+    is left matching `before` again. Returns whether anything changed.
 */
-static BOOL target_write_changes(surface* s, const BYTE* changed, const BYTE* before)
+static BOOL target_write_changes(surface* s, BYTE* changed, const BYTE* before, const RECT* area)
 {
-    LONG pitch = surface_pitch(s), w = (LONG) s->desc.dwWidth, h = (LONG) s->desc.dwHeight;
-    RECT part = { w, h, 0, 0 };
+    LONG pitch = surface_pitch(s), span = (area->right - area->left) * 2;
+    RECT part = { area->right, area->bottom, area->left, area->top };
     const WORD* table = before == s->shown ? photo_shown_table() : NULL;
     LONG x, y;
 
-    for (y = 0; y < h; ++y)
+    for (y = area->top; y < area->bottom; ++y)
     {
         const WORD* a = (const WORD*) (changed + (SIZE_T) y * pitch);
         const WORD* b = (const WORD*) (before + (SIZE_T) y * pitch);
 
-        if (!memcmp(a, b, (SIZE_T) w * 2))
+        if (!memcmp(a + area->left, b + area->left, (SIZE_T) span))
             continue;
         if (y < part.top)
             part.top = y;
         part.bottom = y + 1;
-        for (x = 0; x < part.left && a[x] == b[x]; ++x)
+        for (x = area->left; x < part.left && a[x] == b[x]; ++x)
             ;
         part.left = x;
-        for (x = w - 1; x >= part.right && a[x] == b[x]; --x)
+        for (x = area->right - 1; x >= part.right && a[x] == b[x]; --x)
             ;
         if (x + 1 > part.right)
             part.right = x + 1;
@@ -1053,7 +1187,7 @@ static BOOL target_write_changes(surface* s, const BYTE* changed, const BYTE* be
     /* Only what GDI changed goes into the memory image: the rest keeps its holes and inks. */
     for (y = part.top; y < part.bottom; ++y)
     {
-        const WORD* a = (const WORD*) (changed + (SIZE_T) y * pitch);
+        WORD* a = (WORD*) (changed + (SIZE_T) y * pitch);
         WORD* memory = (WORD*) (s->pixels + (SIZE_T) y * pitch);
         WORD* seen = table ? (WORD*) (s->shown + (SIZE_T) y * pitch) : NULL;
 
@@ -1062,7 +1196,7 @@ static BOOL target_write_changes(surface* s, const BYTE* changed, const BYTE* be
             {
                 memory[x] = a[x];
                 if (seen)
-                    seen[x] = table[a[x]];
+                    a[x] = seen[x] = table[a[x]];
             }
     }
     draw_pixels(s, s->pixels, pitch, PF_565, &part, &part, FALSE, 0, s->inks);
@@ -1109,6 +1243,7 @@ static void free_surface(surface* s)
         }
         if (s->palette)
             s->palette->lpVtbl->Release(s->palette);
+        free_dc(s);
         mem_free(s->pixels);
         mem_free(s->shown);
         mem_free(s);
@@ -1290,54 +1425,85 @@ static RECT whole_or(const surface* s, const RECT* r)
     return r ? *r : all;
 }
 
-/* Memory to memory, scaled by nearest neighbour, with an optional source key. */
+/* Every pixel of `from` as `to` packs it, or NULL when there is no memory for it. */
+static const WORD* repack_table(int from, int to)
+{
+    static WORD* table[PF_FORMATS][PF_FORMATS];
+    WORD** made = &table[from][to];
+    DWORD p;
+
+    if (*made)
+        return *made;
+    *made = (WORD*) mem_alloc(65536 * sizeof(WORD));
+    if (!*made)
+        return NULL;
+    for (p = 0; p < 65536; ++p)
+    {
+        BYTE rgba[4];
+
+        unpack(from, (WORD) p, rgba);
+        (*made)[p] = pack(to, rgba);
+    }
+    return *made;
+}
+
+/*
+    Memory to memory, scaled by nearest neighbour (source column left + x * sw / w, stepped
+    rather than divided), with an optional source key. The source rectangle lies within its
+    surface (blit checks); the target's is clipped to its own.
+*/
 static void blit_memory(surface* to, const RECT* to_rect, surface* from, const RECT* from_rect, BOOL keyed)
 {
     LONG w = to_rect->right - to_rect->left, h = to_rect->bottom - to_rect->top;
     LONG sw = from_rect->right - from_rect->left, sh = from_rect->bottom - from_rect->top;
-    LONG to_pitch = surface_pitch(to), from_pitch = surface_pitch(from), x, y;
-    DWORD key = from->key.dwColorSpaceLowValue;
+    LONG to_pitch = surface_pitch(to), from_pitch = surface_pitch(from), step, rest;
+    LONG x0 = max(0, -to_rect->left), x1 = min(w, (LONG) to->desc.dwWidth - to_rect->left);
+    LONG y0 = max(0, -to_rect->top), y1 = min(h, (LONG) to->desc.dwHeight - to_rect->top);
+    WORD key = (WORD) from->key.dwColorSpaceLowValue;
+    const WORD* table = from->format != to->format ? repack_table(from->format, to->format) : NULL;
     BYTE* dst = pixels(to);
     const BYTE* src = pixels(from);
+    LONG x, y;
 
-    if (!dst || !src || w <= 0 || h <= 0)
+    if (!dst || !src || w <= 0 || h <= 0 || sw <= 0 || sh <= 0 || x0 >= x1 || y0 >= y1)
         return;
+    if (from->format != to->format && !table)
+        return;
+    step = sw / w;
+    rest = sw % w;
+    PERF_COUNT(blit_pixels, (x1 - x0) * (y1 - y0));
 
-    for (y = 0; y < h; ++y)
+    for (y = y0; y < y1; ++y)
     {
-        LONG ty = to_rect->top + y, sy = from_rect->top + y * sh / h;
-        WORD* drow;
-        const WORD* srow;
+        WORD* drow = (WORD*) (dst + (SIZE_T) (to_rect->top + y) * to_pitch) + to_rect->left;
+        const WORD* srow = (const WORD*) (src + (SIZE_T) (from_rect->top + y * sh / h) * from_pitch)
+                           + from_rect->left;
+        LONG sx = x0 * sw / w, part = x0 * sw % w;
 
-        if (ty < 0 || ty >= (LONG) to->desc.dwHeight || sy < 0 || sy >= (LONG) from->desc.dwHeight)
-            continue;
-
-        drow = (WORD*) (dst + (SIZE_T) ty * to_pitch);
-        srow = (const WORD*) (src + (SIZE_T) sy * from_pitch);
-        for (x = 0; x < w; ++x)
+        if (sw == w && !keyed && !table)
         {
-            LONG tx = to_rect->left + x, sx = from_rect->left + x * sw / w;
-            WORD p;
+            __movsb((unsigned char*) (drow + x0), (const unsigned char*) (srow + x0),
+                    (SIZE_T) (x1 - x0) * 2);
+            continue;
+        }
+        for (x = x0; x < x1; ++x)
+        {
+            WORD p = srow[sx];
 
-            if (tx < 0 || tx >= (LONG) to->desc.dwWidth || sx < 0 || sx >= (LONG) from->desc.dwWidth)
-                continue;
-
-            p = srow[sx];
-            if (keyed && p == key)
-                continue;
-
-            if (from->format != to->format)
+            if (!keyed || p != key)
+                drow[x] = table ? table[p] : p;
+            sx += step;
+            part += rest;
+            if (part >= w)
             {
-                BYTE rgba[4];
-                unpack(from->format, p, rgba);
-                p = pack(to->format, rgba);
+                part -= w;
+                ++sx;
             }
-            drow[tx] = p;
         }
     }
     to->top->dirty = TRUE;
     to->top->blit_stale = TRUE;
-    shown_stale(to, to_rect);
+    mark_stale(to, to_rect);
 }
 
 static void fill_memory(surface* to, const RECT* r, WORD colour)
@@ -1357,7 +1523,7 @@ static void fill_memory(surface* to, const RECT* r, WORD colour)
     }
     to->top->dirty = TRUE;
     to->top->blit_stale = TRUE;
-    shown_stale(to, r);
+    mark_stale(to, r);
 }
 
 static void fill_target(surface* to, const RECT* r, WORD colour)
@@ -1590,22 +1756,26 @@ typedef BOOL    (WINAPI *delete_fn)(HGDIOBJ);
 typedef BOOL    (WINAPI *delete_dc_fn)(HDC);
 typedef BOOL    (WINAPI *flush_fn)(void);
 
-static HRESULT WINAPI s_GetDC(IDirectDrawSurface7* self, HDC* out)
+typedef UINT    (WINAPI *set_bounds_fn)(HDC, const RECT*, UINT);
+typedef UINT    (WINAPI *get_bounds_fn)(HDC, RECT*, UINT);
+typedef int     (WINAPI *save_dc_fn)(HDC);
+typedef BOOL    (WINAPI *restore_dc_fn)(HDC, int);
+
+/* The surface's DC and its DIB, made the first time they are asked for and kept until the
+   surface goes. FALSE when GDI cannot make them. */
+static BOOL make_dc(surface* s)
 {
     struct { BITMAPINFOHEADER h; DWORD masks[3]; } bmi = { { sizeof(BITMAPINFOHEADER) } };
-    surface* s = SELF;
     const format_info* f = &k_format[s->format];
     create_dib_fn create_dib = (create_dib_fn) api("gdi32.dll", "CreateDIBSection");
     create_dc_fn create_dc = (create_dc_fn) api("gdi32.dll", "CreateCompatibleDC");
     select_fn select = (select_fn) api("gdi32.dll", "SelectObject");
+    delete_dc_fn delete_dc = (delete_dc_fn) api("gdi32.dll", "DeleteDC");
 
     if (s->dc)
-        return DDERR_DCALREADYCREATED;
-    if (!create_dib || !create_dc || !select || !pixels(s))
-        return DDERR_GENERIC;
-
-    if (is_target(s))
-        target_read(s);
+        return TRUE;
+    if (!create_dib || !create_dc || !select || !delete_dc)
+        return FALSE;
 
     bmi.h.biWidth = (LONG) s->desc.dwWidth;
     bmi.h.biHeight = -(LONG) s->desc.dwHeight;      /* top row first, like the surface */
@@ -1617,46 +1787,132 @@ static HRESULT WINAPI s_GetDC(IDirectDrawSurface7* self, HDC* out)
     bmi.masks[2] = f->b;
 
     s->dc = create_dc(NULL);
-    s->dib = create_dib(s->dc, (const BITMAPINFO*) &bmi, DIB_RGB_COLORS, &s->dib_bits, NULL, 0);
-    if (!s->dc || !s->dib)
-        return DDERR_GENERIC;
-
-    s->dib_from = is_target(s) && s->inks ? shown_current(s) : NULL;
-    if (!s->dib_from)
-        s->dib_from = s->pixels;
-    __movsb((unsigned char*) s->dib_bits, s->dib_from, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);
+    s->dib = s->dc ? create_dib(s->dc, (const BITMAPINFO*) &bmi, DIB_RGB_COLORS, &s->dib_bits, NULL, 0)
+                   : NULL;
+    if (!s->dib)
+    {
+        if (s->dc)
+            delete_dc(s->dc);
+        s->dc = NULL;
+        return FALSE;
+    }
     s->old_bitmap = (HBITMAP) select(s->dc, s->dib);
-    *out = s->dc;
-    return DD_OK;
+    s->dib_from = NULL;
+    return TRUE;
 }
 
-static HRESULT WINAPI s_ReleaseDC(IDirectDrawSurface7* self, HDC dc)
+static void free_dc(surface* s)
 {
-    surface* s = SELF;
     select_fn select = (select_fn) api("gdi32.dll", "SelectObject");
     delete_fn delete_object = (delete_fn) api("gdi32.dll", "DeleteObject");
     delete_dc_fn delete_dc = (delete_dc_fn) api("gdi32.dll", "DeleteDC");
-    flush_fn flush = (flush_fn) api("gdi32.dll", "GdiFlush");
 
-    if (!s->dc || dc != s->dc)
-        return DDERR_NODC;
-
-    if (flush)
-        flush();
-    if (is_target(s))
-        target_write_changes(s, (const BYTE*) s->dib_bits, s->dib_from);
-    else
-    {
-        __movsb(s->pixels, (const unsigned char*) s->dib_bits, (SIZE_T) surface_pitch(s) * s->desc.dwHeight);
-        s->top->dirty = TRUE;
-        s->top->blit_stale = TRUE;
-    }
+    if (!s->dc || !select || !delete_object || !delete_dc)
+        return;
     select(s->dc, s->old_bitmap);
     delete_object(s->dib);
     delete_dc(s->dc);
     s->dc = NULL;
     s->dib = NULL;
+}
+
+/*
+    GDI draws on a copy of the memory image (for a target with inks, of `shown`), brought up to
+    date where the memory changed since the last GetDC. GDI keeps the bounds of what it draws, so
+    ReleaseDC only has that part to look through. The DC is kept, but each GetDC hands it out as
+    new: what the game selects into it is put back by ReleaseDC.
+*/
+static HRESULT WINAPI s_GetDC(IDirectDrawSurface7* self, HDC* out)
+{
+    surface* s = SELF;
+    set_bounds_fn set_bounds = (set_bounds_fn) api("gdi32.dll", "SetBoundsRect");
+    save_dc_fn save_dc = (save_dc_fn) api("gdi32.dll", "SaveDC");
+    const BYTE* from;
+    LONG pitch = surface_pitch(s), y;
+    PERF_START(started);
+
+    if (s->dc_out)
+        return DDERR_DCALREADYCREATED;
+    if (!set_bounds || !save_dc || !pixels(s) || !make_dc(s))
+        return DDERR_GENERIC;
+
+    if (is_target(s))
+        target_read(s);
+    from = is_target(s) && s->inks ? shown_update(s) : NULL;
+    if (!from)
+        from = s->pixels;
+    if (from != s->dib_from)
+    {
+        /* Copying from the other one: all of it, and `shown` made whole again first. */
+        s->dib_from = from;
+        mark_stale(s, NULL);
+        if (from == s->shown)
+            shown_update(s);
+    }
+    for (y = s->stale.top; y < s->stale.bottom; ++y)
+        __movsb((unsigned char*) s->dib_bits + (SIZE_T) y * pitch + s->stale.left * 2,
+                from + (SIZE_T) y * pitch + s->stale.left * 2,
+                (SIZE_T) (s->stale.right - s->stale.left) * 2);
+    s->stale.left = s->stale.top = s->stale.right = s->stale.bottom = 0;
+
+    set_bounds(s->dc, NULL, DCB_RESET | DCB_ENABLE);
+    s->dc_saved = save_dc(s->dc);
+    s->dc_out = TRUE;
+    *out = s->dc;
+    PERF_TIME(gdi, started);
+    PERF_COUNT(gdi_calls, 1);
     return DD_OK;
+}
+
+static HRESULT release_dc(surface* s, HDC dc)
+{
+    flush_fn flush = (flush_fn) api("gdi32.dll", "GdiFlush");
+    get_bounds_fn get_bounds = (get_bounds_fn) api("gdi32.dll", "GetBoundsRect");
+    restore_dc_fn restore_dc = (restore_dc_fn) api("gdi32.dll", "RestoreDC");
+    RECT all = { 0, 0, (LONG) s->desc.dwWidth, (LONG) s->desc.dwHeight };
+    RECT drawn = all;
+    UINT bounds = 0;
+    LONG pitch = surface_pitch(s), y;
+
+    if (!s->dc_out || dc != s->dc)
+        return DDERR_NODC;
+    s->dc_out = FALSE;
+
+    if (flush)
+        flush();
+    if (get_bounds)
+        bounds = get_bounds(s->dc, &drawn, DCB_RESET);
+    if (restore_dc && s->dc_saved)
+        restore_dc(s->dc, s->dc_saved);
+    if (!bounds)
+        drawn = all;                    /* no bounds to go by: look through all of it */
+    else if ((bounds & DCB_SET) != DCB_SET)
+        return DD_OK;                   /* nothing was drawn */
+    if (!clip_rect(&drawn, &drawn, &all))
+        return DD_OK;
+
+    if (is_target(s))
+        target_write_changes(s, (BYTE*) s->dib_bits, s->dib_from, &drawn);
+    else
+    {
+        for (y = drawn.top; y < drawn.bottom; ++y)
+            __movsb(s->pixels + (SIZE_T) y * pitch + drawn.left * 2,
+                    (const unsigned char*) s->dib_bits + (SIZE_T) y * pitch + drawn.left * 2,
+                    (SIZE_T) (drawn.right - drawn.left) * 2);
+        s->top->dirty = TRUE;
+        s->top->blit_stale = TRUE;
+    }
+    return DD_OK;
+}
+
+static HRESULT WINAPI s_ReleaseDC(IDirectDrawSurface7* self, HDC dc)
+{
+    HRESULT result;
+    PERF_START(started);
+
+    result = release_dc(SELF, dc);
+    PERF_TIME(gdi, started);
+    return result;
 }
 
 static HRESULT WINAPI s_GetFlipStatus(IDirectDrawSurface7* self, DWORD flags)
@@ -1738,6 +1994,7 @@ static HRESULT WINAPI s_Lock(IDirectDrawSurface7* self, LPRECT rect, LPDDSURFACE
     p = pixels(s);
     if (!p)
         return DDERR_OUTOFMEMORY;
+    s->locked = whole_or(s, rect);
 
     *desc = s->desc;
     desc->dwFlags |= DDSD_LPSURFACE;
@@ -1750,13 +2007,14 @@ static HRESULT WINAPI s_Unlock(IDirectDrawSurface7* self, LPRECT rect)
     (void) rect;
     if (SELF->locked_target)
     {
-        target_write(SELF);
+        target_write(SELF, &SELF->locked);
         SELF->locked_target = FALSE;
     }
     else if (!is_target(SELF) && !is_primary(SELF))
     {
         SELF->top->dirty = TRUE;
         SELF->top->blit_stale = TRUE;
+        mark_stale(SELF, &SELF->locked);
     }
     return DD_OK;
 }

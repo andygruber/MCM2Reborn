@@ -57,13 +57,16 @@ typedef struct surface
     BOOL                 keyed;
     BOOL                 inks;          /* a modern menu picture, or a target one is on: see render_inks */
 
-    HDC                  dc;            /* GetDC: a DIB section over a copy of the pixels */
+    HDC                  dc;            /* GetDC's, kept: a DIB section over a copy of the pixels */
     HBITMAP              dib, old_bitmap;
     void*                dib_bits;
-    const BYTE*          dib_from;      /* what the DIB was copied from: pixels, or shown */
+    const BYTE*          dib_from;      /* what the DIB copies: pixels, or shown */
+    BOOL                 dc_out;        /* handed out by GetDC and not yet released */
+    int                  dc_saved;      /* its state from before, put back by ReleaseDC */
+    RECT                 locked;        /* the part of the last Lock */
 
-    BYTE*                shown;         /* a target with inks, as GDI sees it: see shown_current */
-    RECT                 stale;         /* where `shown` is behind the pixels */
+    BYTE*                shown;         /* a target with inks, as GDI sees it: see shown_update */
+    RECT                 stale;         /* where `shown` and the DIB are behind the pixels */
     BOOL                 shown_photos;  /* whether it was made for the photos on */
 
     IDirectDrawPalette*  palette;
