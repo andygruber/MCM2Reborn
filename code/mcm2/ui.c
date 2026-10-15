@@ -8678,6 +8678,23 @@ static void reader_info(dialog_reader* r)
         FIELD(self, 0x9C8, float) = scale;
     }
 
+    /*
+        A modern screen's layout and pictures are made at ArtScale times the original's size, so
+        they are drawn at the menus' scale divided by it: 1:1 when the menus are scaled by that.
+    */
+    if (dev_settings.menus_widescreen) {
+        int art = 1;
+
+        reader_int(r, "ArtScale", 1, &art);
+        if (art > 1) {
+            int left, top;
+            float scale = menu_fit(object_screen(self), &left, &top) / art;
+
+            FIELD(self, 0x9C4, float) = scale;
+            FIELD(self, 0x9C8, float) = scale;
+        }
+    }
+
     /* A screen made wider than 4:3 (the modern menus' 1920x1080) is its own area, centred. */
     if (dev_settings.menus_widescreen && FIELD(self, DLG_SCALED, int) && !FIELD(self, DLG_POPUP, int)
         && FIELD(self, DLG_DESIGN_W, int) * 3 > FIELD(self, DLG_DESIGN_H, int) * 4) {

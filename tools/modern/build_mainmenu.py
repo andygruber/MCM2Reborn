@@ -100,16 +100,22 @@ def rs2(entries):
     return b"RS2\0" + struct.pack("<I", len(entries)) + b"".join(table) + b"".join(blobs)
 
 
-def rs2_entries(data):
+def rs2_files(data):
+    """The archive's entries as (name, bytes), the names as they are written."""
     count, = struct.unpack_from("<I", data, 4)
-    at, found = 8, {}
+    at, found = 8, []
     for _ in range(count):
         length, = struct.unpack_from("<I", data, at)
         name = data[at + 4:at + 4 + length].rstrip(b"\0").decode("latin-1")
         offset, size = struct.unpack_from("<II", data, at + 4 + length)
-        found[name.lower()] = data[offset:offset + size]
+        found.append((name, data[offset:offset + size]))
         at += 4 + length + 8
     return found
+
+
+def rs2_entries(data):
+    """The archive's entries by lower-case name."""
+    return {name.lower(): blob for name, blob in rs2_files(data)}
 
 
 # ---- The art ----
@@ -394,19 +400,22 @@ def build(original_dat):
     sections = read_dtm(original["mainmenu.dtm"].decode("latin-1"))
     missing = [c for c in controls if c not in {n for n, _ in sections}]
     assert not missing, missing
+    # The original's sections stay in their order, its anims and sounds among them; the new
+    # pictures go in at the start of Set_Anim, and the original's files stay in the archive.
     out = []
     for name, lines in sections:
-        if name in ("Set_Anim", "Set_Sound", "rbwLabel1"):
+        if name == "rbwLabel1":
             continue
         if name in controls:
             lines = set_keys(lines, controls[name], drops.get(name, ()))
         out += ["[%s]" % name] + [l for l in lines if l.strip()] + [""]
-    out += ["[Set_Anim]", ""]
-    for anim in pictures:
-        out += ["[%s]" % anim, "Files1 = %s%s.tga" % (FOLDER, anim), "MSecDelay = 0", "LoopCount = 0", ""]
-    out += ["[Set_Sound]", ""]
+        if name.lower() == "set_anim":
+            for anim in pictures:
+                out += ["[%s]" % anim, "Files1 = %s%s.tga" % (FOLDER, anim), "MSecDelay = 0",
+                        "LoopCount = 0", ""]
 
-    entries = [(FOLDER + anim + ".tga", tga16(img)) for anim, img in pictures.items()]
+    entries = [(n, blob) for n, blob in rs2_files(original_dat) if not n.lower().endswith(".dtm")]
+    entries += [(FOLDER + anim + ".tga", tga16(img)) for anim, img in pictures.items()]
     entries.append(("MainMenu.dtm", "\r\n".join(out).encode("latin-1")))
     return rs2(entries), bg, pictures
 
