@@ -335,28 +335,33 @@ def build_mark(img):
 STEPS = [("01", "EVENT"), ("02", "BIKE & RIDER"), ("03", "RACE INFO")]
 
 
-def steps(img, active, top=TOP + 54, names=STEPS):
-    """A screen's steps (the single player's by default), one size, each number and name centred
-    in its tab."""
+def step_areas(top=TOP + 54, names=STEPS):
+    """Where a screen's steps go: one size, ending at the right margin."""
     tab_h, gap, inner = 72, 20, 34                  # `inner`: the room a tab keeps either side
     number_w = max(sub_width(n, 34, bold=True) for n, _ in names)
     tab_w = int(max(number_w + 18 + heading_ink(name, 32) for _, name in names) + 2 * inner
                 + tab_h * SLANT)
     x = RIGHT - len(names) * tab_w - (len(names) - 1) * gap
-    for i, (number, name) in enumerate(names):
+    return [(x + i * (tab_w + gap), top, x + i * (tab_w + gap) + tab_w, top + tab_h) for i in range(len(names))]
+
+
+def steps(img, active, top=TOP + 54, names=STEPS):
+    """A screen's steps (the single player's by default), each number and name centred in its tab."""
+    number_w = max(sub_width(n, 34, bold=True) for n, _ in names)
+    for i, ((number, name), area) in enumerate(zip(names, step_areas(top, names))):
+        x, y0, x1, y1 = area
         on = i == active
-        pts = slanted((x, top, x + tab_w, top + tab_h))
+        pts = slanted(area)
         if on:
             shape(img, pts, ORANGE)
         else:
             shape(img, pts, PANEL, 200)
             outline(img, pts, (72, 74, 80), 2)
         content = number_w + 18 + heading_ink(name, 32)
-        cx = x + tab_w / 2 - content / 2
-        baseline = top + tab_h / 2 + cap_height(32) / 2
+        cx = (x + x1) / 2 - content / 2
+        baseline = (y0 + y1) / 2 + cap_height(32) / 2
         sub(img, number, cx, baseline, 34, INK if on else ORANGE, bold=True)
         heading(img, name, cx + number_w + 18, baseline, 32, INK if on else PAPER)
-        x += tab_w + gap
 
 
 def keys_right(img, pairs, centre, right):

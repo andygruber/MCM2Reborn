@@ -393,6 +393,23 @@ static const struct {
     { 0x7F58, 0x551, NAME(0x0056F974), (void**) 0x00556E70 },               /* SPRInfo.dtm */
 };
 
+#ifdef OPENMCM2_DEV
+/* MCM2:Reborn's screen titles each page itself, its tabs' words drawn in their pictures. */
+static const char* const sp_titles[3] = { "TitleEvent", "TitleBikeRider", "TitleRaceInfo" };
+
+static void sp_title_show(BYTE* self, int page)
+{
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        BYTE* title = dialog_find_control(self, NULL, sp_titles[i], 0);
+
+        if (title)
+            control_show(title, NULL, i == page, FALSE);
+    }
+}
+#endif
+
 /* Show page `page` (0 to 2) over the screen, closing the others; one already open stays. */
 PORT(0x0044E600)
 void __fastcall sp_show_page(BYTE* self, void* edx_unused, int page)
@@ -402,6 +419,10 @@ void __fastcall sp_show_page(BYTE* self, void* edx_unused, int page)
     int i;
 
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (page >= 0 && page <= 2)
+        sp_title_show(self, page);
+#endif
     for (i = 0; i < 3; i++) {
         BYTE** open = &FIELD(self, SP_PAGES + 4 * i, BYTE*);
 
@@ -2121,6 +2142,85 @@ static void tracks_list(BYTE* self, DWORD append)
 __declspec(noinline) void __fastcall sp_event_kind_set(BYTE* self);
 __declspec(noinline) void __fastcall sp_event_refresh(BYTE* self);
 
+#ifdef OPENMCM2_DEV
+/*
+    MCM2:Reborn's event page (tools/modern/build_singleplayer.py) has event cards in place of
+    EventTypeDropDown, and TrackList beside the game's track list: in that list's group, so a
+    track chosen in either is chosen in both, and filled here with the same tracks. A layout
+    without them is left as it is.
+*/
+static const struct {
+    const char* name;
+    DWORD       kind;               /* as EventTypeDropDown's entries have it */
+} event_cards[] = {
+    { "CardSupercross", 3 }, { "CardNationals", 2 }, { "CardBaja", 1 }, { "CardEnduro", 5 },
+    { "CardQuarry", 0 },
+};
+
+#define EVENT_CARDS (sizeof event_cards / sizeof *event_cards)
+
+/* The card for the event chosen, and the tracks listed again. */
+static void event_page_show(BYTE* self)
+{
+    BYTE* tracks = combo_list(self, LIST_TEXT_BOX);
+    BYTE* mirror = dialog_find_control(self, NULL, "TrackList", 0);
+    DWORD kind = list_data(combo_list(self, SP_EVENT_TYPE), NULL, -1);
+    int i;
+
+    for (i = 0; i < (int) EVENT_CARDS; i++) {
+        BYTE* card = dialog_find_control(self, NULL, event_cards[i].name, TAB_CONTROL);
+
+        if (card && event_cards[i].kind == kind)
+            radio_set(card, NULL, 0);
+    }
+    if (!mirror)
+        return;
+    list_clear(mirror);
+    for (i = 0; i < FIELD(tracks, 0x1EC, int); i++) {
+        char row[0x100];
+
+        game_FUN_0053a11f(row, "%02d   %s", i + 1, list_text(tracks, NULL, i));
+        list_add_text(mirror, NULL, row, list_data(tracks, NULL, i), 0);
+    }
+    list_select_all(mirror, NULL, list_selected(tracks));
+}
+
+/* A card clicked: its event chosen, as EventTypeDropDown's would be. TRUE when it was one. */
+static BOOL event_card_clicked(BYTE* self, const ui_event* event)
+{
+    int i;
+
+    for (i = 0; i < (int) EVENT_CARDS; i++)
+        if (clicked(event, event_cards[i].name)) {
+            list_select_data(combo_list(self, SP_EVENT_TYPE), NULL, event_cards[i].kind);
+            dialog_notify_controls(self, NULL, 1);
+            sp_event_kind_set(self);
+            sp_event_refresh(self);
+            ghosts_fill(self);
+            return TRUE;
+        }
+    return FALSE;
+}
+
+/* The page's gates and seed wells go with their numbers. */
+static void gates_show(BYTE* self, BOOL shown)
+{
+    static const char* const parts[] = {
+        "GatesChip", "SeedChip", "RandomGatesLeftArrow", "RandomGatesRightArrow", "SeedLeft", "SeedRight",
+    };
+    int i;
+
+    if (!dialog_find_control(self, NULL, parts[0], 0))
+        return;
+    for (i = 0; i < (int) (sizeof parts / sizeof *parts); i++) {
+        BYTE* part = dialog_find_control(self, NULL, parts[i], 0);
+
+        if (part)
+            control_show(part, NULL, shown, TRUE);
+    }
+}
+#endif
+
 /*
     The kind picked in EventTypeDropDown becomes the race's: race mode 4 for all kinds but 0,
     0 to 10 opponents, laps - or for kind 0 lengths in metres - and the kind's tracks (kind 0
@@ -2182,6 +2282,9 @@ void __fastcall sp_event_kind_set(BYTE* self)
     profile_set_event(game_profile, NULL, kind);
     list_select_text(combo_list(self, LIST_TEXT_BOX), NULL,
                      (const char*) game_main + 0xC6C + kind * 0x80);
+#ifdef OPENMCM2_DEV
+    event_page_show(self);
+#endif
 }
 
 /* Vtable slot 31: the event page's controls into the settings (out), or the settings into them. */
@@ -2335,6 +2438,9 @@ void __fastcall sp_event_refresh(BYTE* self)
         dialog_set_controls(self, NULL, 0x6F, random);
         control_show(dialog_find_control(self, NULL, SP_GATES, 0), NULL, random, TRUE);
         control_show(dialog_find_control(self, NULL, SP_SEED, 0), NULL, random, TRUE);
+#ifdef OPENMCM2_DEV
+        gates_show(self, random);
+#endif
     } else {
         control_show(waypoints, NULL, FALSE, TRUE);
     }
@@ -2393,6 +2499,10 @@ void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
     (void) edx_unused;
     if (event->type == EVENT_CLICK) {
+#ifdef OPENMCM2_DEV
+        if (event_card_clicked(self, event))
+            return;
+#endif
         if (clicked(event, SP_RANDOM_GATES))
             sp_event_refresh(self);
         if (clicked(event, SP_TRACK_LEFT))
@@ -2429,6 +2539,13 @@ void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
             ghosts_fill(self);
             text_copy((char*) game_main + race_kind * 0x80 + 0xC6C, list_text(list, NULL, -1));
         }
+#ifdef OPENMCM2_DEV
+        else if (clicked(event, "TrackList")) {
+            list = combo_list(self, LIST_TEXT_BOX);
+            ghosts_fill(self);
+            text_copy((char*) game_main + race_kind * 0x80 + 0xC6C, list_text(list, NULL, -1));
+        }
+#endif
     } else if (event->type == EVENT_OPEN) {
         BYTE* list = combo_list(self, SP_EVENT_TYPE);
         char number[0x80];
@@ -2493,6 +2610,10 @@ static BYTE* sp_tab_setup(BYTE* self, const char* name, UINT id)
 {
     BYTE* tab = dialog_find_control(self, NULL, name, TAB_CONTROL);
 
+#ifdef OPENMCM2_DEV
+    if (dialog_find_control(self, NULL, sp_titles[0], 0))
+        return tab;
+#endif
     option_load_text(tab, NULL, 0, game_language, id);
     option_load_text(tab, NULL, 1, game_language, id);
     control_set_align(tab, NULL, 0x12);

@@ -47,11 +47,14 @@ static void menu_place(BYTE* screen, RECT* area)
     area->bottom = top + (int) (area->bottom * scale);
 }
 
+static BOOL dialog_view(BYTE* dialog, RECT* view);
+
 /* The same for a rectangle on `dialog`'s screen: the bike previews' views, which the game gives
-   in the original's pixels. */
+   in the original's pixels. A modern layout's View is where its own art leaves room for it. */
 void menu_place_view(BYTE* dialog, RECT* view)
 {
-    menu_place(object_screen(dialog), view);
+    if (!dialog_view(dialog, view))
+        menu_place(object_screen(dialog), view);
 }
 #endif
 
@@ -2380,6 +2383,7 @@ static int modern_count = 0;
 static struct {
     BYTE* dialog;
     int art;
+    RECT view;              /* its View, in its layout's pixels; empty when it gives none */
 } dialog_arts[64] = { 0 };
 
 static void modern_mark(const char* name, void* picture)
@@ -2412,23 +2416,25 @@ static BOOL modern_marked(void* picture)
     return FALSE;
 }
 
-/* A dialog's ArtScale, kept each time a layout is read: a dialog's address is reused. */
-static void dialog_art_set(BYTE* dialog, int art)
+/* A dialog's ArtScale and View, kept each time a layout is read: a dialog's address is reused. */
+static void dialog_art_set(BYTE* dialog, int art, const RECT* view)
 {
     int i, free = -1;
 
     for (i = 0; i < 64; i++) {
-        if (dialog_arts[i].dialog == dialog) {
-            dialog_arts[i].art = art;
-            return;
-        }
+        if (dialog_arts[i].dialog == dialog)
+            break;
         if (free < 0 && dialog_arts[i].art <= 1)
             free = i;
     }
-    if (art > 1 && free >= 0) {
-        dialog_arts[free].dialog = dialog;
-        dialog_arts[free].art = art;
+    if (i == 64) {
+        if (art <= 1 || free < 0)
+            return;
+        i = free;
+        dialog_arts[i].dialog = dialog;
     }
+    dialog_arts[i].art = art;
+    dialog_arts[i].view = *view;
 }
 
 static int dialog_art(BYTE* dialog)
@@ -5562,9 +5568,20 @@ static int list_entry_art(BYTE* self, int index)
     list_entry* entry = &list_entries(self)[index];
     int art = dialog_art(FIELD(self, CTL_DIALOG, BYTE*));
 
+    BYTE* dialog = FIELD(self, CTL_DIALOG, BYTE*);
+    int width, across;
+
     if (art <= 1 || (entry->kind != 2 && entry->kind != 3) || !entry->anim)
         return 1;
-    return modern_marked(anim_current(entry->anim)->picture) ? 1 : art;
+    if (modern_marked(anim_current(entry->anim)->picture))
+        return 1;
+    /* At most as many times as fits across the list, in its layout's pixels. */
+    width = anim_current(entry->anim)->width;
+    across = (int) ((FIELD(self, CTL_RECT, RECT).right - FIELD(self, CTL_RECT, RECT).left
+                     - 2 * FIELD(self, 0xE8, LONG)) / FIELD(dialog, 0x9C4, float) + 0.5f);
+    if (width > 0 && across / width < art)
+        art = across / width > 1 ? across / width : 1;
+    return art;
 }
 #endif
 
@@ -8710,6 +8727,38 @@ static BOOL reader_int(dialog_reader* r, const char* key, int fallback, int* val
     return game_FUN_004bc660(&r->file, NULL, key, fallback, value);
 }
 
+#ifdef OPENMCM2_DEV
+/* A dev key's "x, y, w, h" as a rectangle; FALSE, and `rect` as it was, when there is none. */
+static BOOL reader_rect(dialog_reader* r, const char* key, RECT* rect)
+{
+    if (!reader_string(r, key, NO_TEXT, r->text) || !r->text[0])
+        return FALSE;
+    game_FUN_0053a97b(r->text, XYXY_FORMAT, &rect->left, &rect->top, &rect->right, &rect->bottom);
+    rect->right += rect->left;
+    rect->bottom += rect->top;
+    return TRUE;
+}
+
+/* Where a modern dialog's View is on the screen; FALSE when it gives none. */
+static BOOL dialog_view(BYTE* dialog, RECT* view)
+{
+    const RECT* area = &FIELD(dialog, DLG_AREA, RECT);
+    float scale = FIELD(dialog, 0x9C4, float);
+    int i;
+
+    for (i = 0; i < 64; i++)
+        if (dialog_arts[i].dialog == dialog)
+            break;
+    if (i == 64 || dialog_arts[i].view.right <= dialog_arts[i].view.left)
+        return FALSE;
+    view->left = area->left + (int) (dialog_arts[i].view.left * scale);
+    view->top = area->top + (int) (dialog_arts[i].view.top * scale);
+    view->right = area->left + (int) (dialog_arts[i].view.right * scale);
+    view->bottom = area->top + (int) (dialog_arts[i].view.bottom * scale);
+    return TRUE;
+}
+#endif
+
 /* String `key`: into its default in Set_Default, else into `value` (missing, the default). */
 static BOOL keys_string(dialog_reader* r, const char* key, char* fallback, char* value)
 {
@@ -8789,6 +8838,7 @@ static void reader_info(dialog_reader* r)
     int height, bold, italic, i;
 #ifdef OPENMCM2_DEV
     int art = 1;
+    RECT place;
 #endif
 
     reader_int(r, KEY(0x00571CDC), FIELD(screen, 0xC, int), &FIELD(self, DLG_DESIGN_W, int));
@@ -8838,9 +8888,11 @@ static void reader_info(dialog_reader* r)
     */
     if (dev_settings.menus_widescreen) {
         int photos = 0;
+        RECT view = { 0 };
 
         reader_int(r, "ArtScale", 1, &art);
-        dialog_art_set(self, art);
+        reader_rect(r, "View", &view);
+        dialog_art_set(self, art, &view);
         reader_int(r, "Photos", 0, &photos);
         if (photos) {
             photos_dialog = self;
@@ -8875,6 +8927,21 @@ static void reader_info(dialog_reader* r)
         }
         area->right = area->left + across;
         area->bottom = area->top + down;
+    }
+
+    /*
+        Place: where a modern page goes on the screen it opens over, in that screen's layout
+        pixels, in place of the 640x480 window the game opens it in.
+    */
+    if (dev_settings.menus_widescreen && FIELD(self, DLG_PARENT, BYTE*) && reader_rect(r, "Place", &place)) {
+        BYTE* parent = FIELD(self, DLG_PARENT, BYTE*);
+        RECT* area = &FIELD(self, DLG_AREA, RECT);
+        float scale = FIELD(parent, 0x9C4, float);
+
+        area->left = FIELD(parent, DLG_AREA, RECT).left + (int) (place.left * scale);
+        area->top = FIELD(parent, DLG_AREA, RECT).top + (int) (place.top * scale);
+        area->right = FIELD(parent, DLG_AREA, RECT).left + (int) (place.right * scale);
+        area->bottom = FIELD(parent, DLG_AREA, RECT).top + (int) (place.bottom * scale);
     }
 
     if (dev_settings.trace_display)
