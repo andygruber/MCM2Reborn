@@ -1,22 +1,31 @@
 """The modern menus' look, drawn from nothing.
 
-The Glassed look - text over the backdrop, smoked glass, hairline edges, the chosen item on a
-strip of clear glass with a warm glow - over a dark-to-light blue gradient. Everything is laid
-out on a 1920x1080 grid and drawn at SCALE times that, so the pictures are sharp at the size the
-menus show at (2560x1440: SCALE 4/3).
+Flat and graphic: a dark backdrop, condensed italic type in cream, a yellow for what is chosen,
+a blue for labels, and grey rows with a blue edge. Everything is laid out on a 1920x1080 grid
+and drawn at SCALE times that, so the pictures are sharp at the size the menus show at
+(2560x1440: SCALE 4/3).
 """
 import numpy as np
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 SCALE = 4 / 3
 W, H = round(1920 * SCALE), round(1080 * SCALE)
-FONT = r"C:\Windows\Fonts\bahnschrift.ttf"
 
-WHITE = (255, 255, 255)
-ICE = (176, 214, 255)           # hairlines and headings
-EMBER = (255, 168, 64)          # the glow round the chosen item
-INK = (2, 8, 24)
-NAVY = (6, 14, 36)
+BAHNSCHRIFT = r"C:\Windows\Fonts\bahnschrift.ttf"
+CONSOLAS = r"C:\Windows\Fonts\consola.ttf"
+SEGOE = r"C:\Windows\Fonts\segoeui.ttf"
+SEGOE_SEMIBOLD = r"C:\Windows\Fonts\seguisb.ttf"
+
+CREAM = (240, 236, 224)
+YELLOW = (245, 211, 39)
+YELLOW_DOWN = (214, 182, 22)
+BLUE = (74, 144, 226)
+INK = (18, 18, 20)              # type on yellow
+GREY = (150, 152, 156)          # quiet type
+DIM = (96, 99, 104)             # a greyed-out item
+ROW = (62, 65, 70)              # a row at rest
+ROW_LINE = (78, 82, 88)         # the rule between rows
+CARD = (52, 55, 59)
 
 
 def s(value):
@@ -24,146 +33,88 @@ def s(value):
     return round(value * SCALE)
 
 
-def font(size, style="Bold Condensed"):
-    f = ImageFont.truetype(FONT, s(size))
-    f.set_variation_by_name(style)
+def font(size, path=BAHNSCHRIFT, style="Bold Condensed"):
+    f = ImageFont.truetype(path, s(size))
+    if path == BAHNSCHRIFT:
+        f.set_variation_by_name(style)
     return f
 
 
-def stops(colours, n):
-    """n values blended through (position 0..1, rgb) stops."""
-    t = np.linspace(0, 1, n)[:, None]
-    out = np.zeros((n, 3))
-    for (p0, c0), (p1, c1) in zip(colours, colours[1:]):
-        k = np.clip((t - p0) / max(p1 - p0, 1e-6), 0, 1)
-        inside = (t >= p0) & (t <= p1)
-        out = np.where(inside, np.array(c0) + (np.array(c1) - np.array(c0)) * k, out)
-    return out
+def mono(size):
+    return font(size, CONSOLAS)
 
 
-def to_image(array, mode="RGB"):
-    return Image.fromarray(np.clip(array, 0, 255).astype(np.uint8), mode)
+def body(size, semibold=False):
+    return font(size, SEGOE_SEMIBOLD if semibold else SEGOE)
 
 
-def solid(size, colour, alpha):
-    """`colour` through the `alpha` mask, as an RGBA layer."""
-    layer = Image.new("RGBA", size, colour + (0,))
-    layer.putalpha(alpha)
-    return layer
+def backdrop():
+    """Near black at the top to a dark slate at the bottom."""
+    sky = np.linspace(0, 1, H)[:, None]
+    top, bottom = np.array((14, 15, 18)), np.array((34, 37, 42))
+    rows = top + (bottom - top) * sky
+    return Image.fromarray(np.repeat(rows[:, None, :], W, 1).astype(np.uint8)).convert("RGBA")
 
 
-def lean(img, slant=0.2):
-    """Lean an image forward, as the type does."""
+def lean(img, slant=0.18):
+    """Lean an image forward, as italic type does."""
     w, h = img.size
     extra = int(h * slant)
     return img.transform((w + extra, h), Image.AFFINE, (1, slant, -extra, 0, 1, 0), Image.BICUBIC)
 
 
-def text_mask(text, size, style="Bold Condensed"):
-    f = font(size, style)
-    pad = s(16)
-    box = f.getbbox(text)
-    mask = Image.new("L", (box[2] - box[0] + pad * 2, box[3] - box[1] + pad * 2))
-    ImageDraw.Draw(mask).text((pad - box[0], pad - box[1]), text, font=f, fill=255)
-    return mask
+def width_of(words, f, spacing=0):
+    """How wide `words` set, in pixels; `spacing` (grid units) goes between letters."""
+    return sum(f.getlength(c) for c in words) + s(spacing) * max(len(words) - 1, 0)
 
 
-def gradient():
-    """Dark blue at the top to light blue at the bottom, nothing else."""
-    sky = stops([(0, (4, 10, 30)), (0.45, (16, 52, 112)), (1, (96, 160, 226))], H)
-    return to_image(np.repeat(sky[:, None, :], W, 1)).convert("RGBA")
+def text(canvas, words, x, y, f, colour, italic=False, right=False, spacing=0):
+    """`words` with its baseline at y pixels, starting at x (or ending there, `right`)."""
+    ascent, descent = f.getmetrics()
+    pad = s(12)
+    advance = width_of(words, f, spacing)
+    mask = Image.new("L", (int(advance) + pad * 2, ascent + descent + pad * 2))
+    d = ImageDraw.Draw(mask)
+    at = pad
+    for c in words:
+        d.text((at, pad + ascent), c, font=f, fill=255, anchor="ls")
+        at += f.getlength(c) + s(spacing)
+    if italic:
+        mask = lean(mask)
+    left = x - (int(advance) if right else 0) - pad
+    layer = Image.new("RGBA", mask.size, colour + (0,))
+    layer.putalpha(mask)
+    canvas.alpha_composite(layer, (int(left), int(y - ascent - pad)))
 
 
-def smoked_glass(canvas, box, radius=0, tint=NAVY, dim=0.55, edge=ICE):
-    """Smoked glass over `box` (pixels): what is behind it darkened, a sheen across the top, a
-    hairline round it."""
-    x0, y0, x1, y1 = box
-    behind = canvas.crop(box).convert("RGB")
-    dark = Image.blend(behind, Image.new("RGB", behind.size, tint), dim)
-    sheen = stops([(0, (255, 255, 255)), (0.18, (0, 0, 0)), (1, (0, 0, 0))], y1 - y0)
-    sheen = to_image(np.repeat(sheen[:, None, :], x1 - x0, 1) * 0.08)
-    glass = ImageChops.add(dark, sheen).convert("RGBA")
-    mask = Image.new("L", glass.size)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, x1 - x0 - 1, y1 - y0 - 1), radius, fill=255)
-    canvas.paste(glass, (x0, y0), mask)
-    line = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    ImageDraw.Draw(line).rounded_rectangle(box, radius, outline=edge + (150,), width=max(1, s(1)))
-    canvas.alpha_composite(line)
-
-
-def chosen_strip(canvas, x, y, w, h):
-    """The chosen item's ground (pixels): a strip of clear glass fading to the right, a tick at
-    its left, and a warm light along its edges."""
-    across = np.linspace(1, 0, w) ** 1.6
-    strip = Image.new("L", (w, h))
-    strip.putdata([int(150 * a) for _ in range(h) for a in across])
-    edge = Image.new("L", (w, h))
-    ImageDraw.Draw(edge).rectangle((0, 0, w - 1, h - 1), outline=255, width=s(3))
-    reach = Image.new("L", (w, h))                         # the edge stays lit most of the way
-    reach.putdata([int(255 * min(1, (1 - i / w) * 1.6)) for _ in range(h) for i in range(w)])
-    edge = ImageChops.multiply(edge, reach)
-
-    glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    glow.paste(solid((w, h), EMBER, edge), (x, y))
-    for radius, times in ((22, 2), (9, 2), (3, 1)):        # a wide warm bloom, then a tight one
-        bloom = glow.filter(ImageFilter.GaussianBlur(s(radius)))
-        for _ in range(times):
-            canvas.alpha_composite(bloom)
-    canvas.alpha_composite(solid((w, h), (255, 236, 210), strip.point(lambda v: v // 4)), (x, y))
-    canvas.alpha_composite(solid((w, h), (255, 230, 190), edge), (x, y))
-    ImageDraw.Draw(canvas).rectangle((x, y + s(4), x + s(3), y + h - s(5)), fill=EMBER + (255,))
-
-
-def pressed_strip(canvas, x, y, w, h):
-    """Pushed (pixels): the strip without its bloom, deeper, the tick still lit."""
-    across = np.linspace(1, 0, w) ** 1.2
-    strip = Image.new("L", (w, h))
-    strip.putdata([int(120 * a) for _ in range(h) for a in across])
-    canvas.alpha_composite(solid((w, h), (60, 28, 10), strip), (x, y))
-    edge = Image.new("L", (w, h))
-    ImageDraw.Draw(edge).rectangle((0, 0, w - 1, h - 1), outline=170, width=s(2))
-    canvas.alpha_composite(solid((w, h), EMBER, edge), (x, y))
-    ImageDraw.Draw(canvas).rectangle((x, y + s(4), x + s(3), y + h - s(5)), fill=EMBER + (255,))
-
-
-def label(canvas, text, x, y, size, colour, style="Bold Condensed", shade=True):
-    """`text` at (x, y) pixels, `size` on the grid."""
-    mask = lean(text_mask(text, size, style))
-    if shade:                                              # keeps type readable over light blue
-        canvas.alpha_composite(solid(mask.size, INK, mask.filter(ImageFilter.GaussianBlur(s(4)))),
-                               (x + s(2), y + s(3)))
-    canvas.alpha_composite(solid(mask.size, colour, mask), (x, y))
-
-
-def glass_title(canvas, text, x, y, size):
-    """Glass letters (pixels, grid size): dark glass with a bright upper edge, an ice rim and a
-    band of light."""
-    mask = lean(text_mask(text, size), 0.16)
-    w, h = mask.size
-    body = to_image(np.repeat(stops([(0, (244, 250, 255)), (0.46, (130, 170, 224)), (0.5, (14, 34, 78)),
-                                     (1, (84, 130, 196))], h)[:, None, :], w, 1))
-    band = Image.new("L", (w, h))                          # the light caught across the letters
-    ImageDraw.Draw(band).polygon([(w * 0.22, 0), (w * 0.32, 0), (w * 0.24, h), (w * 0.14, h)], fill=110)
-    body = ImageChops.add(body, Image.merge("RGB", [band.filter(ImageFilter.GaussianBlur(s(6)))] * 3))
-    rim = ImageChops.subtract(mask.filter(ImageFilter.MaxFilter(2 * s(2) + 1)), mask)
-    canvas.alpha_composite(solid((w, h), INK, mask.filter(ImageFilter.GaussianBlur(s(10)))), (x + s(4), y + s(8)))
-    canvas.alpha_composite(solid((w, h), ICE, rim.filter(ImageFilter.GaussianBlur(s(6)))), (x, y))
-    letters = body.convert("RGBA")
-    letters.putalpha(mask)
-    canvas.alpha_composite(letters, (x, y))
-    canvas.alpha_composite(solid((w, h), (230, 242, 255), rim), (x, y))
-
-
-def chain_line(canvas, x0, x1, y, pitch):
-    """A drive chain drawn in hairlines (pixels) - outer and inner link plates in turn, a pin at
-    each joint: the original's chain, as a fine rule."""
+def rect(canvas, box, colour, alpha=255):
     layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    for i, x in enumerate(range(x0, x1, pitch)):
-        half = s(9) if i % 2 == 0 else s(6)                # outer plates stand taller
-        d.rounded_rectangle((x - s(4), y - half, x + pitch + s(4), y + half), half,
-                            outline=ICE + (230,), width=s(2))
-    for x in range(x0, x1 + 1, pitch):
-        d.ellipse((x - s(3), y - s(3), x + s(3), y + s(3)), fill=(236, 246, 255, 255))
-    canvas.alpha_composite(layer.filter(ImageFilter.GaussianBlur(s(4))))
+    ImageDraw.Draw(layer).rectangle(box, fill=colour + (alpha,))
     canvas.alpha_composite(layer)
+
+
+def dash(canvas, x, y, length, colour):
+    """The short rule before a label."""
+    rect(canvas, (x, y, x + s(length) - 1, y + s(3) - 1), colour)
+
+
+def arrow(canvas, x, y, size, colour):
+    """A right arrow, centred on (x, y)."""
+    d = ImageDraw.Draw(canvas)
+    half = s(size) // 2
+    w = max(s(2.4), 2)
+    d.line([(x - half, y), (x + half, y)], fill=colour + (255,), width=w)
+    d.line([(x + half - s(size * 0.42), y - s(size * 0.42)), (x + half, y),
+            (x + half - s(size * 0.42), y + s(size * 0.42))], fill=colour + (255,), width=w,
+           joint="curve")
+
+
+def exit_icon(canvas, x, y, colour):
+    """A door with an arrow leaving it, top left at (x, y)."""
+    d = ImageDraw.Draw(canvas)
+    w = max(s(2), 2)
+    d.line([(x + s(9), y), (x, y), (x, y + s(18)), (x + s(9), y + s(18))], fill=colour + (255,),
+           width=w)
+    d.line([(x + s(6), y + s(9)), (x + s(19), y + s(9))], fill=colour + (255,), width=w)
+    d.line([(x + s(15), y + s(5)), (x + s(19), y + s(9)), (x + s(15), y + s(13))],
+           fill=colour + (255,), width=w)

@@ -8,6 +8,7 @@ Every picture is an opaque 16-bit TGA: the menus key out magenta (0xFF00FF) and 
 so each button carries its own piece of the backdrop, drawn in each of its four states.
 """
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,41 +16,58 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).parent))
-from mainmenu_art import (EMBER, ICE, WHITE, H, W, chain_line, chosen_strip, glass_title,  # noqa: E402
-                          gradient, label, pressed_strip, s, smoked_glass, solid)
+from mainmenu_art import (BLUE, CARD, CREAM, DIM, GREY, H, INK, ROW, ROW_LINE, W,  # noqa: E402
+                          YELLOW, YELLOW_DOWN, arrow, backdrop, body, dash, exit_icon, font,
+                          mono, rect, s, text, width_of)
 
 FOLDER = "02_Modern\\"
-SOFT = (222, 232, 248)          # an item at rest
-SOFT_ICE = (196, 222, 252)
-GREY = (104, 124, 156)
 MAGENTA = (255, 0, 255)
+VERSION = "0.1"
+NUMBER_BLUE = (52, 100, 158)    # a row's number at rest
 
-# The left pane's items, top to bottom: control, label.
-MAIN_ITEMS = [("MenuSingle", "SINGLE PLAYER"), ("MenuMulti", "MULTIPLAYER"), ("MenuOptions", "OPTIONS"),
-              ("MenuUserProfile", "RIDER PROFILE"), ("MenuHighScore", "HIGH SCORES"),
-              ("MenuReplay", "REPLAYS"), ("Menuexit", "EXIT")]
-STATUS_ITEMS = [("MenuHelp", "HELP", (1540, 1014, 150, 58)), ("MenuCredits", "CREDITS", (1700, 1014, 190, 58))]
+# The main rows, top to bottom: control, title, tag, the line shown when it is chosen.
+MAIN_ITEMS = [
+    ("MenuSingle", "SINGLE PLAYER", "6 EVENTS", "Pick an event. Drop the gate. Leave your mark."),
+    ("MenuMulti", "MULTIPLAYER", "LAN / ONLINE", "Race your friends on a network or online."),
+    ("MenuHighScore", "HIGH SCORES", "RECORDS", "The fastest laps and the biggest scores."),
+    ("MenuReplay", "REPLAYS", "VCR", "Watch your recorded races again."),
+    ("MenuOptions", "OPTIONS", "SETUP", "Controls, graphics and sound."),
+]
+ROWS_X, ROWS_Y, ROW_W, ROW_H = 67, 430, 546, 84
+EXIT = ("Menuexit", (67, ROWS_Y + ROW_H * 5 + 18, 300, 52))
+CHIPS = [("MenuHelp", "HELP", (67, 990, 112, 40)), ("MenuCredits", "CREDITS", (191, 990, 150, 40))]
+PROFILE_CARD = (1533, 52, 320, 112)
+CURRENT_PROFILE = (1623, 84, 215, 34)
 
 # The pull-down panels: the panel control, its place, its title, and its buttons.
-PANEL_X, PANEL_Y = 660, 400
-SINGLE = ("MenuSingleAnimation", (PANEL_X, PANEL_Y, 860, 440), "SELECT EVENT",
+SINGLE = ("MenuSingleAnimation", (640, ROWS_Y, 790, 420), "SELECT EVENT",
           [("ButBaja", "BAJA"), ("ButStuntQuarry", "STUNT QUARRY"), ("ButEnduro", "ENDURO"),
-           ("ButNationals", "NATIONALS"), ("ButSupercross", "SUPERCROSS"), ("ButProCircuit", "PRO-CIRCUIT")])
-MULTI = ("MenuMultiAnimation", (PANEL_X, PANEL_Y, 480, 430), "MULTIPLAYER",
+           ("ButNationals", "NATIONALS"), ("ButSupercross", "SUPERCROSS"),
+           ("ButProCircuit", "PRO-CIRCUIT")])
+MULTI = ("MenuMultiAnimation", (640, ROWS_Y, 430, 400), "MULTIPLAYER",
          [("ButIPX", "LOCAL NETWORK"), ("ButTCP", "INTERNET  TCP/IP"), ("ButZone", "MSN GAMING ZONE"),
           ("ButCable", "SERIAL CABLE"), ("ButModem", "MODEM")])
-USER = ("MenuUserAnimation", (PANEL_X, PANEL_Y, 760, 470), "RIDER PROFILES",
+USER = ("MenuUserAnimation", (1153, 186, 700, 420), "RIDER PROFILES",
         [("ButNewProfile", "NEW"), ("ButLoadProfile", "LOAD"), ("ButRemoveProfile", "REMOVE"),
-         ("ButCancelProfile", "CANCEL")])
-MOVIE_FRAME = (430, 92, 400, 290)           # ScreenOverCtl, on the single-player panel
-PROFILE_LIST = (30, 86, 370, 356)
-SCROLL_X, SCROLL_W = 408, 34
-CURRENT_PROFILE = (170, 1016, 640, 52)
+         ("ButCancelProfile", "CLOSE")])
+MOVIE_FRAME = (384, 70, 382, 280)           # ScreenOverCtl, on the single-player panel
+PROFILE_LIST = (24, 70, 400, 326)
+SCROLL_X, SCROLL_W = 430, 30
 
 
 def px(box):
     """A box on the grid, in pixels."""
     return tuple(s(v) for v in box)
+
+
+def build_version():
+    """The version line's build: VERSION and the dev tree's commit."""
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+                                text=True, cwd=Path(__file__).parent, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return VERSION
+    return "%s  %s" % (VERSION, commit)
 
 
 # ---- TGA and RS2 ----
@@ -96,69 +114,139 @@ def rs2_entries(data):
 
 # ---- The art ----
 
+def label(canvas, words, x, y, colour=BLUE):
+    """A small mono label (pixels, its baseline at y), with its rule before it."""
+    dash(canvas, x, y - s(6), 10, colour)
+    text(canvas, words, x + s(20), y, mono(13), colour, spacing=1)
+
+
 def background():
-    canvas = gradient()
-    smoked_glass(canvas, px((0, 0, 620, 1080)))
-    glass_title(canvas, "MOTOCROSS", s(1000), s(70), 136)
-    glass_title(canvas, "MADNESS", s(1060), s(196), 136)
-    glass_title(canvas, "2", s(1560), s(54), 300)
-    chain_line(canvas, s(1010), s(1590), s(352), s(30))
-    ImageDraw.Draw(canvas).line([(s(92), s(180)), (s(560), s(180))], fill=ICE + (170,), width=s(1))
-    label(canvas, "MAIN MENU", s(92), s(126), 30, ICE, "SemiBold Condensed", shade=False)
-    smoked_glass(canvas, px((0, 1010, 1920, 1080)))
-    label(canvas, "RIDER", s(92), s(1022), 22, ICE, "SemiBold Condensed", shade=False)
+    canvas = backdrop()
+    dash(canvas, s(67), s(56), 24, YELLOW)
+    text(canvas, "COMMUNITY REBUILT.  WIDE OPEN.", s(101), s(62), mono(13), GREY, spacing=1)
+    title = font(126)
+    text(canvas, "MOTOCROSS", s(64), s(184), title, CREAM, italic=True)
+    text(canvas, "MADNESS", s(64), s(296), title, CREAM, italic=True)
+    text(canvas, "2", s(64) + int(width_of("MADNESS", title)) + s(26), s(300), font(140), YELLOW,
+         italic=True)
+    label(canvas, "MAIN MENU", s(ROWS_X), s(ROWS_Y - 14))
+    text(canvas, "OPEN-SOURCE REIMPLEMENTATION  /  DEVELOPMENT BUILD " + build_version(),
+         s(1853), s(1008), mono(14), BLUE, right=True, spacing=0.5)
+    text(canvas, "An independent community project. Not affiliated with or endorsed by the "
+         "original creators.", s(1853), s(1034), body(14), GREY, right=True)
     return canvas
-
-
-def panel_card(base, panel):
-    """The panel's card over the backdrop: smoked glass, a hairline, its title."""
-    _, (x, y, w, h), title, _ = panel
-    canvas = base.copy()
-    smoked_glass(canvas, px((x, y, x + w, y + h)), radius=s(14))
-    label(canvas, title, s(x + 34), s(y + 24), 28, ICE, "SemiBold Condensed", shade=False)
-    ImageDraw.Draw(canvas).line([(s(x + 34), s(y + 68)), (s(x + w - 34), s(y + 68))],
-                                fill=ICE + (140,), width=s(1))
-    return canvas
-
-
-def states(base, box, text, size, rest_colour, inset=(14, 6)):
-    """The four pictures of a button at grid `box` over `base`: Up, Lit, Down, Grey."""
-    x, y, w, h = px(box)
-    ix, iy = s(inset[0]), s(inset[1])
-    margin = s(48)
-    region = (max(x - margin, 0), max(y - margin, 0), min(x + w + margin, W), min(y + h + margin, H))
-    ox, oy = region[0], region[1]
-    tx, ty = x - ox + ix + s(30), y - oy + (h - s(size)) // 2 - s(6)
-    pictures = {}
-    for state in ("Up", "Lit", "Down", "Grey"):
-        local = base.crop(region)
-        if state == "Lit":
-            chosen_strip(local, x - ox + ix, y - oy + iy, w - 2 * ix, h - 2 * iy)
-            label(local, text, tx, ty, size, WHITE)
-        elif state == "Down":
-            pressed_strip(local, x - ox + ix, y - oy + iy, w - 2 * ix, h - 2 * iy)
-            label(local, text, tx + s(1), ty + s(2), size, EMBER)
-        elif state == "Grey":
-            label(local, text, tx, ty, size, GREY, shade=False)
-        else:
-            label(local, text, tx, ty, size, rest_colour)
-        pictures[state] = local.crop((x - ox, y - oy, x - ox + w, y - oy + h))
-    return pictures
-
-
-def arrow(size, up, colour):
-    img = Image.new("RGBA", size, (0, 0, 0, 0))
-    w, h = size
-    points = [(w * 0.25, h * 0.62), (w * 0.5, h * 0.36), (w * 0.75, h * 0.62)]
-    if not up:
-        points = [(x, h - y) for x, y in points]
-    ImageDraw.Draw(img).line(points, fill=colour + (255,), width=s(3), joint="curve")
-    return img
 
 
 def crop(image, box):
     x, y, w, h = px(box)
     return image.crop((x, y, x + w, y + h))
+
+
+def row_states(base, box, number, title, tag=None, line=None, size=36):
+    """A row's four pictures (Up, Lit, Down, Grey), cut from `base` at grid `box`: grey with a
+    blue edge at rest, yellow with an arrow (and `line` under the title) when chosen."""
+    x, y, w, h = px(box)
+    middle = y + h // 2
+    pictures = {}
+    for state in ("Up", "Lit", "Down", "Grey"):
+        canvas = base.copy()
+        chosen = state in ("Lit", "Down")
+        if chosen:
+            rect(canvas, (x, y, x + w - 1, y + h - 1), YELLOW if state == "Lit" else YELLOW_DOWN)
+            ink = number_ink = INK
+        else:
+            rect(canvas, (x, y, x + w - 1, y + h - 1), ROW, 235)
+            rect(canvas, (x, y + h - s(1), x + w - 1, y + h - 1), ROW_LINE)
+            rect(canvas, (x, y, x + s(4) - 1, y + h - 1), BLUE if state == "Up" else DIM)
+            ink = CREAM if state == "Up" else DIM
+            number_ink = NUMBER_BLUE if state == "Up" else DIM
+        text(canvas, number, x + s(24), middle + s(5), mono(13), number_ink)
+        if chosen and line:
+            text(canvas, title, x + s(62), middle + s(6), font(size + 4), ink, italic=True)
+            text(canvas, line, x + s(64), middle + s(28), body(15), INK)
+        else:
+            text(canvas, title, x + s(62), middle + s(size * 0.36), font(size), ink, italic=True)
+        if chosen:
+            arrow(canvas, x + w - s(42), middle, 24, INK)
+        elif tag:
+            text(canvas, tag, x + w - s(24), middle + s(5), mono(13),
+                 BLUE if state == "Up" else DIM, right=True, spacing=1)
+        pictures[state] = canvas.crop((x, y, x + w, y + h))
+    return pictures
+
+
+def exit_states(base, box):
+    x, y, w, h = px(box)
+    pictures = {}
+    for state, ink, icon in (("Up", GREY, GREY), ("Lit", CREAM, YELLOW), ("Down", YELLOW, YELLOW),
+                             ("Grey", DIM, DIM)):
+        canvas = base.copy()
+        exit_icon(canvas, x + s(28), y + h // 2 - s(9), icon)
+        text(canvas, "EXIT GAME", x + s(60), y + h // 2 + s(10), font(28), ink, italic=True)
+        pictures[state] = canvas.crop((x, y, x + w, y + h))
+    return pictures
+
+
+def chip_states(base, box, words):
+    """A small outlined text button."""
+    x, y, w, h = px(box)
+    f = mono(14)
+    pictures = {}
+    for state, edge, ink in (("Up", (70, 74, 80), GREY), ("Lit", YELLOW, CREAM),
+                             ("Down", YELLOW, YELLOW), ("Grey", (50, 52, 56), DIM)):
+        canvas = base.copy()
+        ImageDraw.Draw(canvas).rectangle((x, y, x + w - 1, y + h - 1), outline=edge + (255,),
+                                         width=max(s(1.5), 1))
+        text(canvas, words, x + (w - int(width_of(words, f, 1))) // 2, y + h // 2 + s(5), f, ink,
+             spacing=1)
+        pictures[state] = canvas.crop((x, y, x + w, y + h))
+    return pictures
+
+
+def profile_states(base, box):
+    """The rider card: its tile, label and "Change rider". The name is the game's own text."""
+    x, y, w, h = px(box)
+    pictures = {}
+    for state in ("Up", "Lit", "Down", "Grey"):
+        canvas = base.copy()
+        rect(canvas, (x, y, x + w - 1, y + h - 1), CARD)
+        if state in ("Lit", "Down"):
+            ImageDraw.Draw(canvas).rectangle((x, y, x + w - 1, y + h - 1), outline=YELLOW + (255,),
+                                             width=max(s(2), 2))
+        tile = {"Down": YELLOW_DOWN, "Grey": DIM}.get(state, YELLOW)
+        rect(canvas, (x + s(20), y + s(26), x + s(76) - 1, y + s(86) - 1), tile)
+        text(canvas, "MX", x + s(25), y + s(70), font(34), INK, italic=True)
+        text(canvas, "LOCAL RIDER", x + s(90), y + s(30), mono(11), BLUE, spacing=1)
+        ink = CREAM if state == "Lit" else YELLOW
+        f = body(14, semibold=True)
+        text(canvas, "Change rider", x + s(90), y + s(98), f, ink)
+        corner = (x + s(90) + int(width_of("Change rider", f)) + s(18), y + s(87))
+        d = ImageDraw.Draw(canvas)
+        d.line([(corner[0] - s(8), corner[1] + s(8)), corner], fill=ink + (255,), width=max(s(1.6), 2))
+        d.line([(corner[0] - s(6), corner[1]), corner, (corner[0], corner[1] + s(6))],
+               fill=ink + (255,), width=max(s(1.6), 2))
+        pictures[state] = canvas.crop((x, y, x + w, y + h))
+    return pictures
+
+
+def panel_card(base, panel):
+    """A pull-down panel's card: dark, edged in blue on the left, its label at the top."""
+    _, (x, y, w, h), title, _ = panel
+    canvas = base.copy()
+    rect(canvas, px((x, y, x + w, y + h)), CARD, 245)
+    rect(canvas, px((x, y, x + 4, y + h)), BLUE)
+    label(canvas, title, s(x + 24), s(y + 40))
+    return canvas
+
+
+def scroll_arrow(size, up, colour):
+    img = Image.new("RGBA", size, (0, 0, 0, 0))
+    w, h = size
+    points = [(w * 0.28, h * 0.62), (w * 0.5, h * 0.38), (w * 0.72, h * 0.62)]
+    if not up:
+        points = [(x, h - y) for x, y in points]
+    ImageDraw.Draw(img).line(points, fill=colour + (255,), width=max(s(2.5), 2), joint="curve")
+    return img
 
 
 # ---- The layout ----
@@ -207,7 +295,49 @@ def anims(name):
 
 TEXT_KEYS = ("Text", "LocalTextId", "Font_UseDefault", "FontName", "FontHeight", "Charset", "Bold",
              "Underline", "Italic", "Strikethrough")
-PLACED = {}                                     # a panel button's place on the grid, for previews
+PLACED = {}                                     # where each button is on the grid, for previews
+
+
+def put(pictures, controls, name, box, states, anchor=None, origin=(0, 0)):
+    """A button's pictures and keys; `box` is on the grid, `origin` its panel's corner."""
+    for state, img in states.items():
+        pictures["M%s%s" % (name, state)] = img
+    keys = dict(anims(name), Xywh=xywh((box[0] - origin[0], box[1] - origin[1], box[2], box[3])))
+    if anchor:
+        keys.update(Anchor=anchor, RelAnchor="1")
+    controls[name] = keys
+    PLACED[name] = box[:2]
+
+
+def user_panel(card, controls, pictures, name, x, y):
+    """The profile list's frame, its scroll arrows and bar, on the profiles panel."""
+    lx, ly, lw, lh = PROFILE_LIST
+    ImageDraw.Draw(card).rectangle(px((x + lx, y + ly, x + lx + lw, y + ly + lh)),
+                                   outline=ROW_LINE + (255,), width=max(s(1), 1))
+    controls["LstProfiles"] = {"Xywh": xywh((lx + 12, ly + 8, lw - 24, lh - 16)), "Anchor": name,
+                               "RelAnchor": "1", "TextAlign": "LEFT", "TextDrop": "0",
+                               "TextColor": "14740720"}
+    up_box = (SCROLL_X, ly, SCROLL_W, 34)
+    down_box = (SCROLL_X, ly + lh - 34, SCROLL_W, 34)
+    bar_box = (SCROLL_X, ly + 36, SCROLL_W, lh - 72)
+    for control, (bx, by, bw, bh), up in (("ProfileScrollUp", up_box, True),
+                                          ("ProfileScrollDown", down_box, False)):
+        base = crop(card, (x + bx, y + by, bw, bh))
+        for state, colour in (("Up", BLUE), ("Lit", YELLOW), ("Down", CREAM), ("Grey", DIM)):
+            img = base.copy()
+            img.alpha_composite(scroll_arrow(img.size, up, colour))
+            pictures["M%s%s" % (control, state)] = img
+        controls[control] = dict(anims(control), Xywh=xywh((bx, by, bw, bh)), Anchor=name,
+                                 RelAnchor="1")
+    bar = crop(card, (x + bar_box[0], y + bar_box[1], bar_box[2], bar_box[3]))
+    ImageDraw.Draw(bar).line([(bar.width // 2, 0), (bar.width // 2, bar.height)],
+                             fill=ROW_LINE + (255,), width=max(s(1), 1))
+    pictures["MProfileBar"] = bar
+    thumb = Image.new("RGBA", (s(SCROLL_W), s(40)), CARD + (255,))
+    ImageDraw.Draw(thumb).rectangle((s(9), s(2), s(SCROLL_W - 10), s(37)), fill=YELLOW + (255,))
+    pictures["MProfileThumb"] = thumb
+    controls["SldProfile"] = {"Xywh": xywh(bar_box), "AnimNorm": '"MProfileBar"',
+                              "AnimThumb": '"MProfileThumb"', "Anchor": name, "RelAnchor": "1"}
 
 
 def build(original_dat):
@@ -221,77 +351,44 @@ def build(original_dat):
                                    "ScreenHeight": str(H), "Xywh": xywh((0, 0, 1920, 1080)),
                                    "FontName": '"Bahnschrift"', "FontHeight": str(s(26))}
 
-    for i, (name, text) in enumerate(MAIN_ITEMS):
-        box = (40, 192 + i * 86, 560, 80)
-        for state, img in states(bg, box, text, 44, SOFT).items():
-            pictures["M%s%s" % (name, state)] = img
-        controls[name] = dict(anims(name), Xywh=xywh(box))
-        PLACED[name] = box[:2]
-    for name, text, box in STATUS_ITEMS:
-        for state, img in states(bg, box, text, 32, SOFT, (6, 6)).items():
-            pictures["M%s%s" % (name, state)] = img
-        controls[name] = dict(anims(name), Xywh=xywh(box))
-        PLACED[name] = box[:2]
-    controls["TxtCurrentProfile"] = {"Xywh": xywh(CURRENT_PROFILE), "TextColor": "16777215",
-                                     "TextAlign": "LEFT"}
+    for i, (name, title, tag, line) in enumerate(MAIN_ITEMS):
+        box = (ROWS_X, ROWS_Y + i * ROW_H, ROW_W, ROW_H)
+        put(pictures, controls, name, box, row_states(bg, box, "%02d" % (i + 1), title, tag, line))
+    put(pictures, controls, EXIT[0], EXIT[1], exit_states(bg, EXIT[1]))
+    for name, words, box in CHIPS:
+        put(pictures, controls, name, box, chip_states(bg, box, words))
+    put(pictures, controls, "MenuUserProfile", PROFILE_CARD, profile_states(bg, PROFILE_CARD))
+    controls["TxtCurrentProfile"] = {"Xywh": xywh(CURRENT_PROFILE), "TextColor": "14740720",
+                                     "TextAlign": "LEFT", "TextDrop": "0",
+                                     "FontName": '"Bahnschrift SemiBold Condensed"',
+                                     "FontHeight": str(s(30)), "Bold": "700"}
 
     for panel in (SINGLE, MULTI, USER):
         name, (x, y, w, h), _, buttons = panel
         card = panel_card(bg, panel)
         if panel is USER:
-            lx, ly, lw, lh = PROFILE_LIST
-            ImageDraw.Draw(card).rounded_rectangle(px((x + lx, y + ly, x + lx + lw, y + ly + lh)), s(8),
-                                                   outline=ICE + (90,), width=s(1))
+            user_panel(card, controls, pictures, name, x, y)
+            column = [(x + 448, y + 70 + i * 64, 228, 54) for i in range(len(buttons))]
+        else:
+            step = 56 if panel is SINGLE else 62
+            width = 340 if panel is SINGLE else w - 48
+            column = [(x + 24, y + 70 + i * step, width, step - 4) for i in range(len(buttons))]
         pictures["M%sPanel" % name] = crop(card, (x, y, w, h))
         controls[name] = {"Xywh": xywh((x, y, w, h)), "AnimNorm": '"M%sPanel"' % name,
                           "FXAnimIn": '"M%sPanel"' % name, "FXAnimOut": '"M%sPanel"' % name}
-
-        if panel is USER:
-            column = [(470, 86 + i * 72, 260, 60) for i in range(len(buttons))]
-        else:
-            step = 58 if panel is SINGLE else 64
-            column = [(20, 86 + i * step, 400, 54) for i in range(len(buttons))]
-        for (button, text), (bx, by, bw, bh) in zip(buttons, column):
-            for state, img in states(card, (x + bx, y + by, bw, bh), text, 34, SOFT_ICE, (6, 4)).items():
-                pictures["M%s%s" % (button, state)] = img
-            controls[button] = dict(anims(button), Xywh=xywh((bx, by, bw, bh)), Anchor=name,
-                                    RelAnchor="1")
+        for i, ((button, words), box) in enumerate(zip(buttons, column)):
+            put(pictures, controls, button, box,
+                row_states(card, box, "%02d" % (i + 1), words, size=26), anchor=name, origin=(x, y))
             drops[button] = TEXT_KEYS
-            PLACED[button] = (x + bx, y + by)
-
         if panel is SINGLE:                     # the events movie's frame, its window keyed out
             fx, fy, fw, fh = MOVIE_FRAME
             frame = crop(card, (x + fx, y + fy, fw, fh))
             d = ImageDraw.Draw(frame)
-            d.rectangle((0, 0, frame.width - 1, frame.height - 1), outline=ICE, width=s(2))
-            d.rectangle((s(4), s(4), frame.width - s(5), frame.height - s(5)), fill=MAGENTA)
+            d.rectangle((0, 0, frame.width - 1, frame.height - 1), outline=BLUE + (255,), width=s(2))
+            d.rectangle((s(4), s(4), frame.width - s(5), frame.height - s(5)), fill=MAGENTA + (255,))
             pictures["MScreenOver"] = frame
             controls["ScreenOverCtl"] = {"Xywh": xywh(MOVIE_FRAME), "AnimNorm": '"MScreenOver"',
                                          "Anchor": name, "RelAnchor": "1"}
-        if panel is USER:
-            controls["LstProfiles"] = {"Xywh": xywh((lx + 12, ly + 8, lw - 24, lh - 16)), "Anchor": name,
-                                       "RelAnchor": "1", "TextAlign": "LEFT"}
-            up_box = (SCROLL_X, ly, SCROLL_W, 34)
-            down_box = (SCROLL_X, ly + lh - 34, SCROLL_W, 34)
-            bar_box = (SCROLL_X, ly + 36, SCROLL_W, lh - 72)
-            for control, (bx, by, bw, bh), up in (("ProfileScrollUp", up_box, True),
-                                                  ("ProfileScrollDown", down_box, False)):
-                base = crop(card, (x + bx, y + by, bw, bh))
-                for state, colour in (("Up", ICE), ("Lit", EMBER), ("Down", WHITE), ("Grey", GREY)):
-                    img = base.copy()
-                    img.alpha_composite(arrow(img.size, up, colour))
-                    pictures["M%s%s" % (control, state)] = img
-                controls[control] = dict(anims(control), Xywh=xywh((bx, by, bw, bh)), Anchor=name,
-                                         RelAnchor="1")
-            bar = crop(card, (x + bar_box[0], y + bar_box[1], bar_box[2], bar_box[3]))
-            ImageDraw.Draw(bar).line([(bar.width // 2, 0), (bar.width // 2, bar.height)], fill=ICE + (110,))
-            pictures["MProfileBar"] = bar
-            thumb = Image.new("RGBA", (s(SCROLL_W), s(40)), (14, 30, 66, 255))
-            ImageDraw.Draw(thumb).rounded_rectangle((s(6), s(2), s(SCROLL_W - 7), s(37)), s(6),
-                                                    fill=ICE + (255,))
-            pictures["MProfileThumb"] = thumb
-            controls["SldProfile"] = {"Xywh": xywh(bar_box), "AnimNorm": '"MProfileBar"',
-                                      "AnimThumb": '"MProfileThumb"', "Anchor": name, "RelAnchor": "1"}
 
     original = rs2_entries(original_dat)
     sections = read_dtm(original["mainmenu.dtm"].decode("latin-1"))
@@ -315,9 +412,9 @@ def build(original_dat):
 
 
 def preview(bg, pictures, lit, panel):
-    """The menu as it would show: every button at rest, `lit` lit, `panel` open."""
+    """The menu as it would show: every button at rest, `lit` lit, `panel` open, a sample name."""
     canvas = bg.copy()
-    shown = [name for name, _ in MAIN_ITEMS] + [name for name, _, _ in STATUS_ITEMS]
+    shown = [item[0] for item in MAIN_ITEMS] + [EXIT[0], "MenuUserProfile"] + [c[0] for c in CHIPS]
     if panel:
         name, (x, y, _, _), _, buttons = panel
         canvas.alpha_composite(pictures["M%sPanel" % name], (s(x), s(y)))
@@ -327,8 +424,10 @@ def preview(bg, pictures, lit, panel):
     for name in shown:
         gx, gy = PLACED[name]
         canvas.alpha_composite(pictures["M%s%s" % (name, "Lit" if name == lit else "Up")], (s(gx), s(gy)))
+    text(canvas, "ROOKIE", s(CURRENT_PROFILE[0]), s(CURRENT_PROFILE[1] + 28),
+         font(30, style="SemiBold Condensed"), CREAM)
     rgb = np.asarray(canvas.convert("RGB")).copy()
-    rgb[(rgb == MAGENTA).all(-1)] = (8, 16, 36)        # where the events movie plays
+    rgb[(rgb == MAGENTA).all(-1)] = (10, 11, 13)        # where the events movie plays
     return Image.fromarray(rgb)
 
 
@@ -336,11 +435,7 @@ if __name__ == "__main__":
     data, bg, pictures = build(open(sys.argv[1], "rb").read())
     open(sys.argv[2], "wb").write(data)
     out = Path(sys.argv[3])
-    preview(bg, pictures, "MenuSingle", SINGLE).save(out / "modern mainmenu - single open.png")
-    preview(bg, pictures, "MenuUserProfile", USER).save(out / "modern mainmenu - profiles open.png")
-    states_row = [pictures["MMenuSingle" + state] for state in ("Up", "Lit", "Down", "Grey")]
-    sheet = Image.new("RGBA", (states_row[0].width * 4, states_row[0].height))
-    for i, img in enumerate(states_row):
-        sheet.alpha_composite(img, (i * img.width, 0))
-    sheet.convert("RGB").save(out / "modern mainmenu - button states.png")
+    preview(bg, pictures, "MenuSingle", None).save(out / "modern mainmenu.png")
+    preview(bg, pictures, "ButEnduro", SINGLE).save(out / "modern mainmenu - single open.png")
+    preview(bg, pictures, "ButLoadProfile", USER).save(out / "modern mainmenu - profiles open.png")
     print("wrote", sys.argv[2], len(data), "bytes,", len(pictures), "pictures")
