@@ -35,6 +35,11 @@ PRIMARY = re.compile(r"(Start|Race(?!s)|Continue|Accept|Done|Play|OK$|Ok$)")
 PLATE_NAME = re.compile(r"(Box|Plate|Panel)$")
 FOLDER = "03_Modern\\"
 
+# The screens drawn in another's window, by the start of their names: the full screen whose
+# window they fill. One smaller than the window is drawn as large as it (the rest of it glass),
+# or the part it leaves would be drawn by nothing and keep whatever was last there.
+PARENTS = {"SP": "SPBASE", "MP": "MPBASE", "PCC": "PCC"}
+
 
 def colorref(rgb):
     r, g, b = rgb
@@ -313,7 +318,24 @@ def scale_xywh(text_value, shift=0):
     return ", ".join(str(v) for v in n)
 
 
-def theme(dat, globals_, global_anims, preview_dir, photo):
+def window_size(dat, globals_, global_anims):
+    """The size of a screen's window for others (its original ground's colour key), or None."""
+    files = rs2_files(dat.read_bytes())
+    entries = {n.lower(): blob for n, blob in files}
+    layout = next(n for n, _ in files if n.lower().endswith(".dtm"))
+    sections = read_dtm(entries[layout.lower()].decode("latin-1"))
+    background = value(dict(sections).get("Set_Information", []), "BackgroundImage")
+    if not background or background.lower() == "none":
+        return None
+    anims = dict(global_anims, **{n.lower(): l for n, l in sections})
+    mask = np.asarray(key_mask(entries, globals_, anims, background)) > 127
+    if not mask.any():
+        return None
+    ys, xs = np.nonzero(mask)
+    return (int(xs.max() - xs.min() + 1) // ART, int(ys.max() - ys.min() + 1) // ART)
+
+
+def theme(dat, globals_, global_anims, preview_dir, photo, least=None):
     files = rs2_files(dat.read_bytes())
     entries = {n.lower(): blob for n, blob in files}
     layout = next(n for n, _ in files if n.lower().endswith(".dtm"))
@@ -321,6 +343,8 @@ def theme(dat, globals_, global_anims, preview_dir, photo):
     info = dict(sections).get("Set_Information", [])
     width = int(value(info, "ScreenWidth") or 640)
     height = int(value(info, "ScreenHeight") or 480)
+    if least:
+        width, height = max(width, least[0]), max(height, least[1])
     background = value(info, "BackgroundImage")
     has_back = bool(background) and background.lower() != "none"
     full = width >= 640 and height >= 480 and has_back
@@ -517,12 +541,16 @@ def main(ui, out, preview_dir):
     global_anims = {n.lower(): l for n, l in read_dtm(layout.decode("latin-1"))}
     out.mkdir(parents=True, exist_ok=True)
     photos = sorted(Path(preview_dir).parent.glob("menu photo *.jpg")) if preview_dir else []
+    windows = {parent: window_size(ui / (parent + ".DAT"), globals_, global_anims)
+               for parent in PARENTS.values()}
     for n, dat in enumerate(sorted(ui.glob("*.DAT"))):
         stem = dat.stem.upper()
         if stem in SKIP or stem.startswith(SKIP_PREFIX):
             continue
+        parent = next((PARENTS[p] for p in sorted(PARENTS, key=len, reverse=True)
+                       if stem.startswith(p) and stem != PARENTS[p]), None)
         data, count = theme(dat, globals_, global_anims, preview_dir,
-                            photos[n % len(photos)] if photos else None)
+                            photos[n % len(photos)] if photos else None, windows.get(parent))
         (out / dat.name).write_bytes(data)
         print("%-13s %3d pictures, %d bytes" % (dat.name, count, len(data)))
 
