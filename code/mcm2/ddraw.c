@@ -953,14 +953,18 @@ void target_scene(surface* target, BOOL begin)
     gl.BindFramebuffer(GL_FRAMEBUFFER, target->msaa_fbo);
 }
 
-/* Mipmaps cannot be made from every format the game uploads (its 16-bit ones with alpha, on some
-   cards): a texture they could not be made for keeps its one level, or it would draw white. */
+/*
+    Mipmaps are made only for the game's opaque textures (565). From its 16-bit formats with alpha
+    some cards make them white without any error (the dirt, the wheels' trail and the rider's
+    shadow drew white), and a texture they could not be made for keeps its one level, or it too
+    would draw white.
+*/
 BOOL texture_make_mips(surface* s)
 {
     s = s->top;
     if (s->mip || s->made_mips)
         return TRUE;
-    if (s->no_mips || !s->texture)
+    if (s->no_mips || !s->texture || s->format != PF_565)
         return FALSE;
     while (gl.GetError() != GL_NO_ERROR)
         ;
