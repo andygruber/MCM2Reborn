@@ -11,7 +11,7 @@
 
 dev_switches dev_settings = { 0 };     /* initialised, or it is a common symbol and lands in .data */
 camera_options g_camera_options = { 140, 0, 70, 0, 352 };
-reborn_options g_reborn = { 1, 1 };
+reborn_options g_reborn = { 1, 1, 1 };
 
 typedef UINT (WINAPI* read_int_fn)(LPCSTR section, LPCSTR key, INT fallback, LPCSTR file);
 
@@ -103,6 +103,7 @@ void dev_install(void)
         c->lean_heading = (int) read("camera", "lean_heading", c->lean_heading, SETTINGS_FILE);
         g_reborn.hud = (int) read("reborn", "hud", g_reborn.hud, SETTINGS_FILE);
         g_reborn.cameras = (int) read("reborn", "cameras", g_reborn.cameras, SETTINGS_FILE);
+        g_reborn.physics = (int) read("reborn", "physics", g_reborn.physics, SETTINGS_FILE);
     }
     eos_install();
     inputfix_install();
@@ -135,6 +136,7 @@ void dev_reborn_save(void)
 {
     write_number("reborn", "hud", g_reborn.hud);
     write_number("reborn", "cameras", g_reborn.cameras);
+    write_number("reborn", "physics", g_reborn.physics);
 }
 
 void dev_graphics_save(void)

@@ -167,6 +167,9 @@ def build_game(data):
                                        ("RiderPositionCheckBox", "RIDER POSITION"))):
         switch(screen, board, name, rows_area(left, top, k), label)
     words(screen, board, "MultChatMode", rows_area(left, top, 5), "CHAT BOX (MULTIPLAYER)")
+    # Reborn's bike physics or the game's own (optionprocs.c, camera_rows): the game has no such row.
+    screen.add("MultPhysStyle", Type="MULTISTATE", SoundPush='"Beep"')
+    words(screen, board, "MultPhysStyle", rows_area(left, top, 6), "PHYSICS")
     top = panel(board, right, "GAME")
     for k, (name, label) in enumerate((("ChkPodiums", "END OF RACE ANIMATIONS"), ("ChkUIAnims", "MENU ANIMATIONS"),
                                        ("ChkIntroMovie", "INTRO MOVIE"), ("ChkPlayerIndicator", "PLAYER INDICATOR"),
@@ -192,7 +195,7 @@ def build_graphics(data):
     screen.add("ChkVSync", Type="MULTISTATE", NumStates="2", SoundPush='"Beep"', SourceBlit="-1")
     switch(screen, board, "ChkVSync", rows_area(left, top, 2), "VSYNC")
     for k, (name, label) in enumerate((("MultAntiAlias", "ANTI-ALIASING"), ("MultFiltering", "TEXTURE FILTERING"),
-                                       ("MultHudStyle", "HUD"), ("MultCamStyle", "CAMERAS"))):
+                                       ("MultHudStyle", "HUD"), ("MultCamStyle", "FIRST PERSON"))):
         screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
         words(screen, board, name, rows_area(left, top, 3 + k), label)
     sub(board, "MORE IN ADVANCED: VISIBILITY, TERRAIN, OBJECTS AND TEXTURES", left[0] + 36, left[3] - 36, 22,

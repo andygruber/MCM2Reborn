@@ -16,6 +16,7 @@ void __fastcall game_orig_FUN_00441ed0(BYTE* self);
 
 #ifdef OPENMCM2_DEV
 void  camera_after_update(BYTE* camera, float dt);
+void  chase_heading_rate(float dt);
 float camera_near_plane(BYTE* camera);
 BOOL  rider_head_collapse(BYTE* mesh);
 void  rider_head_restore(BYTE* mesh);
@@ -55,7 +56,12 @@ void __fastcall soul_mesh_draw(BYTE* self)
 PORT(0x00498DD0)
 int __fastcall bike_camera_update(BYTE* self, void* edx_unused, float dt)
 {
-    int result = game_orig_vf_10_498DD0(self, edx_unused, dt);
+    int result;
+
+#ifdef OPENMCM2_DEV
+    chase_heading_rate(dt);
+#endif
+    result = game_orig_vf_10_498DD0(self, edx_unused, dt);
 
 #ifdef OPENMCM2_DEV
     camera_after_update(self, dt);
