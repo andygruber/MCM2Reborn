@@ -11,6 +11,7 @@
         files=1           every file the profile code looks for
         camera=1          the rider camera's readings, twice a second
         input=1           each input device's reads, once a second (inputfix.c)
+        physics=1         each bike's physics step, to physics-record.csv (physics.c)
         display=1         every display mode set and every surface made that is not a
                           texture, with the address of the game code that asked
 
@@ -60,6 +61,7 @@ typedef struct dev_switches {
     BOOL trace_display;
     BOOL trace_camera;
     BOOL trace_input;
+    BOOL trace_physics;
     BOOL menus_widescreen;
     BOOL menus_fill_sides;
     BOOL menus_modern;
