@@ -459,6 +459,36 @@ static void lag(float* value, float target, float tau, float dt)
     *value += (target - *value) * ((dt < tau ? dt : tau) / tau);
 }
 
+/*
+    The rider is never out of view: if its middle is further from the view's centre than these
+    (degrees, below or above and to either side), the look is turned towards it just so far that it
+    is not. Unleashed's look ahead and its lag, ported, put the rider at the foot of the view at
+    speed and off it on drops.
+*/
+#define KEEP_UP_DOWN    8.0f
+#define KEEP_SIDES      12.0f
+
+static void keep_in_view(const float* eye, float* dir, const float* rider_at)
+{
+    float to[3] = { rider_at[0] - eye[0], rider_at[1] - eye[1], rider_at[2] - eye[2] };
+    float look_yaw = arc_tangent2(dir[0], dir[2]), look_pitch = arc_tangent2(dir[1], square_root(dir[0] * dir[0] + dir[2] * dir[2]));
+    float to_yaw = arc_tangent2(to[0], to[2]), to_pitch = arc_tangent2(to[1], square_root(to[0] * to[0] + to[2] * to[2]));
+    float side = angle_wrap(to_yaw - look_yaw), up_down = to_pitch - look_pitch;
+    float keep_side = KEEP_SIDES * PI / 180, keep_up = KEEP_UP_DOWN * PI / 180;
+
+    if (side > keep_side)
+        look_yaw += side - keep_side;
+    else if (side < -keep_side)
+        look_yaw += side + keep_side;
+    if (up_down > keep_up)
+        look_pitch += up_down - keep_up;
+    else if (up_down < -keep_up)
+        look_pitch += up_down + keep_up;
+    dir[0] = sine(look_yaw) * cosine(look_pitch);
+    dir[1] = sine(look_pitch);
+    dir[2] = cosine(look_yaw) * cosine(look_pitch);
+}
+
 static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
     const float* p = bike_pos(bike);
@@ -547,6 +577,11 @@ static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     length = normalise(dir);
     if (length <= 0)
         return;
+    {
+        float rider_at[3] = { p[0], p[1] + FC_LOOK_UP, p[2] };
+
+        keep_in_view(cam.eye, dir, rider_at);
+    }
     game_FUN_0042f8d0(camera, NULL, cam.eye, dir, up, &roll, NULL);
     game_FUN_0042f850(camera, NULL, cam.fov);
     cam_rebuild(camera);
