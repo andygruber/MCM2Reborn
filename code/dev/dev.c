@@ -77,13 +77,14 @@ void dev_install(void)
         /* The modern menus are drawn at the screen's size. */
         dev_settings.menus_widescreen |= dev_settings.menus_modern;
         dev_settings.fix_last_pick = read_switch(read, "fixes", "last_pick");
+        dev_settings.fix_ai_rate = (int) read("fixes", "ai_rate", 60, SETTINGS_FILE);
     }
     log_line("dev build: trace screens %d, events %d, files %d, display %d; "
-             "menus widescreen %d, fill sides %d, modern %d, live %d; fixes: last pick %d",
+             "menus widescreen %d, fill sides %d, modern %d, live %d; fixes: last pick %d, ai rate %d",
              dev_settings.trace_screens, dev_settings.trace_events, dev_settings.trace_files,
              dev_settings.trace_display, dev_settings.menus_widescreen,
              dev_settings.menus_fill_sides, dev_settings.menus_modern, dev_settings.menus_live,
-             dev_settings.fix_last_pick);
+             dev_settings.fix_last_pick, dev_settings.fix_ai_rate);
     if (dev_settings.menus_modern)
         load_menu_fonts();
     if (read) {
@@ -107,6 +108,7 @@ void dev_install(void)
     }
     eos_install();
     inputfix_install();
+    gridfix_install();
 }
 
 static void write_number(const char* section, const char* key, int value)

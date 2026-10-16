@@ -34,6 +34,8 @@
 
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider
+        ai_rate=60        the computer riders' steps a second, whatever the frame rate (0 the
+                          game's one a frame, which shook them over 60; bikeai.c)
 
     A change to the game goes in the ported function it changes, between #ifdef OPENMCM2_DEV and
     #endif, reading its switch from dev_settings; the code outside stays the faithful port.
@@ -58,6 +60,7 @@ typedef struct dev_switches {
     BOOL menus_modern;
     BOOL menus_live;
     BOOL fix_last_pick;
+    int  fix_ai_rate;
 } dev_switches;
 
 extern dev_switches dev_settings;
@@ -178,3 +181,6 @@ int  eos_found_ago(void);
 /* DirectInput's devices watched, so that what was held when the window lost the focus is let go
    when it comes back (inputfix.c). */
 void inputfix_install(void);
+
+/* The terrain grid's cells kept inside it (gridfix.c). */
+void gridfix_install(void);

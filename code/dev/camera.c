@@ -72,24 +72,28 @@ static struct {
 } cam;
 
 /*
-    In the rider's view the rider's arms and hands are drawn on the bars, and the legs when the
-    view takes them in, but not the head, helmet and torso, which the view is in. The rider is one
-    mesh whose vertices follow its frames (PELVIS with the legs under it; LWRTORSO, UPRTORSO with
-    the arms and the HEAD under it), and no frame holds a mesh of its own, so hiding one did
-    nothing: for the rider's draw alone these frames are made to a point - their axes zeroed, their
-    places kept - and put back straight after (bikecamera.c, soul_mesh_draw). The frames under them
-    keep their own axes, so the arms are drawn whole.
+    In the rider's view only the rider's arms and legs are drawn: the hands on the bars, the legs
+    when the view takes them in. The rider is one mesh whose vertices follow its frames (PELVIS
+    with the legs under it; LWRTORSO, UPRTORSO with the arms and the HEAD under it), and no frame
+    holds a mesh of its own, so hiding one did nothing. For the rider's draw alone the pelvis,
+    torso and head are made to a point at the eye - their axes zeroed, their place the eye's -
+    and put back straight after (bikecamera.c, soul_mesh_draw). A vertex of theirs is then at the
+    eye, and any triangle touching one is seen edge on and covers nothing; a vertex shared with an
+    arm or a leg lies between the eye and where it was, and is drawn where it was. The frames
+    under them keep their own places, so the arms and legs are drawn whole.
 */
 #define frame_child(f)      FIELD(f, 0x140, BYTE*)
 #define frame_sibling(f)    FIELD(f, 0x144, BYTE*)
+#define frame_world(f)      ((float*) ((f) + 0xF8))     /* three axes of four, then the place */
+#define WORLD_FLOATS        15
 #define mesh_dirty(m)       FIELD(m, 0x18C, int)
 
-static const char* const unseen_names[] = { "HEAD", "UPRTORSO", "LWRTORSO" };
+static const char* const unseen_names[] = { "HEAD", "UPRTORSO", "LWRTORSO", "PELVIS" };
 #define UNSEEN_COUNT ((int) (sizeof unseen_names / sizeof unseen_names[0]))
 
 static BYTE* g_unseen_model;            /* the rider's model, while its view is the rider's */
 static BYTE* g_unseen[UNSEEN_COUNT];
-static float g_unseen_axes[UNSEEN_COUNT][12];
+static float g_unseen_world[UNSEEN_COUNT][WORLD_FLOATS];
 static BYTE* g_near_camera;             /* the camera whose near plane is the rider view's */
 
 static void head_hide(BYTE* bike)
@@ -111,16 +115,20 @@ static void head_show(BYTE* bike)
 
 BOOL rider_head_collapse(BYTE* mesh)
 {
+    const float* eye;
     int i, k;
 
-    if (!g_unseen_model || mesh != g_unseen_model)
+    if (!g_unseen_model || mesh != g_unseen_model || !g_near_camera)
         return FALSE;
+    eye = cam_eye(g_near_camera);
     for (i = 0; i < UNSEEN_COUNT; i++) {
-        float* axes = g_unseen[i] ? (float*) (g_unseen[i] + 0xF8) : NULL;
+        float* world = g_unseen[i] ? frame_world(g_unseen[i]) : NULL;
 
-        for (k = 0; axes && k < 12; k++) {
-            g_unseen_axes[i][k] = axes[k];
-            axes[k] = 0;
+        if (!world)
+            continue;
+        for (k = 0; k < WORLD_FLOATS; k++) {
+            g_unseen_world[i][k] = world[k];
+            world[k] = k < 12 ? 0 : eye[k - 12];
         }
     }
     mesh_dirty(mesh) = 1;
@@ -132,10 +140,10 @@ void rider_head_restore(BYTE* mesh)
     int i, k;
 
     for (i = 0; i < UNSEEN_COUNT; i++) {
-        float* axes = g_unseen[i] ? (float*) (g_unseen[i] + 0xF8) : NULL;
+        float* world = g_unseen[i] ? frame_world(g_unseen[i]) : NULL;
 
-        for (k = 0; axes && k < 12; k++)
-            axes[k] = g_unseen_axes[i][k];
+        for (k = 0; world && k < WORLD_FLOATS; k++)
+            world[k] = g_unseen_world[i][k];
     }
     mesh_dirty(mesh) = 1;
 }
