@@ -72,7 +72,6 @@ static struct {
     BYTE* bike;
     int   mode;
     float yaw, yaw_speed;
-    float going[2], going_speed[2];     /* the chase: the bike's velocity across the ground, smoothed */
     float pitch, pitch_speed;
     float height, height_speed;     /* the chase eye's, above the world's zero */
     float roll, roll_speed;
@@ -166,29 +165,18 @@ static void aspect_true(BYTE* camera)
 static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
     const float* p = bike_pos(bike);
-    const float* v = bike_vel(bike);
-    float speed, heading;
+    /* Behind the way the bike points, held close: following where it went, the camera lagged in
+       a turn and slid round to its side, and the way ahead was out of view. */
+    const float* f = bike_forward(bike);
+    float heading = arc_tangent2(f[0], f[2]);
     float eye[3], look[3], dir[3], up[3] = { 0, 1, 0 }, length, roll = 0;
-    int k;
 
-    /* The way the bike goes, smoothed first: raw, it jitters over every bump and slide, and the
-       view swung side to side twice as much as Unleashed's. */
-    if (begin)
-        for (k = 0; k < 2; k++) {
-            cam.going[k] = v[k * 2];
-            cam.going_speed[k] = 0;
-        }
-    for (k = 0; k < 2; k++)
-        spring(&cam.going[k], &cam.going_speed[k], v[k * 2], 5.0f, dt);
-    speed = square_root(cam.going[0] * cam.going[0] + cam.going[1] * cam.going[1]);
-    heading = speed > 8 ? arc_tangent2(cam.going[0], cam.going[1])
-                        : arc_tangent2(bike_forward(bike)[0], bike_forward(bike)[2]);
     if (begin) {
         cam.yaw = heading;
         cam.height = p[1] + CHASE_UP;
         cam.yaw_speed = cam.height_speed = 0;
     }
-    spring_angle(&cam.yaw, &cam.yaw_speed, heading, 4.0f, dt);
+    spring_angle(&cam.yaw, &cam.yaw_speed, heading, 10.0f, dt);
     /* The height close behind the bike's, so the view rises and falls with the ground, as
        Unleashed's does: held, it was stiff. */
     spring(&cam.height, &cam.height_speed, p[1] + CHASE_UP, 12.0f, dt);
@@ -248,7 +236,9 @@ static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 
         yaw += (into < -1 ? -1 : into > 1 ? 1 : into) * o->lean_heading / 10.0f * (PI / 180);
     }
-    pitch = arc_tangent2(f[1], flat_speed(f)) - (15 + o->pitch * 20 / 100.0f) * (PI / 180);
+    /* Up and down with the way the bike goes, half of it, never with its nose: following the
+       bike's pitch, the wide view lurched on every face, landing and whip. */
+    pitch = (speed > 10 ? arc_tangent2(v[1], speed) * 0.5f : 0) - (15 + o->pitch * 20 / 100.0f) * (PI / 180);
     roll = lean * o->tilt / 100.0f;
 
     if (begin) {
