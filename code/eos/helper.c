@@ -527,14 +527,24 @@ static void chat_decode(const char* from, ask_chat* chat)
     }
 }
 
+/*
+    The lobby changed in one update: the attributes given (the host's alone: a member can change
+    only its own), and always our rider's name on our membership, for searches to show who is in it.
+*/
 static void lobby_change(const char* name, int closed, const ask_settings* race, const ask_chat* chat)
 {
     EOS_Lobby_UpdateLobbyModificationOptions options = { EOS_LOBBY_UPDATELOBBYMODIFICATION_API_LATEST, self,
                                                          lobby_id };
+    EOS_Lobby_AttributeData rider = { EOS_LOBBY_ATTRIBUTEDATA_API_LATEST, ATTR_RIDER };
+    EOS_LobbyModification_AddMemberAttributeOptions add = { EOS_LOBBYMODIFICATION_ADDMEMBERATTRIBUTE_API_LATEST,
+                                                            &rider, EOS_LAT_PUBLIC };
     EOS_HLobbyModification change;
 
     if (!lobby_id[0] || EOS_Lobby_UpdateLobbyModification(lobby_api, &options, &change) != EOS_Success)
         return;
+    rider.Value.AsUtf8 = player_name[0] ? player_name : self_name;
+    rider.ValueType = EOS_AT_STRING;
+    EOS_LobbyModification_AddMemberAttribute(change, &add);
     if (name)
         set_attribute(change, ATTR_NAME, name, 0);
     if (closed >= 0)
@@ -563,29 +573,6 @@ static void lobby_change(const char* name, int closed, const ask_settings* race,
     EOS_LobbyModification_Release(change);
 }
 
-/* Our rider's name on our membership, for searches to show who is in the lobby. */
-static void name_in_lobby(void)
-{
-    EOS_Lobby_UpdateLobbyModificationOptions options = { EOS_LOBBY_UPDATELOBBYMODIFICATION_API_LATEST, self,
-                                                         lobby_id };
-    EOS_Lobby_AttributeData data = { EOS_LOBBY_ATTRIBUTEDATA_API_LATEST, ATTR_RIDER };
-    EOS_LobbyModification_AddMemberAttributeOptions add = { EOS_LOBBYMODIFICATION_ADDMEMBERATTRIBUTE_API_LATEST,
-                                                            &data, EOS_LAT_PUBLIC };
-    EOS_HLobbyModification change;
-
-    if (!lobby_id[0] || EOS_Lobby_UpdateLobbyModification(lobby_api, &options, &change) != EOS_Success)
-        return;
-    data.Value.AsUtf8 = player_name[0] ? player_name : self_name;
-    data.ValueType = EOS_AT_STRING;
-    EOS_LobbyModification_AddMemberAttribute(change, &add);
-    {
-        EOS_Lobby_UpdateLobbyOptions update = { EOS_LOBBY_UPDATELOBBY_API_LATEST, change };
-
-        EOS_Lobby_UpdateLobby(lobby_api, &update, NULL, on_updated);
-    }
-    EOS_LobbyModification_Release(change);
-}
-
 static char hosting_name[EOS_SESSION_NAME_SIZE];
 
 static void EOS_CALL on_created(const EOS_Lobby_CreateLobbyCallbackInfo* info)
@@ -598,7 +585,6 @@ static void EOS_CALL on_created(const EOS_Lobby_CreateLobbyCallbackInfo* info)
     }
     strncpy(lobby_id, info->LobbyId, sizeof lobby_id - 1);
     lobby_change(hosting_name, 0, NULL, NULL);
-    name_in_lobby();
     strncpy(lobby.lobby, lobby_id, sizeof lobby.lobby - 1);
     lobby.owner = number_of(self);
     say("hosting lobby %s", lobby_id);
@@ -784,7 +770,7 @@ static void EOS_CALL on_joined(const EOS_Lobby_JoinLobbyByIdCallbackInfo* info)
         lobby.owner = number_of(EOS_LobbyDetails_GetLobbyOwner(details, &owner_options));
         EOS_LobbyDetails_Release(details);
     }
-    name_in_lobby();
+    lobby_change(NULL, -1, NULL, NULL);
     say("joined lobby %s, owned by %08X", lobby_id, lobby.owner);
     tell(TELL_JOINED, &lobby, sizeof lobby, NULL, 0);
     members_add();
@@ -845,7 +831,7 @@ static void answer(struct ask* ask)
             memcpy(player_name, ((const ask_player*) ask->fields)->name, EOS_NAME_SIZE - 1);
             for (i = 0; i < peer_count; i++)
                 hello(&peers[i]);
-            name_in_lobby();
+            lobby_change(NULL, -1, NULL, NULL);
         }
         break;
     case ASK_SEND:
