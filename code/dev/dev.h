@@ -93,3 +93,11 @@ void dev_trace_event(DWORD type, const char* control, const void* dialog);
 BOOL live_menu_start(void);
 void live_menu_opening(BYTE* dialog);
 void live_menu_tick(void);
+
+/*
+    Online play through Epic Online Services (eosplay.c). eos_install takes over the game's
+    CoCreateInstance at start-up; eos_online makes the network again, its DirectPlay EOS's own
+    or the real one. FALSE when the network could not be made, or EOS's helper not started.
+*/
+void eos_install(void);
+BOOL eos_online(BOOL on);

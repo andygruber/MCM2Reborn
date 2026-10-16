@@ -81,6 +81,7 @@ void dev_install(void)
              dev_settings.fix_last_pick);
     if (dev_settings.menus_modern)
         load_menu_fonts();
+    eos_install();
 }
 
 /* A clock for timing: milliseconds since it was first read. */
