@@ -101,3 +101,5 @@ void live_menu_tick(void);
 */
 void eos_install(void);
 BOOL eos_online(BOOL on);
+/* 1 signed in to EOS, 0 signing in, -1 not (the helper did not start, or failed). */
+int  eos_state(void);

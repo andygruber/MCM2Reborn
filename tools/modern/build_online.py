@@ -1,10 +1,11 @@
-r"""MCM2:Reborn's online screen: build_online.py <game ui folder> <out folder> <preview dir>
+r"""MCM2:Reborn's online and LAN screens: build_online.py <game ui folder> <out folder> <preview dir>
 
-The game has no such screen, so its layout starts empty here (ONLINE.DAT, read as Online.dtm).
-It is where online play through Epic Online Services will be: its sessions, friends and join
-codes. Until then a friend is joined by their address (TCP/IP, as the original's Internet
-was), and Host makes a game as LAN does. dlgprocs.c, online_handle, answers its buttons and
-writes its status.
+The game has no such screens, so their layouts start empty here: ONLINE.DAT (read as Online.dtm)
+for Internet play through Epic Online Services, and LAN.DAT (Lan.dtm) for the local network. Both
+are the game's sessions screen in MCM2:Reborn's look: the games being hosted in a list, Host to
+make one, Join to join the one picked. dlgprocs.c, online_handle, runs them on the game's own
+sessions code, so the controls keep the original's names (LstSessions, ButHost, ButJoin,
+ButCancel), and writes their status.
 """
 import sys
 from pathlib import Path
@@ -12,61 +13,62 @@ from pathlib import Path
 import reborn_kit as kit
 from build_mainmenu import rs2
 from reborn_kit import EDGE, GREY, LEFT, ORANGE, PAPER, RAISED, RIGHT, TOP, box, dot, heading, sub
-from reborn_layout import font, under, xywh
-from reborn_pages import PLACE, footer, full_info, full_screen, preview
+from reborn_layout import arrow_states, colorref, font, xywh
+from reborn_pages import PLACE, footer, full_info, full_screen, preview, scroll_bar
 
 EMPTY_LAYOUT = "\r\n".join(["[Set_Control]", "", "[Set_Information]", "Type = <Unknown>", "ScreenWidth = 640",
                             "ScreenHeight = 480", "NoScale = 0", "PopUp = 0", "", "[Set_Anim]", ""])
 
-SESSIONS = (LEFT, PLACE[1], 1580, 1150)
-JOIN = (LEFT, 1180, 1580, PLACE[3])
+SESSIONS = (LEFT, PLACE[1], 1580, PLACE[3])
 ABOUT = (1620, PLACE[1], RIGHT, PLACE[3])
-FADED = (120, 122, 128)
+WELL = (12, 12, 14, 235)
+GROUP = "130"                   # the list's id, which its arrows and slider are attached to
+
+# Each screen: its layout, title, the service in its corner, the list's heading and the help.
+MODES = {
+    "ONLINE": ("Online.dtm", "ONLINE", "EPIC ONLINE SERVICES", "LOBBIES",
+               (("JOIN", "Pick a lobby and press Join, or double-click it."),
+                ("HOST", "Host makes a lobby that everyone playing online can see. No addresses, no ports."))),
+    "LAN": ("Lan.dtm", "LAN", "LOCAL NETWORK", "GAMES ON YOUR NETWORK",
+            (("JOIN", "Pick a game and press Join, or double-click it."),
+             ("HOST", "Host makes a game the computers on your network can see."))),
+}
 
 
-def build_online():
-    data = rs2([("Online.dtm", EMPTY_LAYOUT.encode("latin-1"))])
-    screen, board = full_screen(data, "ONLINE", "MULTIPLAYER", "ONLINE")
+def build(stem):
+    layout, title, service, listed, help_text = MODES[stem]
+    data = rs2([(layout, EMPTY_LAYOUT.encode("latin-1"))])
+    screen, board = full_screen(data, stem, "MULTIPLAYER", title)
 
-    # Where the service will be: not there yet.
     pill = (RIGHT - 640, TOP + 64, RIGHT, TOP + 124)
     box(board, pill, (16, 17, 20, 230), 30, EDGE + (255,))
-    dot(board, (pill[0] + 36, (pill[1] + pill[3]) / 2), 9, FADED)
-    sub(board, "EPIC ONLINE SERVICES  ·  COMING SOON", pill[0] + 62, (pill[1] + pill[3]) / 2, 24, GREY,
-        anchor="lm", bold=True)
+    dot(board, (pill[0] + 36, (pill[1] + pill[3]) / 2), 9, ORANGE)
+    sub(board, service, pill[0] + 62, (pill[1] + pill[3]) / 2, 24, PAPER, anchor="lm", bold=True)
 
+    # The sessions, as the game lists them; its arrows and slider page through a long list.
     kit.panel(board, SESSIONS, 230)
-    heading(board, "SESSIONS", SESSIONS[0] + 36, SESSIONS[1] + 56, 28, ORANGE)
-    cx = (SESSIONS[0] + SESSIONS[2]) / 2
-    heading(board, "NO ONLINE SESSIONS YET", cx, 640, 56, PAPER, anchor="ms")
-    y = 700
-    for line in kit.wrap("Online play through Epic Online Services is on its way: the games being hosted, your "
-                         "friends and join codes will show here. Until then, join a friend by their address.",
-                         30, 1100):
-        sub(board, line, cx, y, 30, GREY, anchor="ms")
-        y += 44
-
-    kit.panel(board, JOIN, 230)
-    heading(board, "JOIN BY ADDRESS", JOIN[0] + 36, JOIN[1] + 46, 26, PAPER)
-    sub(board, "A friend's IP address, like 203.0.113.7, or a computer's name on your network",
-        JOIN[0] + 36, JOIN[1] + 74, 22, GREY)
-    edit = (JOIN[2] - 24 - 560, JOIN[1] + 16, JOIN[2] - 24, JOIN[3] - 16)
-    box(board, edit, (30, 31, 36, 255), 8, ORANGE + (255,))
-    keys = {"Type": "EDITBOX", "Xywh": xywh(edit), "MaxLen": "120", "TextLMargin": "20", "TextTMargin": "0",
-            "AnimNorm": screen.picture("MEditAddress", under(board, edit))}
-    keys.update(font(32, PAPER))
-    screen.add("EditAddress", **keys)
+    heading(board, listed, SESSIONS[0] + 36, SESSIONS[1] + 56, 28, ORANGE)
+    listing = (SESSIONS[0] + 24, SESSIONS[1] + 88, SESSIONS[2] - 24, SESSIONS[3] - 24)
+    box(board, listing, WELL, 8, EDGE + (255,))
+    keys = {"Type": "LISTBOX", "AttachId": GROUP, "TextAlignV": "MIDDLE", "TextAlign": "LEFT",
+            "Xywh": xywh((listing[0] + 8, listing[1] + 8, listing[2] - 56, listing[3] - 8)),
+            "TextLMargin": "16", "TextTMargin": "0", "SelectColor": colorref(ORANGE)}
+    keys.update(font(30, PAPER))
+    screen.add("LstSessions", **keys)
+    up = (listing[2] - 52, listing[1] + 8, listing[2] - 12, listing[1] + 52)
+    down = (listing[2] - 52, listing[3] - 52, listing[2] - 12, listing[3] - 8)
+    for name, kind, where, way in (("SessionUp", "SCROLLUP", up, "up"), ("SessionDown", "SCROLLDOWN", down, "down")):
+        screen.add(name, Type=kind, GroupId=GROUP, AttachId=GROUP)
+        screen.button(name, where, arrow_states(board, where, way))
+    bar = (listing[2] - 52, up[3] + 8, listing[2] - 12, down[1] - 8)
+    screen.add("ScrollSessions", Type="VSCROLLBAR", GroupId=GROUP, AttachId=GROUP)
+    screen.set("ScrollSessions", **scroll_bar(screen, board, "ScrollSessions", bar))
 
     kit.panel(board, ABOUT, 230)
-    heading(board, "PLAYING ONLINE NOW", ABOUT[0] + 36, ABOUT[1] + 56, 28, ORANGE)
+    heading(board, "HOW IT WORKS", ABOUT[0] + 36, ABOUT[1] + 56, 28, ORANGE)
     y = ABOUT[1] + 112
-    for title, words in (("JOIN", "Type the host's address and press Join."),
-                         ("HOST", "Host makes the game on this computer. Friends join with your public IP "
-                                  "address; your router has to let DirectPlay through: TCP 47624, and TCP and "
-                                  "UDP 2300 to 2400."),
-                         ("SOON", "With Epic Online Services: no addresses and no ports, a code to join a "
-                                  "friend, and a list of the games being hosted.")):
-        heading(board, title, ABOUT[0] + 36, y, 24, PAPER)
+    for name, words in help_text:
+        heading(board, name, ABOUT[0] + 36, y, 24, PAPER)
         y += 34
         for line in kit.wrap(words, 26, ABOUT[2] - ABOUT[0] - 72):
             sub(board, line, ABOUT[0] + 36, y, 26, GREY)
@@ -81,9 +83,9 @@ def build_online():
     keys.update(font(26, PAPER))
     screen.add("TxtStatus", **keys)
 
-    for name in ("Back", "ButHost", "ButJoin"):
+    for name in ("ButCancel", "ButHost", "ButJoin"):
         screen.add(name, Type="BUTTON")
-    footer(screen, board, [("Back", "BACK")], [("ButJoin", "JOIN", 540, True), ("ButHost", "HOST", 400, False)])
+    footer(screen, board, [("ButCancel", "BACK")], [("ButJoin", "JOIN", 540, True), ("ButHost", "HOST", 400, False)])
     full_info(screen, board)
     return screen, board, None
 
@@ -91,14 +93,15 @@ def build_online():
 def main(ui, out, previews):
     ui, out, previews = Path(ui), Path(out), Path(previews)
     kit.fonts_from(ui / "modern" / "fonts")
-    screen = build_online()
     out.mkdir(parents=True, exist_ok=True)
     previews.mkdir(parents=True, exist_ok=True)
-    data = screen[0].pack()
-    (out / "ONLINE.DAT").write_bytes(data)
-    print("ONLINE   %3d pictures, %d bytes" % (len(screen[0].pictures), len(data)))
     photo = sorted(previews.parent.glob("menu photo *.jpg"))[0]
-    preview(photo, [screen]).save(previews / "reborn online.png")
+    for stem in MODES:
+        screen = build(stem)
+        data = screen[0].pack()
+        (out / (stem + ".DAT")).write_bytes(data)
+        print("%-8s %3d pictures, %d bytes" % (stem, len(screen[0].pictures), len(data)))
+        preview(photo, [screen]).save(previews / ("reborn %s.png" % stem.lower()))
 
 
 if __name__ == "__main__":

@@ -3800,21 +3800,109 @@ static void user_panel_after_profile(BYTE* self)
 
 #ifdef OPENMCM2_DEV
 /*
-    MCM2:Reborn's multiplayer is LAN or Internet. LAN is TCP/IP with no address, which looks for
-    games on the local network. Internet is the same sessions screen over Epic Online Services
-    (code/dev/eosplay.c): the races hosted anywhere are listed, and Host and Join work as on LAN.
-    TRUE when the click was one of them.
+    MCM2:Reborn's multiplayer is LAN or Internet, each a screen of the look's own (Lan.dtm and
+    Online.dtm, made by tools/modern/build_online.py) run by the game's own sessions screen,
+    sessions_handle: the games hosted are listed, Host makes one and Join joins the one picked.
+    LAN is TCP/IP finding the games on the local network; Internet is Epic Online Services'
+    lobbies, through the DirectPlay of code/dev/eosplay.c.
 */
-static BOOL multi_clicked(ui_event* event)
+#define ONLINE_VTABLE_SLOTS 0x60
+#define CREDITS_VTABLE      ((void**) 0x005567B0)   /* a whole screen's, its handler replaced */
+#define sessions_found      (*(int*) 0x0068E80C)    /* sessions_handle's count */
+
+void __fastcall sessions_handle(BYTE* self, void* edx_unused, ui_event* event);
+
+static void* online_vtable[ONLINE_VTABLE_SLOTS];
+static BOOL online_internet;        /* the screen open is Online, not LAN */
+static BOOL online_failed;          /* its network did not start: only Back works */
+
+static void online_status(BYTE* self, const char* words)
 {
-    if (clicked(event, BUT_TCP) || clicked(event, "ButInternet")) {
-        if (!eos_online(clicked(event, "ButInternet")))
-            return TRUE;
-        session_connecting = 1;
-        connect_by(PROVIDER_TCPIP, 4, 0);
-        return TRUE;
+    BYTE* status = dialog_find_control(self, NULL, "TxtStatus", 0);
+
+    if (status)
+        control_set_text(status, NULL, words);
+}
+
+/* The network made for the screen and connected through TCP/IP, as LAN's button always did. */
+static BOOL online_connect(void)
+{
+    void* address;
+    DWORD size;
+    BOOL connected;
+
+    if (!eos_online(online_internet)
+        || !game_FUN_004b0600(game_net, NULL, PROVIDER_TCPIP, NO_TEXT, NO_TEXT, NULL, &address, &size))
+        return FALSE;
+    connected = game_FUN_004b04e0(game_net, NULL, address, size, 4);
+    game_FUN_004a4450(address, DLGPROCS_CPP, 0);
+    return connected;
+}
+
+static void online_show_status(BYTE* self)
+{
+    char words[64];
+    int state = online_internet ? eos_state() : 1;
+
+    if (state < 0)
+        online_status(self, "Epic Online Services could not be reached.");
+    else if (state == 0)
+        online_status(self, "Signing in to Epic Online Services...");
+    else if (!sessions_found)
+        online_status(self, online_internet ? "No lobbies open: host one." : "No games found: host one.");
+    else {
+        static const char* nouns[2][2] = { { "game", "games" }, { "lobby", "lobbies" } };
+
+        wsprintfA(words, "%d %s open.", sessions_found, nouns[online_internet != 0][sessions_found > 1]);
+        online_status(self, words);
     }
-    return FALSE;
+}
+
+static void __fastcall online_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    if (event->type == EVENT_OPEN) {
+        online_failed = !online_connect();
+        if (online_failed) {
+            online_status(self, online_internet ? "Online play would not start." : "The network would not start.");
+            return;
+        }
+    }
+    if (online_failed) {
+        if (event->type == EVENT_CLICK && clicked(event, "ButCancel")) {
+            dialog_end(self, NULL, 0);
+            event->e = 1;
+        }
+        return;
+    }
+    sessions_handle(self, edx_unused, event);
+    if (event->type == EVENT_OPEN || event->type == EVENT_TIMER)
+        online_show_status(self);
+}
+
+static void online_open(BYTE* self, BOOL internet)
+{
+    int i;
+
+    if (!online_vtable[0]) {
+        for (i = 0; i < ONLINE_VTABLE_SLOTS; i++)
+            online_vtable[i] = CREDITS_VTABLE[i];
+        online_vtable[0x74 / 4] = (void*) online_handle;
+    }
+    online_internet = internet;
+    box_open(self, dialog_new(0x7F5C, 0, internet ? "Online.dtm" : "Lan.dtm", online_vtable), 0, 4, 0);
+}
+
+/* The multiplayer panel's LAN and Internet. TRUE when the click was one of them. */
+static BOOL multi_clicked(BYTE* self, ui_event* event)
+{
+    BOOL internet = clicked(event, "ButInternet");
+
+    if (!internet && !clicked(event, BUT_TCP))
+        return FALSE;
+    log_line("multiplayer: %s", internet ? "Internet" : "LAN");
+    session_connecting = 1;
+    online_open(self, internet);
+    return TRUE;
 }
 #endif
 
@@ -3823,7 +3911,7 @@ static void menu_click(BYTE* self, ui_event* event)
 #ifdef OPENMCM2_DEV
     if (live_menu_leaving(self, event))
         return;
-    if (menu_reborn(self) && multi_clicked(event))
+    if (menu_reborn(self) && multi_clicked(self, event))
         return;
 #endif
     if (clicked(event, NAME(0x0056F708))) {                                 /* "MenuSingle" */

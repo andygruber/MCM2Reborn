@@ -959,6 +959,13 @@ void eos_install(void)
         log_line("eos: could not take over CoCreateInstance; online play is off");
 }
 
+int eos_state(void)
+{
+    if (!eos.pipe || eos.broken || eos.signed_out)
+        return -1;
+    return eos.ready ? 1 : 0;
+}
+
 BOOL eos_online(BOOL on)
 {
     if (on == eos.online)
