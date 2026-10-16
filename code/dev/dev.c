@@ -66,6 +66,7 @@ void dev_install(void)
         dev_settings.trace_events = read_switch(read, "trace", "events");
         dev_settings.trace_files = read_switch(read, "trace", "files");
         dev_settings.trace_display = read_switch(read, "trace", "display");
+        dev_settings.trace_camera = read_switch(read, "trace", "camera");
         dev_settings.menus_widescreen = read_switch(read, "menus", "widescreen");
         dev_settings.menus_fill_sides = read_switch(read, "menus", "fill_sides");
         dev_settings.menus_modern = read_switch(read, "menus", "modern");

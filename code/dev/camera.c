@@ -23,6 +23,8 @@
 #include "game.h"
 #include "maths.h"
 
+#include <mmsystem.h>
+
 #define CHASE       0
 #define RIDER       3
 
@@ -32,7 +34,8 @@
 #define cam_crashed(c)  FIELD(c, 0x276, BYTE)
 #define cam_on_bike(c)  FIELD(c, 0x390, int)
 #define cam_bike(c)     FIELD(c, 0x3B4, BYTE*)
-#define cam_terrain(c)  FIELD(c, 0x240, BYTE*)
+#define cam_eye(c)      ((float*) ((c) + 0x170))
+#define cam_dir(c)      ((float*) ((c) + 0x17C))
 #define cam_roll(c)     FIELD(c, 0x194, float)
 #define cam_heading(c)  ((float*) ((c) + 0x29C))    /* the game's own, smoothed */
 
@@ -48,9 +51,6 @@
 void __fastcall game_FUN_0042f8d0(BYTE* camera, void* edx_unused, const float* eye, const float* dir,
                                   const float* up, const float* roll, const float* fov);
 void __fastcall game_FUN_0042f850(BYTE* camera, void* edx_unused, float fov);
-/* Terrain: the ground's height under pos's x and z, into its y. */
-void __fastcall game_FUN_0050d3b0(BYTE* terrain, void* edx_unused, float* pos, float* normal, int a,
-                                  char* material);
 typedef void (__fastcall* camera_fn)(BYTE* camera, void* edx_unused);
 typedef void (__fastcall* head_fn)(BYTE* camera, void* edx_unused, float* out);
 
@@ -72,17 +72,6 @@ static struct {
     float fov, fov_speed;
 } cam;
 
-static float ground_under(BYTE* camera, float x, float z, float fallback)
-{
-    float pos[3] = { x, fallback, z }, normal[3];
-    char material[64];
-
-    if (!cam_terrain(camera))
-        return fallback;
-    game_FUN_0050d3b0(cam_terrain(camera), NULL, pos, normal, 0, material);
-    return pos[1];
-}
-
 static float flat_speed(const float* v)
 {
     return square_root(v[0] * v[0] + v[2] * v[2]);
@@ -90,41 +79,40 @@ static float flat_speed(const float* v)
 
 /* ---- Chase ---- */
 
+/*
+    The game's own heading is smoothed already, and a spring on it lagged twice over (the camera
+    swung wide in a turn); the height followed slower in the air than on the ground (it hung
+    high and dropped late). So the heading is the bike's going, on one quick spring, and the
+    height follows its arc as it does on the ground. Nothing reads the terrain: the floor is the
+    bike's own height.
+*/
 static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
     const float* p = bike_pos(bike);
     const float* v = bike_vel(bike);
     float speed = flat_speed(v), mph = speed * FT_PER_S_TO_MPH;
     float target[3] = { p[0], p[1] + 3.2f, p[2] };
-    float heading = speed > 10 ? arc_tangent2(v[0], v[2]) : arc_tangent2(cam_heading(camera)[0], cam_heading(camera)[2]);
-    float ahead = ground_under(camera, p[0] + sine(heading) * 10, p[2] + cosine(heading) * 10, p[1]);
-    float behind = ground_under(camera, p[0] - sine(heading) * 10, p[2] - cosine(heading) * 10, p[1]);
-    float slope = arc_tangent2(ahead - behind, 20);
-    float back = 13 + (mph < 60 ? mph : 60) * 0.06f;
-    float eye[3], look[3], dir[3], up[3] = { 0, 1, 0 }, length, floor, roll = 0, fov;
+    float heading = speed > 8 ? arc_tangent2(v[0], v[2]) : arc_tangent2(cam_heading(camera)[0], cam_heading(camera)[2]);
+    float slope = bike_air(bike) ? cam.pitch : arc_tangent2(v[1], speed > 8 ? speed : 8) * 0.5f;
+    float back = 12 + (mph < 60 ? mph : 60) * 0.04f;
+    float eye[3], look[3], dir[3], up[3] = { 0, 1, 0 }, length, roll = 0, fov;
 
     if (begin) {
         cam.yaw = heading;
-        cam.pitch = slope;
-        cam.height = target[1] + 4.5f;
+        cam.pitch = 0;
+        cam.height = target[1] + 4;
         cam.back = back;
         cam.fov = 75;
         cam.yaw_speed = cam.pitch_speed = cam.height_speed = cam.back_speed = cam.fov_speed = 0;
     }
-    spring_angle(&cam.yaw, &cam.yaw_speed, heading, bike_air(bike) ? 1.8f : 3.2f, dt);
-    spring(&cam.pitch, &cam.pitch_speed, bike_air(bike) ? cam.pitch : slope, 2.0f, dt);
-    spring(&cam.height, &cam.height_speed, target[1] + 4.5f - cam.pitch * 6, bike_air(bike) ? 2.5f : 6.0f, dt);
+    spring_angle(&cam.yaw, &cam.yaw_speed, heading, 6.0f, dt);
+    spring(&cam.pitch, &cam.pitch_speed, slope, 3.0f, dt);
+    spring(&cam.height, &cam.height_speed, target[1] + 4, 8.0f, dt);
     spring(&cam.back, &cam.back_speed, back, 3.0f, dt);
 
     eye[0] = target[0] - sine(cam.yaw) * cam.back;
     eye[2] = target[2] - cosine(cam.yaw) * cam.back;
-    eye[1] = cam.height;
-    floor = ground_under(camera, eye[0], eye[2], eye[1] - 3) + 3.0f;
-    if (eye[1] < floor) {               /* never under the ground: lifted, and the spring with it */
-        eye[1] = floor;
-        cam.height = floor;
-        cam.height_speed = 0;
-    }
+    eye[1] = cam.height > p[1] + 1.5f ? cam.height : p[1] + 1.5f;
     look[0] = target[0] + sine(cam.yaw) * 6;
     look[2] = target[2] + cosine(cam.yaw) * 6;
     look[1] = target[1] + 0.5f + sine(cam.pitch) * 6;
@@ -147,23 +135,22 @@ static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 
 /* ---- Rider ---- */
 
+/*
+    From the game's own Rider Cam, which has just placed itself at the helmet and looked the way
+    the bike goes: its place steadied relative to the bike, its look with some of its pitch and
+    lean, on springs.
+*/
 static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
     const float* p = bike_pos(bike);
     const float* v = bike_vel(bike);
-    const float* bike_dir = bike_forward(bike);
-    float raw[3];
+    const float* raw = cam_eye(camera);
+    const float* game_dir = cam_dir(camera);
     float speed = flat_speed(v), mph = speed * FT_PER_S_TO_MPH;
-    float yaw_bike = arc_tangent2(bike_dir[0], bike_dir[2]);
-    float pitch_bike = arc_tangent2(bike_dir[1], flat_speed(bike_dir));
-    float yaw = yaw_bike, pitch, roll, fov, eye[3], dir[3], up[3] = { 0, 1, 0 };
+    float yaw = arc_tangent2(game_dir[0], game_dir[2]);
+    float pitch = arc_tangent2(game_dir[1], flat_speed(game_dir)) * 0.4f - 6 * PI / 180;
+    float roll = cam_roll(camera) * 0.35f, fov, eye[3], dir[3], up[3] = { 0, 1, 0 };
     int k;
-
-    cam_head(camera, raw);                      /* the helmet, unsmoothed */
-    if (speed > 10)                             /* a little towards where it is going */
-        yaw = yaw_bike + angle_wrap(arc_tangent2(v[0], v[2]) - yaw_bike) * 0.25f;
-    pitch = pitch_bike * 0.4f - 6 * PI / 180;   /* some of the bike's, a little down at the bars */
-    roll = cam_roll(camera) * 0.35f;            /* some of the lean */
 
     if (begin) {
         for (k = 0; k < 3; k++) {
@@ -185,9 +172,8 @@ static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     dir[0] = sine(cam.yaw) * cosine(cam.pitch);
     dir[1] = sine(cam.pitch);
     dir[2] = cosine(cam.yaw) * cosine(cam.pitch);
-    for (k = 0; k < 3; k++)                     /* just out of the helmet, a touch above */
-        eye[k] = p[k] + cam.head[k] + dir[k] * 0.45f;
-    eye[1] += 0.2f;
+    for (k = 0; k < 3; k++)
+        eye[k] = p[k] + cam.head[k];
 
     spring(&cam.fov, &cam.fov_speed, 92 + (mph < 60 ? mph : 60) / 60 * 8, 2.0f, dt);
     fov = cam.fov;
@@ -195,6 +181,29 @@ static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     game_FUN_0042f850(camera, NULL, fov);
     cam_rebuild(camera);
     cam_show_rider(camera);
+}
+
+/* What the camera reads, twice a second ([trace] camera=1), to see which is wrong. */
+static void trace(BYTE* camera, BYTE* bike, float dt)
+{
+    static DWORD last;
+    const float* p = bike_pos(bike);
+    const float* v = bike_vel(bike);
+    const float* f = bike_forward(bike);
+    const float* e = cam_eye(camera);
+    const float* d = cam_dir(camera);
+    float head[3];
+
+    if (!dev_settings.trace_camera || timeGetTime() - last < 500)
+        return;
+    last = timeGetTime();
+    cam_head(camera, head);
+    dev_trace("camera", "mode %d dt %d ms air %d | bike %d %d %d | vel %d %d %d | fwd88 %d %d %d | head %d %d %d"
+              " | game eye %d %d %d dir %d %d %d roll %d", cam_mode(camera), (int) (dt * 1000), bike_air(bike),
+              (int) p[0], (int) p[1], (int) p[2], (int) v[0], (int) v[1], (int) v[2],
+              (int) (f[0] * 100), (int) (f[1] * 100), (int) (f[2] * 100),
+              (int) head[0], (int) head[1], (int) head[2], (int) e[0], (int) e[1], (int) e[2],
+              (int) (d[0] * 100), (int) (d[1] * 100), (int) (d[2] * 100), (int) (cam_roll(camera) * 100));
 }
 
 /* ---- Each frame ---- */
@@ -217,6 +226,7 @@ void camera_after_update(BYTE* camera, float dt)
     cam.mode = mode;
     if (dt > 0.1f)
         dt = 0.1f;
+    trace(camera, bike, dt);
     if (mode == CHASE)
         chase(camera, bike, dt, begin);
     else
