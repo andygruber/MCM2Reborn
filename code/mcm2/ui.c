@@ -33,11 +33,39 @@ static float menu_fit(BYTE* screen, int* left, int* top)
 /* The renderer's photo layer, for a layout that asks for it (Photos), while it is open. */
 void render_photos(BOOL on);
 void render_inks(void* picture_surface);
-static BYTE* photos_dialog = NULL;
+/* The dialogs open with the photos under them, the newest last: the photos show while any is. */
+#define PHOTOS_MOST 8
+static BYTE* photos_dialogs[PHOTOS_MOST];
+static int photos_count = 0;
+
+static void photos_add(BYTE* dialog)
+{
+    int i;
+
+    for (i = 0; i < photos_count; i++)
+        if (photos_dialogs[i] == dialog)
+            return;
+    if (photos_count < PHOTOS_MOST)
+        photos_dialogs[photos_count++] = dialog;
+    render_photos(TRUE);
+}
+
+static void photos_remove(BYTE* dialog)
+{
+    int i;
+
+    for (i = 0; i < photos_count; i++)
+        if (photos_dialogs[i] == dialog) {
+            photos_dialogs[i] = photos_dialogs[--photos_count];
+            if (!photos_count)
+                render_photos(FALSE);
+            return;
+        }
+}
 
 BOOL menu_photos_shown(void)
 {
-    return photos_dialog != NULL;
+    return photos_count > 0;
 }
 
 /* A 640x480 area moved onto the screen's centred one. */
@@ -239,10 +267,7 @@ void __fastcall dialog_destruct(BYTE* self)
 
     *(void***) self = UIDIALOG_VTABLE;
 #ifdef OPENMCM2_DEV
-    if (self == photos_dialog) {
-        photos_dialog = NULL;
-        render_photos(FALSE);
-    }
+    photos_remove(self);
 #endif
     if (manager) {
         if (FIELD(self, DLG_MODAL, int))
@@ -8956,8 +8981,7 @@ static void reader_info(dialog_reader* r)
         dialog_art_set(self, art, &view, reborn);
         reader_int(r, "Photos", 0, &photos);
         if (photos) {
-            photos_dialog = self;
-            render_photos(TRUE);
+            photos_add(self);
         }
         if (art > 1) {
             int left, top;

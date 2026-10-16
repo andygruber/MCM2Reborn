@@ -3795,10 +3795,110 @@ static void user_panel_after_profile(BYTE* self)
     control_show(FIELD(self, MENU_USER, BYTE*), NULL, FALSE, TRUE);
 }
 
+#ifdef OPENMCM2_DEV
+/*
+    MCM2:Reborn's multiplayer is LAN or Internet. LAN is TCP/IP with no address, which looks for
+    games on the local network; Internet opens the online screen (Online.dtm, made by
+    tools/modern/build_online.py), where online play through Epic Online Services will be. Until
+    then it joins a friend by address, as the original's TCP/IP did, and hosts as LAN does.
+*/
+#define ONLINE_VTABLE_SLOTS 0x60
+#define CREDITS_VTABLE      ((void**) 0x005567B0)   /* a whole screen's, its handler replaced */
+
+static void* online_vtable[ONLINE_VTABLE_SLOTS];
+
+static void online_status(BYTE* self, const char* words)
+{
+    BYTE* status = dialog_find_control(self, NULL, "TxtStatus", 0);
+
+    if (status)
+        control_set_text(status, NULL, words);
+}
+
+/* The address typed, joined as the original's TCP/IP prompt joins one (result_confirm, 0xD9). */
+static void online_join(BYTE* self, ui_event* event)
+{
+    char address[0x80];
+    void* data;
+    DWORD size;
+
+    edit_get_text(dialog_find_control(self, NULL, "EditAddress", 0), NULL, address, sizeof address);
+    if (!address[0]) {
+        online_status(self, "Type the host's address first.");
+        return;
+    }
+    if (!game_FUN_004b0600(game_net, NULL, PROVIDER_TCPIP, address, NO_TEXT, NULL, &data, &size)) {
+        online_status(self, "That address could not be used.");
+        return;
+    }
+    online_status(self, "Joining...");
+    if (game_FUN_004b04e0(game_net, NULL, data, size, 4)) {
+        game_FUN_004a4450(data, DLGPROCS_CPP, 0);
+        dialog_end(self, NULL, 0xF);
+        event->e = 1;
+    } else {
+        game_FUN_004a4450(data, DLGPROCS_CPP, 0);
+        online_status(self, "Nobody answered at that address.");
+    }
+}
+
+static void __fastcall online_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_OPEN) {
+        online_status(self, game_net ? "Online play by address. Epic Online Services is coming."
+                                     : "The network did not start: multiplayer cannot be used.");
+    } else if (event->type == EVENT_CLICK) {
+        if (clicked(event, NAME(0x0056F8CC))) {                             /* "Back" */
+            dialog_end(self, NULL, 0);
+            event->e = 1;
+        } else if (!game_net) {
+            return;
+        } else if (clicked(event, "ButJoin")) {
+            online_join(self, event);
+        } else if (clicked(event, "ButHost")) {
+            dialog_end(self, NULL, 0);
+            event->e = 1;
+            connect_by(PROVIDER_TCPIP, 4, 0);
+        }
+    }
+}
+
+static void online_open(BYTE* self)
+{
+    int i;
+
+    if (!online_vtable[0]) {
+        for (i = 0; i < ONLINE_VTABLE_SLOTS; i++)
+            online_vtable[i] = CREDITS_VTABLE[i];
+        online_vtable[0x74 / 4] = (void*) online_handle;
+    }
+    box_open(self, dialog_new(0x7F5C, 0, "Online.dtm", online_vtable), 0, 4, 0);
+}
+
+/* The multiplayer panel's LAN and Internet. TRUE when the click was one of them. */
+static BOOL multi_clicked(BYTE* self, ui_event* event)
+{
+    if (clicked(event, BUT_TCP)) {
+        session_connecting = 1;
+        connect_by(PROVIDER_TCPIP, 4, 0);
+        return TRUE;
+    }
+    if (clicked(event, "ButInternet")) {
+        session_connecting = 1;
+        online_open(self);
+        return TRUE;
+    }
+    return FALSE;
+}
+#endif
+
 static void menu_click(BYTE* self, ui_event* event)
 {
 #ifdef OPENMCM2_DEV
     if (live_menu_leaving(self, event))
+        return;
+    if (menu_reborn(self) && multi_clicked(self, event))
         return;
 #endif
     if (clicked(event, NAME(0x0056F708))) {                                 /* "MenuSingle" */

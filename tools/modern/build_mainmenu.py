@@ -44,9 +44,12 @@ CARD = (1904, 1060, RIGHT, 1290)                    # the rider's card
 NAME = (1936, 1124, RIGHT - 32, 1196)               # the rider's name in it, the game's own text
 
 # The panels the menu still opens: control, its place, its title, and its buttons.
-MULTI = ("MenuMultiAnimation", (1240, 556, 2000, 1060), "MULTIPLAYER",
-         [("ButIPX", "LOCAL NETWORK"), ("ButTCP", "INTERNET  TCP/IP"), ("ButZone", "MSN GAMING ZONE"),
-          ("ButCable", "SERIAL CABLE"), ("ButModem", "MODEM")])
+# LAN is TCP/IP over the local network; Internet is a control of the look's own, opening the
+# online screen (dlgprocs.c). The other connections go: no one has IPX, a cable or a modem now.
+MULTI = ("MenuMultiAnimation", (1240, 556, 2000, 556 + 88 + 2 * 74 + 24), "MULTIPLAYER",
+         [("ButTCP", "LAN"), ("ButInternet", "INTERNET")])
+GONE = ["ButIPX", "ButZone", "ButCable", "ButModem"]
+ADDED = {"ButInternet": {"Type": "BUTTON", "Anchor": "MenuMultiAnimation", "RelAnchor": "1"}}
 USER = ("MenuUserAnimation", (1904, 390, RIGHT, 1030), "RIDER PROFILES",
         [("ButNewProfile", "NEW"), ("ButLoadProfile", "LOAD"), ("ButRemoveProfile", "REMOVE"),
          ("ButCancelProfile", "CLOSE")])
@@ -391,7 +394,10 @@ def build(original_dat):
 
     original = rs2_entries(original_dat)
     sections = read_dtm(original["mainmenu.dtm"].decode("latin-1"))
-    missing = [c for c in controls if c not in {n for n, _ in sections}]
+    for button in GONE:
+        controls[button] = dict(anims("Nothing"), Xywh="0, 0, 4, 4", Anchor=name, RelAnchor="1")
+        drops[button] = TEXT_KEYS
+    missing = [c for c in controls if c not in {n for n, _ in sections} and c not in ADDED]
     assert not missing, missing
 
     # The original's sections stay in their order, its anims and sounds among them; the new
@@ -400,6 +406,9 @@ def build(original_dat):
     for name, lines in sections:
         if name == "rbwLabel1":
             continue
+        if name.lower() == "set_anim":
+            for added, keys in ADDED.items():
+                out += ["[%s]" % added] + ["%s = %s" % kv for kv in dict(keys, **controls[added]).items()] + [""]
         if name in controls:
             lines = set_keys(lines, controls[name], drops.get(name, ()))
         out += ["[%s]" % name] + [l for l in lines if l.strip()] + [""]
