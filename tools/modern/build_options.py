@@ -361,6 +361,12 @@ def build_advanced(data):
     words(screen, board, "Txt3DCard", rows_area(card, top, 0), "RENDERER", size=24)
     switch(screen, board, "ChkShowPick3D", rows_area(card, top, 1), "ASK AT START")
     switch(screen, board, "ChkForceVideoMem", rows_area(card, top, 2), "FIT IN VIDEO MEMORY")
+    # The picture's finish and the frame limit (optionprocs.c, camera_rows): the game has no such rows.
+    for k, (name, label) in enumerate((("MultFxaa", "EDGE SMOOTHING"), ("MultSharpen", "SHARPENING"),
+                                       ("MultVibrance", "COLOUR VIBRANCE"), ("MultBrightness", "BRIGHTNESS"),
+                                       ("MultFrameLimit", "FRAME RATE LIMIT"))):
+        screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
+        words(screen, board, name, rows_area(card, top, 3 + k), label)
 
     top = panel(board, repair, "TROUBLESHOOTING")
     switch(screen, board, "ChkFilterInput", rows_area(repair, top, 0), "FILTER JOYSTICK INPUT")

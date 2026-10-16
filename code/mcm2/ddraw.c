@@ -630,9 +630,16 @@ static void present(surface* target)
     if (dev_settings.menus_fill_sides && fit_w < w)
         fill_sides(target, w, h, x, x + fit_w);
 #endif
-    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, target->fbo);
-    gl.BlitFramebuffer(0, 0, target->desc.dwWidth, target->desc.dwHeight, x, y, x + fit_w, y + fit_h,
-                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    if (post_draw(target->colour, target->desc.dwWidth, target->desc.dwHeight, x, y, fit_w, fit_h))
+    {
+        gl.Viewport(0, 0, w, h);
+    }
+    else
+    {
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, target->fbo);
+        gl.BlitFramebuffer(0, 0, target->desc.dwWidth, target->desc.dwHeight, x, y, x + fit_w, y + fit_h,
+                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    }
 #ifdef OPENMCM2_DEV
     hud_draw(w, h);                 /* MCM2:Reborn's race HUD, at the window's resolution */
 #endif

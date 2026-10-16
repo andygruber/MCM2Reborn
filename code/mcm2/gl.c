@@ -22,7 +22,7 @@ static HDC         g_dc;
 static swap_fn     g_swap;
 static interval_fn g_interval;
 
-render_options g_render = { TRUE, 0, 0 };   /* initialised, or it is a common symbol */
+render_options g_render = { TRUE, 0, 0, 0, 0, 0, 0, 100 };   /* initialised, or it is a common symbol */
 
 static BOOL load(HMODULE opengl, get_proc_fn get_proc)
 {
@@ -33,8 +33,14 @@ static BOOL load(HMODULE opengl, get_proc_fn get_proc)
 #define LOAD_LATER(name, ret, args) \
     if (!(*(PROC*) &gl.name = get_proc("gl" #name))) { log_line("gl: no gl" #name); ok = FALSE; }
 
+#define LOAD_SHADER(name, ret, args)     if (!(*(PROC*) &gl.name = get_proc("gl" #name))) gl.shaders = FALSE;
+
     GL_FUNCTIONS(LOAD_CORE)
     GL_LATER_FUNCTIONS(LOAD_LATER)
+    gl.shaders = TRUE;
+    GL_SHADER_FUNCTIONS(LOAD_SHADER)
+    if (!gl.shaders)
+        log_line("gl: no shaders, the picture is drawn as it is");
     return ok;
 }
 
@@ -99,8 +105,8 @@ void gl_vsync_apply(void)
         log_line("gl: vsync cannot be set - the frame rate is held to the refresh rate");
 }
 
-/* Without vsync, the frame waits for its turn at the display's refresh rate: slept most of the
-   way, then spun, so it is neither late nor early. */
+/* Without vsync, or with a frame limit, the frame waits for its turn at the limit or else the
+   display's refresh rate: slept most of the way, then spun, so it is neither late nor early. */
 static void frame_hold(void)
 {
     static counter_fn counter;
@@ -127,7 +133,7 @@ static void frame_hold(void)
     }
     if (!frequency)
         return;
-    period = 1000.0 / refresh;
+    period = 1000.0 / (g_render.frame_limit > 0 ? g_render.frame_limit : refresh);
     counter(&now);
     at = (double) now.QuadPart * 1000.0 / frequency;
     if (next < at - period)                     /* far behind, or the first frame: start now */
@@ -143,7 +149,7 @@ static void frame_hold(void)
 
 void gl_present(void)
 {
-    if (!g_render.vsync || !g_interval)
+    if (!g_render.vsync || !g_interval || g_render.frame_limit > 0)
         frame_hold();
     g_swap(g_dc);
 }

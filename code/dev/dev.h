@@ -31,6 +31,11 @@
         vsync=1           present on vertical blank (off, frames are still held to the refresh)
         antialiasing=4    samples: 0, 2, 4 or 8
         filtering=4       0 the game's, 1 trilinear, 2 to 4 anisotropic at 4, 8 and 16 times
+        frame_limit=0     frames a second at most, 0 the display's refresh rate
+        fxaa=0            1 smooths the picture's edges once drawn (post.c)
+        sharpen=0         percent: how much the picture's detail is sharpened
+        vibrance=0        percent: how much its dull colours are deepened
+        brightness=100    percent, 100 as the game drew it
 
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider

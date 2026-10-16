@@ -414,10 +414,10 @@ static void renderer_rows_show(BYTE* self)
 }
 
 /*
-    The first-person view's rows (dev.h, camera_options) and the Reborn or Classic ones, on the
-    Graphics page and the Game page's PHYSICS: each a list of the values it offers, clicked
-    through; a setting from the file between two of them shows as the nearest. A page shows and
-    keeps the rows it has.
+    The first-person view's rows (dev.h, camera_options), the Reborn or Classic ones, on the
+    Graphics page and the Game page's PHYSICS, and the Advanced page's picture finish and frame
+    limit (gl.h, g_render): each a list of the values it offers, clicked through; a setting from
+    the file between two of them shows as the nearest. A page shows and keeps the rows it has.
 */
 #define CHOICES_MOST 16
 
@@ -428,6 +428,10 @@ static const int corner_values[] = { 0, 1 };
 static const int lean_values[] = { 0, 100, 200, 300, 352, 400, 500, 600 };
 
 static const int style_values[] = { 1, 0 };
+static const int fxaa_values[] = { 0, 1 };
+static const int percent_values[] = { 0, 25, 50, 75, 100 };
+static const int brightness_values[] = { 80, 90, 100, 110, 120, 130 };
+static const int limit_values[] = { 0, 30, 60, 120, 144, 165, 240 };
 
 static const struct camera_row {
     const char* name;
@@ -443,6 +447,11 @@ static const struct camera_row {
     { "MultFpPitch", pitch_values, 16, &g_camera_options.pitch },
     { "MultFpCorner", corner_values, 2, &g_camera_options.corner },
     { "MultFpLean", lean_values, 8, &g_camera_options.lean_heading },
+    { "MultFxaa", fxaa_values, 2, &g_render.fxaa },
+    { "MultSharpen", percent_values, 5, &g_render.sharpen },
+    { "MultVibrance", percent_values, 5, &g_render.vibrance },
+    { "MultBrightness", brightness_values, 6, &g_render.brightness },
+    { "MultFrameLimit", limit_values, 7, &g_render.frame_limit },
 };
 #define CAMERA_ROWS ((int) (sizeof camera_rows / sizeof camera_rows[0]))
 
@@ -459,6 +468,16 @@ static void camera_words(const struct camera_row* row, int value, char* words)
         lstrcpyA(words, value ? "LEAN" : "OFF");
     else if (row->values == style_values)
         lstrcpyA(words, value ? "REBORN" : "CLASSIC");
+    else if (row->values == fxaa_values)
+        lstrcpyA(words, value ? "FXAA" : "OFF");
+    else if (row->values == percent_values && !value)
+        lstrcpyA(words, "OFF");
+    else if (row->values == percent_values || row->values == brightness_values)
+        wsprintfA(words, "%d%%", value);
+    else if (row->values == limit_values && !value)
+        lstrcpyA(words, "REFRESH RATE");
+    else if (row->values == limit_values)
+        wsprintfA(words, "%d FPS", value);
     else
         wsprintfA(words, "%d.%d", value / 10, value % 10);
 }
@@ -498,6 +517,7 @@ static void camera_rows_keep(BYTE* self)
     }
     dev_camera_save();
     dev_reborn_save();
+    dev_graphics_save();
 }
 
 static void renderer_rows_keep(BYTE* self)
@@ -697,8 +717,14 @@ void __fastcall advanced_graphics_handle(BYTE* self, void* edx_unused, ui_event*
         break;
     case EVENT_OPEN:
         advanced_graphics_open(self, detail);
+#ifdef OPENMCM2_DEV
+        camera_rows_show(self);             /* the picture's finish and the frame limit */
+#endif
         break;
     case EVENT_CLOSE:
+#ifdef OPENMCM2_DEV
+        camera_rows_keep(self);
+#endif
         setting_set(USE_LAST_VIDEO_CARD, !option_current_index(find(self, CHK_SHOW_PICK_3D, 2)));
         if (option_current_index(find(self, RAD_TERR_SINGLE, 4)))
             method = 2;

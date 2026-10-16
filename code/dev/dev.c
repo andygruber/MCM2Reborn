@@ -91,9 +91,16 @@ void dev_install(void)
         g_render.vsync = read("graphics", "vsync", 1, SETTINGS_FILE) != 0;
         g_render.samples = (int) read("graphics", "antialiasing", 4, SETTINGS_FILE);
         g_render.filtering = (int) read("graphics", "filtering", 4, SETTINGS_FILE);
+        g_render.frame_limit = (int) read("graphics", "frame_limit", 0, SETTINGS_FILE);
+        g_render.fxaa = (int) read("graphics", "fxaa", 0, SETTINGS_FILE);
+        g_render.sharpen = (int) read("graphics", "sharpen", 0, SETTINGS_FILE);
+        g_render.vibrance = (int) read("graphics", "vibrance", 0, SETTINGS_FILE);
+        g_render.brightness = (int) read("graphics", "brightness", 100, SETTINGS_FILE);
     }
-    log_line("dev build: graphics: vsync %d, anti-aliasing %dx, filtering %d", g_render.vsync,
-             g_render.samples, g_render.filtering);
+    log_line("dev build: graphics: vsync %d, anti-aliasing %dx, filtering %d, frame limit %d; "
+             "fxaa %d, sharpen %d, vibrance %d, brightness %d", g_render.vsync, g_render.samples,
+             g_render.filtering, g_render.frame_limit, g_render.fxaa, g_render.sharpen, g_render.vibrance,
+             g_render.brightness);
     if (read) {
         camera_options* c = &g_camera_options;
 
@@ -143,18 +150,14 @@ void dev_reborn_save(void)
 
 void dev_graphics_save(void)
 {
-    typedef BOOL (WINAPI* write_fn)(LPCSTR section, LPCSTR key, LPCSTR value, LPCSTR file);
-    write_fn write = (write_fn) api("kernel32.dll", "WritePrivateProfileStringA");
-    char value[16];
-
-    if (!write)
-        return;
-    wsprintfA(value, "%d", g_render.vsync);
-    write("graphics", "vsync", value, SETTINGS_FILE);
-    wsprintfA(value, "%d", g_render.samples);
-    write("graphics", "antialiasing", value, SETTINGS_FILE);
-    wsprintfA(value, "%d", g_render.filtering);
-    write("graphics", "filtering", value, SETTINGS_FILE);
+    write_number("graphics", "vsync", g_render.vsync);
+    write_number("graphics", "antialiasing", g_render.samples);
+    write_number("graphics", "filtering", g_render.filtering);
+    write_number("graphics", "frame_limit", g_render.frame_limit);
+    write_number("graphics", "fxaa", g_render.fxaa);
+    write_number("graphics", "sharpen", g_render.sharpen);
+    write_number("graphics", "vibrance", g_render.vibrance);
+    write_number("graphics", "brightness", g_render.brightness);
 }
 
 /* A clock for timing: milliseconds since it was first read. */

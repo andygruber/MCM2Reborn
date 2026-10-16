@@ -22,6 +22,7 @@ typedef unsigned char  GLubyte;
 typedef float          GLfloat;
 typedef double         GLdouble;
 typedef void           GLvoid;
+typedef char           GLchar;
 
 #define GL_FALSE                        0
 #define GL_TRUE                         1
@@ -226,12 +227,17 @@ typedef void           GLvoid;
     X(RenderbufferStorageMultisample, void, (GLenum, GLsizei, GLenum, GLsizei, GLsizei)) \
     X(GenerateMipmap, void, (GLenum))
 
+/* OpenGL 2.0's shaders, for the picture's finish (post.c): looked for, but not needed to start. */
+#define GL_SHADER_FUNCTIONS(X)     X(CreateShader, GLuint, (GLenum))     X(ShaderSource, void, (GLuint, GLsizei, const GLchar* const*, const GLint*))     X(CompileShader, void, (GLuint))     X(GetShaderiv, void, (GLuint, GLenum, GLint*))     X(GetShaderInfoLog, void, (GLuint, GLsizei, GLsizei*, GLchar*))     X(DeleteShader, void, (GLuint))     X(CreateProgram, GLuint, (void))     X(AttachShader, void, (GLuint, GLuint))     X(LinkProgram, void, (GLuint))     X(GetProgramiv, void, (GLuint, GLenum, GLint*))     X(UseProgram, void, (GLuint))     X(GetUniformLocation, GLint, (GLuint, const GLchar*))     X(Uniform1i, void, (GLint, GLint))     X(Uniform1f, void, (GLint, GLfloat))     X(Uniform2f, void, (GLint, GLfloat, GLfloat))
+
 #define GL_POINTER(name, ret, args) ret (WINAPI *name) args;
 
 typedef struct gl_api
 {
     GL_FUNCTIONS(GL_POINTER)
     GL_LATER_FUNCTIONS(GL_POINTER)
+    GL_SHADER_FUNCTIONS(GL_POINTER)
+    BOOL shaders;                       /* all of GL_SHADER_FUNCTIONS were found */
 } gl_api;
 
 extern gl_api gl;
@@ -244,15 +250,29 @@ void gl_present(void);
     The player's graphics settings (in the dev build, its Options > Graphics). Without vsync the
     frames are still held to the display's refresh rate: the game's physics come apart uncapped.
     `samples` is the anti-aliasing's, 0 for none; `filtering` 0 is the game's own, 1 trilinear,
-    and 2 to 4 anisotropic at 4, 8 and 16 times.
+    and 2 to 4 anisotropic at 4, 8 and 16 times. `frame_limit` holds the frames to so many a
+    second, 0 to the display's refresh rate.
+
+    The picture's finish (post.c), each 0 for the picture as the game drew it: `fxaa` 1 smooths
+    its edges after it is drawn; `sharpen`, how much its detail is sharpened, and `vibrance`, how
+    much its dull colours are deepened, in percent; `brightness` in percent, 100 as drawn.
 */
 typedef struct render_options {
     BOOL vsync;
     int  samples;
     int  filtering;
+    int  frame_limit;
+    int  fxaa;
+    int  sharpen;
+    int  vibrance;
+    int  brightness;
 } render_options;
 
 extern render_options g_render;
 
 /* g_render.vsync, set again. */
 void gl_vsync_apply(void);
+
+/* The picture `texture` (w x h) drawn finished into the window's x, y, fit_w x fit_h; FALSE when
+   it is to be drawn as it is: its finish all off, or no shaders (post.c). */
+BOOL post_draw(GLuint texture, int w, int h, int x, int y, int fit_w, int fit_h);
