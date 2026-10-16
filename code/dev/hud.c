@@ -220,7 +220,13 @@ static void polyline(const float (*points)[2], int count, float width, colour c)
 
 /* ---- Words ---- */
 
-enum face { HEADING, TEXT };            /* the menus' AeromoveDemo, and Helvetica Oblique bold */
+/*
+    The menus' text face, Helvetica Oblique bold. Their heading face (AeromoveDemo) has no figures:
+    the menus set figures in the text face at FIGURE_SCALE of the heading's size, as tall as its
+    capitals (reborn_kit.heading_runs), and the HUD's numbers are set so too.
+*/
+enum face { FIGURES, TEXT };
+#define FIGURE_SCALE 0.9f
 
 #define ATLAS_W     1024
 #define ATLAS_MOST  16
@@ -283,9 +289,8 @@ static atlas* atlas_of(int face, int size)
     a->face = face;
     a->size = size;
 
-    font = create_font(-size, 0, 0, 0, face == TEXT ? FW_BOLD : FW_NORMAL, face == TEXT, FALSE, FALSE,
-                       DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
-                       DEFAULT_PITCH, face == HEADING ? "AeromoveDemo" : "Helvetica");
+    font = create_font(-size, 0, 0, 0, FW_BOLD, TRUE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS,
+                       CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, "Helvetica");
     dc = create_dc(NULL);
     old_font = (HFONT) select(dc, font);
     metrics(dc, &tm);
@@ -365,7 +370,7 @@ static void atlases_free(void)
 /* How wide `words` are at `size` mockup pixels, in mockup pixels. */
 static float words_width(int face, float size, const char* words)
 {
-    atlas* a = atlas_of(face, (int) (size * g_scale + 0.5f));
+    atlas* a = atlas_of(face, (int) (size * (face == FIGURES ? FIGURE_SCALE : 1) * g_scale + 0.5f));
     float w = 0;
 
     if (!a)
@@ -382,7 +387,7 @@ enum align { LEFT, MIDDLE, RIGHT };
 static void say(int face, float size, float x, float y, enum align align, colour c, const char* words)
 {
     static GLfloat quads[128 * 6][4];
-    atlas* a = atlas_of(face, (int) (size * g_scale + 0.5f));
+    atlas* a = atlas_of(face, (int) (size * (face == FIGURES ? FIGURE_SCALE : 1) * g_scale + 0.5f));
     float px, py;
     int n = 0;
 
@@ -454,22 +459,22 @@ static void race_strip(const hud_view* v)
     say(TEXT, 18, cx, y + 34, LEFT, GREY, "POS");
     wsprintfA(big, "%d", v->place);
     wsprintfA(small, "/%d", v->riders);
-    say(HEADING, 46, cx, y + 84, LEFT, ORANGE, big);
-    say(TEXT, 24, cx + words_width(HEADING, 46, big) + 6, y + 84, LEFT, GREY, small);
+    say(FIGURES, 46, cx, y + 84, LEFT, ORANGE, big);
+    say(TEXT, 24, cx + words_width(FIGURES, 46, big) + 6, y + 84, LEFT, GREY, small);
     cx += 132;
     rounded(cx - 23, y + 22, cx - 21, y + 82, 0, EDGE);
     say(TEXT, 18, cx, y + 34, LEFT, GREY, v->timed ? "PTS" : "LAP");
     wsprintfA(big, "%d", v->timed ? v->score : v->lap);
-    say(HEADING, 46, cx, y + 84, LEFT, PAPER, big);
+    say(FIGURES, 46, cx, y + 84, LEFT, PAPER, big);
     if (!v->timed && v->laps > 0) {
         wsprintfA(small, "/%d", v->laps);
-        say(TEXT, 24, cx + words_width(HEADING, 46, big) + 6, y + 84, LEFT, GREY, small);
+        say(TEXT, 24, cx + words_width(FIGURES, 46, big) + 6, y + 84, LEFT, GREY, small);
     }
     cx += v->timed ? 160 : 132;
     rounded(cx - 23, y + 22, cx - 21, y + 82, 0, EDGE);
     say(TEXT, 18, cx, y + 34, LEFT, GREY, v->timed ? "LEFT" : "TIME");
     time_words(big, v->race_ms, FALSE);
-    say(HEADING, 46, cx, y + 84, LEFT, PAPER, big);
+    say(FIGURES, 46, cx, y + 84, LEFT, PAPER, big);
 }
 
 static void gaps_bar(const hud_view* v)
@@ -537,13 +542,22 @@ static void map_fit(const hud_view* v, const float room[4], float* scale, float*
     *oy = (room[1] + room[3]) / 2 + (z0 + z1) / 2 * *scale;       /* world z grows up the map */
 }
 
+/* A rider's place on the map, kept inside its room when off the track's extent. */
+static void map_place(float wx, float wz, const float room[4], float scale, float ox, float oy, float* x, float* y)
+{
+    *x = ox + wx * scale;
+    *y = oy - wz * scale;
+    *x = *x < room[0] ? room[0] : *x > room[2] ? room[2] : *x;
+    *y = *y < room[1] ? room[1] : *y > room[3] ? room[3] : *y;
+}
+
 static void track_map(const hud_view* v)
 {
     static float line[HUD_TRACK_MOST][2];
     float x1 = g_width - MARGIN, x0 = x1 - 380, y0 = MARGIN, y1 = MARGIN + 300;
     float room[4] = { x0 + 34, y0 + 56, x1 - 30, y1 - 26 };
     float scale, ox, oy;
-    int k, me = -1;
+    int k, me = -1, pass, part;
 
     if (v->track_count < 2)
         return;
@@ -554,11 +568,19 @@ static void track_map(const hud_view* v)
         line[k][0] = ox + v->track[k][0] * scale;
         line[k][1] = oy - v->track[k][1] * scale;
     }
-    polyline((const float (*)[2]) line, v->track_count, 14, SHADOW);
-    polyline((const float (*)[2]) line, v->track_count, 6, TRACK);
+    for (pass = 0; pass < 2; pass++) {  /* all the shadow first, then the lines over it */
+        for (part = 0; part < v->parts; part++) {
+            int from = v->part_start[part];
+            int to = part + 1 < v->parts ? v->part_start[part + 1] : v->track_count;
+
+            polyline((const float (*)[2]) line + from, to - from, pass ? 6.0f : 14.0f, pass ? TRACK : SHADOW);
+        }
+    }
     for (k = 0; k < v->rider_count; k++) {
-        float x = ox + v->rider[k].x * scale, y = oy - v->rider[k].z * scale;
+        float x, y;
         char number[8];
+
+        map_place(v->rider[k].x, v->rider[k].z, room, scale, ox, oy, &x, &y);
 
         if (v->rider[k].player) {
             me = k;
@@ -570,9 +592,10 @@ static void track_map(const hud_view* v)
         say(TEXT, 15, x, y + 6, MIDDLE, INK, number);
     }
     if (me >= 0) {                      /* the player last, over the others */
-        float x = ox + v->rider[me].x * scale, y = oy - v->rider[me].z * scale;
+        float x, y;
         char number[8];
 
+        map_place(v->rider[me].x, v->rider[me].z, room, scale, ox, oy, &x, &y);
         disc(x, y, 15, INK);
         disc(x, y, 13, ORANGE);
         wsprintfA(number, "%d", v->rider[me].place);
@@ -597,7 +620,7 @@ static void speedometer(const hud_view* v)
         arc(cx, cy, r - 24, r - 10, a0, a1, c);
     }
     wsprintfA(words, "%d", (int) (v->speed_mph + 0.5f));
-    say(HEADING, 80, cx, cy + 26, MIDDLE, PAPER, words);
+    say(FIGURES, 80, cx, cy + 26, MIDDLE, PAPER, words);
     say(TEXT, 18, cx, cy + 56, MIDDLE, GREY, "MPH");
     if (v->gear > 0) {
         wsprintfA(words, "%d", v->gear);

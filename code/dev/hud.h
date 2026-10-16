@@ -7,7 +7,8 @@
 
 #include "runtime.h"
 
-#define HUD_TRACK_MOST  256             /* the track map's points */
+#define HUD_TRACK_MOST  512             /* the track map's points */
+#define HUD_PARTS_MOST  32              /* ...in so many lines: the track file's sections */
 #define HUD_RIDERS_MOST 16
 
 typedef struct hud_rider {
@@ -38,8 +39,10 @@ typedef struct hud_view {
     int   gear;                         /* 0 when the game has none */
 
     char  track_name[48];
-    float track[HUD_TRACK_MOST][2];     /* the track's line, world x and z */
+    float track[HUD_TRACK_MOST][2];     /* the track's lines, world x and z, one after another */
     int   track_count;
+    int   part_start[HUD_PARTS_MOST];   /* where each line begins in track[] */
+    int   parts;
     hud_rider rider[HUD_RIDERS_MOST];
     int   rider_count;
 } hud_view;

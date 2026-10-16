@@ -64,6 +64,12 @@ static void copy_name(char* to, const char* from, int size)
 
 static BYTE* g_track_race;              /* the race the line was read for */
 
+static void part_begin(hud_view* v)
+{
+    if (v->parts < HUD_PARTS_MOST)
+        v->part_start[v->parts++] = v->track_count;
+}
+
 static void track_add(hud_view* v, float x, float z)
 {
     if (v->track_count < HUD_TRACK_MOST) {
@@ -74,33 +80,64 @@ static void track_add(hud_view* v, float x, float z)
 }
 
 /*
-    SX and nationals: the track file's first section (race+0x48 points at the pointer to it, as
-    the radar reads it, 0x00521D70), a loop of points (0x30 bytes each, the racing line's x, y
-    and z first, the next at +0x2C), thinned to what the map holds.
+    SX and nationals: the track file's sections (race+0x48 points at the pointer to the first, as
+    the radar reads them, 0x00521D70), each a loop of points 0x30 bytes long (its two edges' x, y
+    and z at +0x0C and +0x18, the next point at +0x2C) and its children (count +0x10, the array of
+    them +0x14). Each is a line of the map through the middle of its edges, thinned to its share.
 */
-static void track_from_file(hud_view* v, BYTE* race)
+#define SECTIONS_MOST 64
+
+static void section_line(hud_view* v, BYTE* section, int share)
 {
-    BYTE** first = FIELD(race, 0x48, BYTE**);
-    BYTE* section = first ? *first : NULL;
-    BYTE* head = section ? FIELD(section, 0x08, BYTE*) : NULL;
+    BYTE* head = FIELD(section, 0x08, BYTE*);
     BYTE* p;
     int count = 0, step, k = 0;
 
-    if (!head)
+    if (!head || v->parts == HUD_PARTS_MOST)
         return;
     p = head;
     do {
         count++;
         p = FIELD(p, 0x2C, BYTE*);
     } while (p && p != head && count < 100000);
-    step = count / (HUD_TRACK_MOST - 1) + 1;
+    step = count / (share > 2 ? share - 1 : 1) + 1;
+    part_begin(v);
     p = head;
     do {
         if (k++ % step == 0)
-            track_add(v, FIELD(p, 0x00, float), FIELD(p, 0x08, float));
+            track_add(v, (FIELD(p, 0x0C, float) + FIELD(p, 0x18, float)) / 2,
+                      (FIELD(p, 0x14, float) + FIELD(p, 0x20, float)) / 2);
         p = FIELD(p, 0x2C, BYTE*);
     } while (p && p != head && k < count);
-    track_add(v, FIELD(head, 0x00, float), FIELD(head, 0x08, float));     /* closed */
+    if (p == head)                      /* a loop: closed */
+        track_add(v, (FIELD(head, 0x0C, float) + FIELD(head, 0x18, float)) / 2,
+                  (FIELD(head, 0x14, float) + FIELD(head, 0x20, float)) / 2);
+}
+
+static void track_from_file(hud_view* v, BYTE* race)
+{
+    BYTE* found[SECTIONS_MOST];
+    BYTE** first = FIELD(race, 0x48, BYTE**);
+    int count = 0, i, k;
+
+    if (!first || !*first)
+        return;
+    found[count++] = *first;
+    for (i = 0; i < count; i++) {           /* every section once, through the children */
+        int children = FIELD(found[i], 0x10, int);
+        BYTE** child = FIELD(found[i], 0x14, BYTE**);
+
+        for (k = 0; child && k < children && count < SECTIONS_MOST; k++) {
+            int seen = 0, j;
+
+            for (j = 0; j < count; j++)
+                seen |= found[j] == child[k];
+            if (!seen && child[k])
+                found[count++] = child[k];
+        }
+    }
+    for (i = 0; i < count; i++)
+        section_line(v, found[i], HUD_TRACK_MOST / count);
 }
 
 /* Baja and enduro: the gates, in order (each 0x18 bytes from +0xD8, x y z first). */
@@ -111,6 +148,7 @@ static void track_from_gates(hud_view* v)
 
     if (!gates)
         return;
+    part_begin(v);
     count = FIELD(gates, 0xAC, int);
     for (i = 0; i < count && i < HUD_TRACK_MOST; i++)
         track_add(v, FIELD(gates, 0xD8 + i * 0x18, float), FIELD(gates, 0xE0 + i * 0x18, float));
@@ -123,6 +161,7 @@ static void track_read(hud_view* v, BYTE* race)
     int length;
 
     v->track_count = 0;
+    v->parts = 0;
     if (race_kind == 2 || race_kind == 3)
         track_from_file(v, race);
     else if (race_kind == 1 || race_kind == 5)
