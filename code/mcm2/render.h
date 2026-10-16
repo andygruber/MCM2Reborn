@@ -46,6 +46,7 @@ typedef struct surface
     int                  msaa_samples;
     BOOL                 in_msaa;       /* a scene is being drawn into the copy */
     BOOL                 made_mips;     /* a texture's mipmaps, made here as it had none */
+    BOOL                 no_mips;       /* ...or that they could not be made */
     GLuint               texture;       /* a texture, uploaded when `dirty` */
     BOOL                 dirty;
     GLuint               blit_texture;  /* all of it as Blt draws it on a target: see draw_surface */
@@ -117,8 +118,9 @@ void target_bind_part(surface* target, const RECT* part);
 */
 void target_scene(surface* target, BOOL begin);
 
-/* A texture that has no mipmaps given mipmaps made from it, for the better filtering. */
-void texture_make_mips(surface* texture);
+/* A texture that has no mipmaps given mipmaps made from it, for the better filtering: FALSE
+   when it has none and they cannot be made. */
+BOOL texture_make_mips(surface* texture);
 
 /* Bind a texture surface to the active texture unit, uploading it if the game changed it. */
 void texture_bind(surface* texture);

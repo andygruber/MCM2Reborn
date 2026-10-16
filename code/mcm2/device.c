@@ -442,6 +442,8 @@ static GLint wrap(DWORD address)
     The player's texture filtering in place of the game's, on the texture bound: trilinear, with
     mipmaps made for a texture that has none, and anisotropic at 4, 8 or 16 times, as many as the
     card has at most. The game's own leaves the ground blurred or shimmering into the distance.
+    Only what the game itself draws smoothed is changed: what it draws point-sampled (the HUD, its
+    pictures drawn pixel for pixel) stays as it is.
 */
 static void filtering_better(surface* texture, GLint* min, GLint* mag)
 {
@@ -450,10 +452,9 @@ static void filtering_better(surface* texture, GLint* min, GLint* mag)
 
     if (most < 0)
         gl.GetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &most);
-    if (g_render.filtering > 0) {
-        texture_make_mips(texture);
-        *min = GL_LINEAR_MIPMAP_LINEAR;
-        *mag = GL_LINEAR;
+    if (g_render.filtering > 0 && *mag == GL_LINEAR) {
+        if (texture_make_mips(texture))
+            *min = GL_LINEAR_MIPMAP_LINEAR;
         if (g_render.filtering >= 2)
             times = (GLfloat) (1 << g_render.filtering);
     }

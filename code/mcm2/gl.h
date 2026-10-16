@@ -148,6 +148,7 @@ typedef void           GLvoid;
 #define GL_DEPTH24_STENCIL8             0x88F0
 #define GL_RGBA8                        0x8058
 #define GL_FRAMEBUFFER_COMPLETE         0x8CD5
+#define GL_NO_ERROR                     0
 #define GL_MAX_SAMPLES                  0x8D57
 #define GL_SAMPLE_ALPHA_TO_COVERAGE     0x809E
 #define GL_TEXTURE_MAX_ANISOTROPY       0x84FE

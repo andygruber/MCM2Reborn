@@ -949,14 +949,25 @@ void target_scene(surface* target, BOOL begin)
     gl.BindFramebuffer(GL_FRAMEBUFFER, target->msaa_fbo);
 }
 
-void texture_make_mips(surface* s)
+/* Mipmaps cannot be made from every format the game uploads (its 16-bit ones with alpha, on some
+   cards): a texture they could not be made for keeps its one level, or it would draw white. */
+BOOL texture_make_mips(surface* s)
 {
     s = s->top;
-    if (s->mip || s->made_mips || !s->texture)
-        return;
+    if (s->mip || s->made_mips)
+        return TRUE;
+    if (s->no_mips || !s->texture)
+        return FALSE;
+    while (gl.GetError() != GL_NO_ERROR)
+        ;
     gl.GenerateMipmap(GL_TEXTURE_2D);
+    if (gl.GetError() != GL_NO_ERROR) {
+        s->no_mips = TRUE;
+        return FALSE;
+    }
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1000);
     s->made_mips = TRUE;
+    return TRUE;
 }
 
 void texture_bind(surface* s)
