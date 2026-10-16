@@ -74,12 +74,14 @@ static void track_add(hud_view* v, float x, float z)
 }
 
 /*
-    SX and nationals: the track file's first section, a loop of points (0x30 bytes each, the
-    racing line's x, y and z first, the next at +0x2C), thinned to what the map holds.
+    SX and nationals: the track file's first section (race+0x48 points at the pointer to it, as
+    the radar reads it, 0x00521D70), a loop of points (0x30 bytes each, the racing line's x, y
+    and z first, the next at +0x2C), thinned to what the map holds.
 */
 static void track_from_file(hud_view* v, BYTE* race)
 {
-    BYTE* section = FIELD(race, 0x48, BYTE*);
+    BYTE** first = FIELD(race, 0x48, BYTE**);
+    BYTE* section = first ? *first : NULL;
     BYTE* head = section ? FIELD(section, 0x08, BYTE*) : NULL;
     BYTE* p;
     int count = 0, step, k = 0;
@@ -254,9 +256,10 @@ BOOL hud_read(hud_view* v)
     v->revs = engine ? FIELD(engine, 0x00, float) : -1;
     v->gear = engine ? FIELD(engine, 0x10, BYTE) + 1 : 0;
 
-    if (race != g_track_race) {
+    if (race != g_track_race) {         /* read again each frame until the track has loaded */
         track_read(v, race);
-        g_track_race = race;
+        if (v->track_count >= 2 || race_kind == 0 || race_kind == 4)
+            g_track_race = race;
     }
     riders_read(v, race, me);
     gaps_read(v, race, me);
