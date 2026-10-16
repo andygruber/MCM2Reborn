@@ -14,6 +14,7 @@
 
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
+#include "../dev/hud.h"
 
 #define BLUR_W 48       /* the side fill is the picture shrunk to this and stretched back */
 #define BLUR_H 36
@@ -632,6 +633,9 @@ static void present(surface* target)
     gl.BindFramebuffer(GL_READ_FRAMEBUFFER, target->fbo);
     gl.BlitFramebuffer(0, 0, target->desc.dwWidth, target->desc.dwHeight, x, y, x + fit_w, y + fit_h,
                        GL_COLOR_BUFFER_BIT, GL_LINEAR);
+#ifdef OPENMCM2_DEV
+    hud_draw(w, h);                 /* MCM2:Reborn's race HUD, at the window's resolution */
+#endif
     gl_present();
 
     {
