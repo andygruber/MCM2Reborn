@@ -152,15 +152,16 @@ static void aspect_true(BYTE* camera)
 /* ---- Chase ---- */
 
 /*
-    As MX vs ATV Unleashed's: well back and high, the rider small and a little below the middle
-    with the track ahead in view; straight behind the line ridden, level, barely swinging; the
-    view's width fixed (widening with speed, it warped on every jump). The heading is where the
-    bike is going, on one gentle spring; the height follows the bike's arc.
+    As MX vs ATV Unleashed's: behind and a few feet above the rider's head, looking at the rider,
+    who is always in the middle of the view, a quarter of it high, with the track ahead over them;
+    level; the view's width fixed (widening with speed, it warped on every jump). The camera's place
+    swings behind on springs - the heading where the bike is going, the height the bike's arc - but
+    its look is on the rider all the while.
 */
-#define CHASE_BACK      30.0f           /* feet behind the bike */
-#define CHASE_UP        11.0f           /* ...and above it */
-#define CHASE_AHEAD     8.0f            /* the camera looks this far past the bike: the rider stays put in the view */
-#define CHASE_FOV_HIGH  55.0f           /* degrees from top to bottom: the same framing on any screen */
+#define CHASE_BACK      16.0f           /* feet behind the bike, the rider a quarter of the view high */
+#define CHASE_UP        8.5f            /* ...and above it: a few feet over the rider's head */
+#define CHASE_AT        3.0f            /* the camera looks at the rider's middle, so it is always in the middle */
+#define CHASE_FOV_HIGH  50.0f           /* degrees from top to bottom: the same framing on any screen */
 
 static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
@@ -195,9 +196,9 @@ static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     eye[0] = p[0] - sine(cam.yaw) * CHASE_BACK;
     eye[2] = p[2] - cosine(cam.yaw) * CHASE_BACK;
     eye[1] = cam.height > p[1] + 4 ? cam.height : p[1] + 4;    /* never below the rider's head */
-    look[0] = p[0] + sine(cam.yaw) * CHASE_AHEAD;
-    look[2] = p[2] + cosine(cam.yaw) * CHASE_AHEAD;
-    look[1] = p[1] + 2.5f;
+    look[0] = p[0];
+    look[2] = p[2];
+    look[1] = p[1] + CHASE_AT;
     dir[0] = look[0] - eye[0];
     dir[1] = look[1] - eye[1];
     dir[2] = look[2] - eye[2];
