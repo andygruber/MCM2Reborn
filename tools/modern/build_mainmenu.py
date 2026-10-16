@@ -336,7 +336,8 @@ def build(original_dat):
     pictures["MBackground"] = board
     controls["Set_Information"] = {"BackgroundImage": '"MBackground"', "ScreenWidth": str(W),
                                    "ScreenHeight": str(H), "Xywh": xywh((0, 0, W, H)),
-                                   "FontName": '"Helvetica"', "FontHeight": "26", "Photos": "1"}
+                                   "FontName": '"Helvetica"', "FontHeight": "26", "Photos": "1",
+                                   "Reborn": "1"}      # LAN and Internet open the look's own screens
 
     for i, (name, words, line) in enumerate(ROWS):
         area = (ROW_X, ROW_TOP + i * ROW_H, ROW_X + ROW_W, ROW_TOP + (i + 1) * ROW_H)
