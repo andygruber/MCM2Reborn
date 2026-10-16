@@ -25,6 +25,11 @@
                           race's tape - its sound off, looping; a button that leaves the main
                           menu stops it and goes on in the plain menus (a first version)
 
+        [graphics]        the Graphics page's own settings, which it writes here
+        vsync=1           present on vertical blank (off, frames are still held to the refresh)
+        antialiasing=4    samples: 0, 2, 4 or 8
+        filtering=4       0 the game's, 1 trilinear, 2 to 4 anisotropic at 4, 8 and 16 times
+
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider
 
@@ -55,6 +60,9 @@ extern dev_switches dev_settings;
 
 /* Read the settings; start-up calls this before the game runs. */
 void dev_install(void);
+
+/* The renderer's settings (gl.h, g_render), written to [graphics]. */
+void dev_graphics_save(void);
 
 /* A line in the log, prefixed with its area ("screen", "event", ...). */
 void dev_trace(const char* area, const char* fmt, ...);

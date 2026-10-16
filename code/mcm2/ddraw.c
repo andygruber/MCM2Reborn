@@ -578,6 +578,8 @@ static void present_over_photos(surface* target, LONG w, LONG h, LONG x, LONG y,
     gl.Disable(GL_BLEND);
 }
 
+static void msaa_end(surface* target);
+
 static void present(surface* target)
 {
     RECT client;
@@ -585,6 +587,7 @@ static void present(surface* target)
 
     if (!target || !target->fbo || !GetClientRect(g_window, &client))
         return;
+    msaa_end(target);
 #ifdef OPENMCM2_DEV
     perf_frame();
 #endif
@@ -853,7 +856,107 @@ void target_bind(surface* target)
         g_state_lost = TRUE;
     }
 
+    gl.BindFramebuffer(GL_FRAMEBUFFER, target->in_msaa ? target->msaa_fbo : target->fbo);
+}
+
+/* All of one framebuffer onto another of the same size, colour and depth, unscissored. */
+static void blit_whole(const surface* target, GLuint from, GLuint to)
+{
+    gl.Disable(GL_SCISSOR_TEST);
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, from);
+    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, to);
+    gl.BlitFramebuffer(0, 0, target->desc.dwWidth, target->desc.dwHeight, 0, 0, target->desc.dwWidth,
+                       target->desc.dwHeight, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT,
+                       GL_NEAREST);
+    g_state_lost = TRUE;
+}
+
+/* The anti-aliased copy's scene so far, into the target; the scene goes on in the copy. */
+static void msaa_resolve(surface* target)
+{
+    if (!target->in_msaa)
+        return;
+    blit_whole(target, target->msaa_fbo, target->fbo);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, target->msaa_fbo);
+}
+
+static void msaa_end(surface* target)
+{
+    if (!target || !target->in_msaa)
+        return;
+    msaa_resolve(target);
+    target->in_msaa = FALSE;
     gl.BindFramebuffer(GL_FRAMEBUFFER, target->fbo);
+}
+
+static void msaa_free(surface* target)
+{
+    if (target->msaa_colour) gl.DeleteRenderbuffers(1, &target->msaa_colour);
+    if (target->msaa_depth) gl.DeleteRenderbuffers(1, &target->msaa_depth);
+    if (target->msaa_fbo) gl.DeleteFramebuffers(1, &target->msaa_fbo);
+    target->msaa_fbo = target->msaa_colour = target->msaa_depth = 0;
+    target->msaa_samples = 0;
+}
+
+/* The copy, at so many samples (as many as the card has at most); FALSE when it cannot be made. */
+static BOOL msaa_make(surface* target, int samples)
+{
+    static GLint most = -1;
+    GLsizei w = target->desc.dwWidth, h = target->desc.dwHeight;
+
+    if (most < 0)
+        gl.GetIntegerv(GL_MAX_SAMPLES, &most);
+    if (samples > most)
+        samples = most;
+    if (samples < 2)
+        return FALSE;
+    if (target->msaa_samples == samples)
+        return TRUE;
+    msaa_free(target);
+    gl.GenFramebuffers(1, &target->msaa_fbo);
+    gl.GenRenderbuffers(1, &target->msaa_colour);
+    gl.BindRenderbuffer(GL_RENDERBUFFER, target->msaa_colour);
+    gl.RenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, w, h);
+    gl.GenRenderbuffers(1, &target->msaa_depth);
+    gl.BindRenderbuffer(GL_RENDERBUFFER, target->msaa_depth);
+    gl.RenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH24_STENCIL8, w, h);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, target->msaa_fbo);
+    gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, target->msaa_colour);
+    gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, target->msaa_depth);
+    if (gl.CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        log_line("render: %dx anti-aliasing at %dx%d could not be made", samples, w, h);
+        msaa_free(target);
+        return FALSE;
+    }
+    target->msaa_samples = samples;
+    return TRUE;
+}
+
+void target_scene(surface* target, BOOL begin)
+{
+    if (!target)
+        return;
+    if (!begin) {
+        msaa_end(target);
+        return;
+    }
+    if (target->in_msaa || !g_render.samples || !target->fbo)
+        return;
+    if (!msaa_make(target, g_render.samples))
+        return;
+    blit_whole(target, target->fbo, target->msaa_fbo);
+    target->in_msaa = TRUE;
+    gl.BindFramebuffer(GL_FRAMEBUFFER, target->msaa_fbo);
+}
+
+void texture_make_mips(surface* s)
+{
+    s = s->top;
+    if (s->mip || s->made_mips || !s->texture)
+        return;
+    gl.GenerateMipmap(GL_TEXTURE_2D);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1000);
+    s->made_mips = TRUE;
 }
 
 void texture_bind(surface* s)
@@ -887,6 +990,7 @@ void texture_bind(surface* s)
     }
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, n - 1);
     s->dirty = FALSE;
+    s->made_mips = FALSE;
 }
 
 /* Bring a render target's memory image up to date, top row first, as 16-bit 565: all of it,
@@ -922,6 +1026,8 @@ static void target_read(surface* s)
 #endif
     PERF_COUNT(read_pixels, w * h);
     target_bind(s);
+    msaa_resolve(s);
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, s->fbo);
     gl.PixelStorei(GL_PACK_ALIGNMENT, 4);
     gl.ReadPixels(part.left, (GLint) s->desc.dwHeight - part.bottom, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 
@@ -1263,6 +1369,7 @@ static void free_surface(surface* s)
             if (s->colour) gl.DeleteTextures(1, &s->colour);
             if (s->fbo) gl.DeleteFramebuffers(1, &s->fbo);
             if (s->depth) gl.DeleteRenderbuffers(1, &s->depth);
+            msaa_free(s);
         }
         if (s->palette)
             s->palette->lpVtbl->Release(s->palette);
@@ -1600,6 +1707,8 @@ static void blit_targets(surface* to, const RECT* t, surface* from, const RECT* 
 {
     static const RECT nothing = { 0, 0, 0, 0 };
 
+    msaa_end(to);           /* the scene goes on without anti-aliasing: a blit cannot go into it */
+    msaa_end(from);
     target_bind_part(to, t);
     target_bind_part(from, &nothing);
     gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -1745,6 +1854,11 @@ static void swap_buffers(surface* a, surface* b)
     TRADE(ahead);
     TRADE(fbo);
     TRADE(colour);
+    TRADE(msaa_fbo);
+    TRADE(msaa_colour);
+    TRADE(msaa_depth);
+    TRADE(msaa_samples);
+    TRADE(in_msaa);
     TRADE(texture);
     TRADE(dirty);
     TRADE(blit_texture);

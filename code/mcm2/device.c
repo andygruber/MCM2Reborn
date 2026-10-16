@@ -282,14 +282,27 @@ static void apply_states(device* d)
         gl.Disable(GL_BLEND);
     }
 
+    /*
+        Cut-out pictures (trees, fences, the crowd) are alpha tested, which leaves their edges
+        jagged under any anti-aliasing. Anti-aliased, their alpha becomes how much of each pixel
+        they cover instead, and the test only drops what is nearly see-through.
+    */
     if (rs[D3DRENDERSTATE_ALPHATESTENABLE])
     {
+        BOOL coverage = d->target && d->target->in_msaa && !rs[D3DRENDERSTATE_ALPHABLENDENABLE];
+        GLfloat reference = (rs[D3DRENDERSTATE_ALPHAREF] & 255) / 255.0f;
+
         gl.Enable(GL_ALPHA_TEST);
-        gl.AlphaFunc(compare(rs[D3DRENDERSTATE_ALPHAFUNC]), (rs[D3DRENDERSTATE_ALPHAREF] & 255) / 255.0f);
+        gl.AlphaFunc(compare(rs[D3DRENDERSTATE_ALPHAFUNC]), coverage ? reference * 0.5f : reference);
+        if (coverage)
+            gl.Enable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+        else
+            gl.Disable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     }
     else
     {
         gl.Disable(GL_ALPHA_TEST);
+        gl.Disable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     }
 
     /* Both APIs judge winding as the viewer sees it, and nothing here flips the image, so
@@ -425,6 +438,29 @@ static GLint wrap(DWORD address)
                                                                                    : GL_CLAMP_TO_EDGE;
 }
 
+/*
+    The player's texture filtering in place of the game's, on the texture bound: trilinear, with
+    mipmaps made for a texture that has none, and anisotropic at 4, 8 or 16 times, as many as the
+    card has at most. The game's own leaves the ground blurred or shimmering into the distance.
+*/
+static void filtering_better(surface* texture, GLint* min, GLint* mag)
+{
+    static GLfloat most = -1;
+    GLfloat times = 1;
+
+    if (most < 0)
+        gl.GetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &most);
+    if (g_render.filtering > 0) {
+        texture_make_mips(texture);
+        *min = GL_LINEAR_MIPMAP_LINEAR;
+        *mag = GL_LINEAR;
+        if (g_render.filtering >= 2)
+            times = (GLfloat) (1 << g_render.filtering);
+    }
+    if (most >= 1)
+        gl.TexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, times < most ? times : most);
+}
+
 static void apply_stages(device* d)
 {
     float factor[4];
@@ -453,9 +489,12 @@ static void apply_stages(device* d)
                       : t[D3DTSS_MIPFILTER] == D3DTFP_LINEAR ? (linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR)
                                                              : (linear ? GL_LINEAR_MIPMAP_NEAREST : GL_NEAREST_MIPMAP_NEAREST);
 
+            GLint mag = t[D3DTSS_MAGFILTER] == D3DTFG_POINT ? GL_NEAREST : GL_LINEAR;
+
             texture_bind(d->texture[stage]);
+            filtering_better(d->texture[stage], &min, &mag);
             gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min);
-            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, t[D3DTSS_MAGFILTER] == D3DTFG_POINT ? GL_NEAREST : GL_LINEAR);
+            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag);
             gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap(t[D3DTSS_ADDRESSU]));
             gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap(t[D3DTSS_ADDRESSV]));
         }
@@ -845,13 +884,14 @@ static HRESULT WINAPI v_BeginScene(IDirect3DDevice7* self)
     static const RECT nothing = { 0, 0, 0, 0 };
 
     target_bind_part(DEV->target, &nothing);
+    target_scene(DEV->target, TRUE);
     DEV->solid = nothing;
     return D3D_OK;
 }
 
 static HRESULT WINAPI v_EndScene(IDirect3DDevice7* self)
 {
-    (void) self;
+    target_scene(DEV->target, FALSE);
     return D3D_OK;
 }
 
@@ -870,6 +910,7 @@ static HRESULT WINAPI v_SetRenderTarget(IDirect3DDevice7* self, LPDIRECTDRAWSURF
     if (!s)
         return DDERR_INVALIDPARAMS;
     s->iface.lpVtbl->AddRef(&s->iface);
+    target_scene(DEV->target, FALSE);
     if (DEV->target)
         DEV->target->iface.lpVtbl->Release(&DEV->target->iface);
     DEV->target = s;

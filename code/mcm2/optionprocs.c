@@ -353,6 +353,78 @@ static const binding graphics_bindings[] = {
     { NAME(0x005751BC), (void*) 0x0068E930 },   /* TerrainQualitySliderBar */
 };
 
+#ifdef OPENMCM2_DEV
+/*
+    The dev build's own rows on the page (tools/modern/build_options.py): vsync, anti-aliasing and
+    texture filtering, the renderer's (gl.h, g_render). They take effect when the page is left, at
+    once, and are kept in OpenMCM2-Dev.ini.
+*/
+#include "gl.h"
+
+int __fastcall option_set_text(BYTE* self, void* edx_unused, int index, const char* text);
+
+#define CHK_VSYNC       "ChkVSync"
+#define MULT_AA         "MultAntiAlias"
+#define MULT_FILTERING  "MultFiltering"
+
+static const int aa_samples[] = { 0, 2, 4, 8 };
+static const char* aa_words[] = { "OFF", "2X", "4X", "8X" };
+static const char* filtering_words[] = { "GAME'S OWN", "TRILINEAR", "ANISOTROPIC 4X", "ANISOTROPIC 8X",
+                                         "ANISOTROPIC 16X" };
+#define AA_CHOICES        ((int) (sizeof aa_samples / sizeof aa_samples[0]))
+#define FILTERING_CHOICES ((int) (sizeof filtering_words / sizeof filtering_words[0]))
+
+static void choices_set(BYTE* control, const char** words, int count, int chosen)
+{
+    int i;
+
+    if (!control)
+        return;
+    option_set_count(control, NULL, count);
+    for (i = 0; i < count; i++)
+        option_set_text(control, NULL, i, words[i]);
+    option_select(control, NULL, chosen);
+}
+
+static void renderer_rows_show(BYTE* self)
+{
+    BYTE* vsync = find(self, CHK_VSYNC, 2);
+    int aa = 0, i;
+
+    for (i = 0; i < AA_CHOICES; i++)
+        if (aa_samples[i] == g_render.samples)
+            aa = i;
+    if (vsync)
+        option_select(vsync, NULL, g_render.vsync ? 1 : 0);
+    choices_set(find(self, MULT_AA, 2), aa_words, AA_CHOICES, aa);
+    choices_set(find(self, MULT_FILTERING, 2), filtering_words, FILTERING_CHOICES,
+                g_render.filtering >= 0 && g_render.filtering < FILTERING_CHOICES ? g_render.filtering : 0);
+}
+
+static void renderer_rows_keep(BYTE* self)
+{
+    BYTE* vsync = find(self, CHK_VSYNC, 2);
+    BYTE* aa = find(self, MULT_AA, 2);
+    BYTE* filtering = find(self, MULT_FILTERING, 2);
+    BOOL was_vsync = g_render.vsync;
+    int i;
+
+    if (vsync)
+        g_render.vsync = option_current_index(vsync) != 0;
+    if (aa) {
+        i = option_current_index(aa);
+        g_render.samples = i >= 0 && i < AA_CHOICES ? aa_samples[i] : 0;
+    }
+    if (filtering) {
+        i = option_current_index(filtering);
+        g_render.filtering = i >= 0 && i < FILTERING_CHOICES ? i : 0;
+    }
+    if (g_render.vsync != was_vsync)
+        gl_vsync_apply();
+    dev_graphics_save();
+}
+#endif
+
 /* The resolutions the card offers (by the windowed or full-screen flag), the chosen selected. */
 static void graphics_page_open(BYTE* self)
 {
@@ -380,6 +452,9 @@ static void graphics_page_open(BYTE* self)
     }
     list_select_data(list, NULL, video_mode_chosen);
     dialog_notify_controls(self, NULL, 0);
+#ifdef OPENMCM2_DEV
+    renderer_rows_show(self);
+#endif
 }
 
 /* OptGraph.dtm (vtable 0x0055AB2C): the terrain slider sets all four terrain details at once. */
@@ -420,6 +495,12 @@ void __fastcall graphics_page_sync(BYTE* self, void* edx_unused, DWORD out)
         video_mode_chosen = list_data(combo_list(self, RESOLUTION_DDL), NULL, -1);
     else
         list_select_data(combo_list(self, RESOLUTION_DDL), NULL, video_mode_chosen);
+#ifdef OPENMCM2_DEV
+    if (out)
+        renderer_rows_keep(self);
+    else
+        renderer_rows_show(self);
+#endif
 }
 
 /* ---- Advanced graphics ---- */

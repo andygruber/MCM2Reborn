@@ -148,6 +148,10 @@ typedef void           GLvoid;
 #define GL_DEPTH24_STENCIL8             0x88F0
 #define GL_RGBA8                        0x8058
 #define GL_FRAMEBUFFER_COMPLETE         0x8CD5
+#define GL_MAX_SAMPLES                  0x8D57
+#define GL_SAMPLE_ALPHA_TO_COVERAGE     0x809E
+#define GL_TEXTURE_MAX_ANISOTROPY       0x84FE
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY   0x84FF
 
 /* name, return type, parameter list: every function is a pointer `gl.name`. */
 #define GL_FUNCTIONS(X) \
@@ -173,6 +177,9 @@ typedef void           GLvoid;
     X(TexEnvi, void, (GLenum, GLenum, GLint)) \
     X(TexEnvfv, void, (GLenum, GLenum, const GLfloat*)) \
     X(TexParameteri, void, (GLenum, GLenum, GLint)) \
+    X(TexParameterf, void, (GLenum, GLenum, GLfloat)) \
+    X(GetIntegerv, void, (GLenum, GLint*)) \
+    X(GetFloatv, void, (GLenum, GLfloat*)) \
     X(GenTextures, void, (GLsizei, GLuint*)) \
     X(DeleteTextures, void, (GLsizei, const GLuint*)) \
     X(BindTexture, void, (GLenum, GLuint)) \
@@ -214,7 +221,9 @@ typedef void           GLvoid;
     X(CheckFramebufferStatus, GLenum, (GLenum)) \
     X(BlitFramebuffer, void, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)) \
     X(DeleteFramebuffers, void, (GLsizei, const GLuint*)) \
-    X(DeleteRenderbuffers, void, (GLsizei, const GLuint*))
+    X(DeleteRenderbuffers, void, (GLsizei, const GLuint*)) \
+    X(RenderbufferStorageMultisample, void, (GLenum, GLsizei, GLenum, GLsizei, GLsizei)) \
+    X(GenerateMipmap, void, (GLenum))
 
 #define GL_POINTER(name, ret, args) ret (WINAPI *name) args;
 
@@ -229,3 +238,20 @@ extern gl_api gl;
 /* Create a context on `window` and load every function. FALSE, logged, if anything is missing. */
 BOOL gl_start(HWND window);
 void gl_present(void);
+
+/*
+    The player's graphics settings (in the dev build, its Options > Graphics). Without vsync the
+    frames are still held to the display's refresh rate: the game's physics come apart uncapped.
+    `samples` is the anti-aliasing's, 0 for none; `filtering` 0 is the game's own, 1 trilinear,
+    and 2 to 4 anisotropic at 4, 8 and 16 times.
+*/
+typedef struct render_options {
+    BOOL vsync;
+    int  samples;
+    int  filtering;
+} render_options;
+
+extern render_options g_render;
+
+/* g_render.vsync, set again. */
+void gl_vsync_apply(void);

@@ -3,6 +3,7 @@
 */
 
 #include "dev.h"
+#include "gl.h"
 
 #include <stdarg.h>
 
@@ -81,7 +82,30 @@ void dev_install(void)
              dev_settings.fix_last_pick);
     if (dev_settings.menus_modern)
         load_menu_fonts();
+    if (read) {
+        g_render.vsync = read("graphics", "vsync", 1, SETTINGS_FILE) != 0;
+        g_render.samples = (int) read("graphics", "antialiasing", 4, SETTINGS_FILE);
+        g_render.filtering = (int) read("graphics", "filtering", 4, SETTINGS_FILE);
+    }
+    log_line("dev build: graphics: vsync %d, anti-aliasing %dx, filtering %d", g_render.vsync,
+             g_render.samples, g_render.filtering);
     eos_install();
+}
+
+void dev_graphics_save(void)
+{
+    typedef BOOL (WINAPI* write_fn)(LPCSTR section, LPCSTR key, LPCSTR value, LPCSTR file);
+    write_fn write = (write_fn) api("kernel32.dll", "WritePrivateProfileStringA");
+    char value[16];
+
+    if (!write)
+        return;
+    wsprintfA(value, "%d", g_render.vsync);
+    write("graphics", "vsync", value, SETTINGS_FILE);
+    wsprintfA(value, "%d", g_render.samples);
+    write("graphics", "antialiasing", value, SETTINGS_FILE);
+    wsprintfA(value, "%d", g_render.filtering);
+    write("graphics", "filtering", value, SETTINGS_FILE);
 }
 
 /* A clock for timing: milliseconds since it was first read. */

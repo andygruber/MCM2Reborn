@@ -13,8 +13,16 @@ typedef int   (WINAPI *choose_format_fn)(HDC, const PIXELFORMATDESCRIPTOR*);
 typedef BOOL  (WINAPI *set_format_fn)(HDC, int, const PIXELFORMATDESCRIPTOR*);
 typedef BOOL  (WINAPI *swap_fn)(HDC);
 
-static HDC     g_dc;
-static swap_fn g_swap;
+typedef BOOL  (WINAPI *interval_fn)(int);
+typedef BOOL  (WINAPI *counter_fn)(LARGE_INTEGER*);
+typedef int   (WINAPI *device_caps_fn)(HDC, int);
+typedef UINT  (WINAPI *period_fn)(UINT);
+
+static HDC         g_dc;
+static swap_fn     g_swap;
+static interval_fn g_interval;
+
+render_options g_render = { TRUE, 0, 0 };   /* initialised, or it is a common symbol */
 
 static BOOL load(HMODULE opengl, get_proc_fn get_proc)
 {
@@ -75,21 +83,67 @@ BOOL gl_start(HWND window)
 
     log_line("gl: %s, %s, OpenGL %s", gl.GetString(GL_VENDOR), gl.GetString(GL_RENDERER), gl.GetString(GL_VERSION));
 
-    /* Present on vertical blank. The game's physics assume a few dozen frames a second, as its
-       original drivers gave it; uncapped, the bikes jitter and the AI can fall apart. */
-    {
-        typedef BOOL (WINAPI *interval_fn)(int);
-        interval_fn interval = (interval_fn) get_proc("wglSwapIntervalEXT");
-
-        if (interval && interval(1))
-            log_line("gl: vsync on");
-        else
-            log_line("gl: vsync is not available - the frame rate is not capped");
-    }
+    g_interval = (interval_fn) get_proc("wglSwapIntervalEXT");
+    gl_vsync_apply();
     return TRUE;
+}
+
+/* Present on vertical blank, or not. The game's physics assume a few dozen frames a second, as its
+   original drivers gave it; uncapped, the bikes jitter and the AI can fall apart, so without
+   vsync gl_present holds the frames to the refresh rate itself. */
+void gl_vsync_apply(void)
+{
+    if (g_interval && g_interval(g_render.vsync ? 1 : 0))
+        log_line("gl: vsync %s", g_render.vsync ? "on" : "off, the frames held to the refresh rate");
+    else
+        log_line("gl: vsync cannot be set - the frame rate is held to the refresh rate");
+}
+
+/* Without vsync, the frame waits for its turn at the display's refresh rate: slept most of the
+   way, then spun, so it is neither late nor early. */
+static void frame_hold(void)
+{
+    static counter_fn counter;
+    static double frequency, next;
+    static int refresh;
+    LARGE_INTEGER now;
+    double at, period;
+
+    if (!counter) {
+        device_caps_fn caps = (device_caps_fn) api("gdi32.dll", "GetDeviceCaps");
+        period_fn period_begin = (period_fn) api("winmm.dll", "timeBeginPeriod");
+        LARGE_INTEGER ticks;
+        counter_fn ticks_per_second = (counter_fn) api("kernel32.dll", "QueryPerformanceFrequency");
+
+        counter = (counter_fn) api("kernel32.dll", "QueryPerformanceCounter");
+        if (!counter || !ticks_per_second || !ticks_per_second(&ticks))
+            return;
+        frequency = (double) ticks.QuadPart;
+        refresh = caps ? caps(g_dc, VREFRESH) : 0;
+        if (refresh < 30)                       /* 0 and 1 are the card's own default */
+            refresh = 60;
+        if (period_begin)
+            period_begin(1);                    /* Sleep(1) sleeps a millisecond, not a tick */
+    }
+    if (!frequency)
+        return;
+    period = 1000.0 / refresh;
+    counter(&now);
+    at = (double) now.QuadPart * 1000.0 / frequency;
+    if (next < at - period)                     /* far behind, or the first frame: start now */
+        next = at;
+    while (at < next) {
+        if (next - at > 2.0)
+            Sleep(1);
+        counter(&now);
+        at = (double) now.QuadPart * 1000.0 / frequency;
+    }
+    next += period;
 }
 
 void gl_present(void)
 {
+    if (!g_render.vsync || !g_interval)
+        frame_hold();
     g_swap(g_dc);
 }

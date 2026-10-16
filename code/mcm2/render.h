@@ -42,6 +42,10 @@ typedef struct surface
     RECT                 ahead;         /* ...but for this part, drawn since: see target_bind_part */
 
     GLuint               fbo, colour, depth;    /* a render target */
+    GLuint               msaa_fbo, msaa_colour, msaa_depth;  /* its anti-aliased copy: see target_scene */
+    int                  msaa_samples;
+    BOOL                 in_msaa;       /* a scene is being drawn into the copy */
+    BOOL                 made_mips;     /* a texture's mipmaps, made here as it had none */
     GLuint               texture;       /* a texture, uploaded when `dirty` */
     BOOL                 dirty;
     GLuint               blit_texture;  /* all of it as Blt draws it on a target: see draw_surface */
@@ -105,6 +109,16 @@ void describe_format(int format, DDPIXELFORMAT* pf);
 /* Make a render target the one OpenGL draws into, creating its framebuffer on first use. */
 void target_bind(surface* target);
 void target_bind_part(surface* target, const RECT* part);
+
+/*
+    A 3D scene begins or ends on a target. With anti-aliasing the scene is drawn into a
+    multisampled copy of the target, made from it when the scene begins and resolved back into
+    it when the scene ends, or sooner when anything reads the target.
+*/
+void target_scene(surface* target, BOOL begin);
+
+/* A texture that has no mipmaps given mipmaps made from it, for the better filtering. */
+void texture_make_mips(surface* texture);
 
 /* Bind a texture surface to the active texture unit, uploading it if the game changed it. */
 void texture_bind(surface* texture);
