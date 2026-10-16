@@ -15,6 +15,8 @@
     at low speed the slide counts for up to five times as much, as in Unleashed. The slide is
     never pushed past nothing in one step.
 
+    Berms (vehicleturn.c): a bank turned into holds the bike round, below.
+
     Suspension (shock.c). Unleashed's springs are straight, as stiff as so many times the bike's
     weight a foot (front 1.65, rear 2.55), damped at 0.3 and 0.4 of critical for the whole bike,
     the shock's speed counted to 20 ft/s at most. The game's sprang harder the further in, from
@@ -97,6 +99,56 @@ void reborn_grip(BYTE* bike)
         push = -push;
     for (i = 0; i < 3; i++)
         v[i] -= push * side[i];
+}
+
+/*
+    Berms. The game turns a bike on the ground by bending its path to the arc its bars and lean
+    make, the lean measured from the ground: in a berm, the bike square to its face, the arc is
+    the flat ground's, and the bank's push never reaches the bike (only the up and down of the
+    ground's forces do). A bank tilted at angle t towards the inside of the turn holds a turn of
+    g tan t across it with no grip at all, so turning into one the arc's curve is that much
+    more: 1 / R' = 1 / R + g tan t / v^2. As Unleashed hands the bike's upright over from the
+    world to the ground, the berm's hold comes in from 10 to 30 ft/s; a bank past 60 degrees
+    holds no more than one at 60; an off camber is the game's own.
+
+    `side` is the turn's sideways axis on the ground, `radius` the game's arc (its sign the turn's
+    way: the path bends against `side` for a positive one). Returns what the arc is to be
+    multiplied by.
+*/
+#define BERM_FROM       10.0f           /* ft/s */
+#define BERM_FULL       30.0f
+#define BERM_STEEPEST   1.7320508f      /* tan 60 degrees */
+
+void __fastcall game_FUN_0052da50(BYTE* vehicle, void* edx_unused, float* normal);   /* the tyres' ground, averaged */
+
+float reborn_berm(BYTE* vehicle, const float* side, float radius)
+{
+    float speed = FIELD(vehicle, 0x434, float), n[3], inward[3], flat, lean_in, hold, ease;
+    float sign = radius > 0 ? -1.0f : 1.0f;
+    float r = radius < 0 ? -radius : radius;
+
+    if (!g_reborn.physics || r < 0.001f)
+        return 1;
+    if (speed < 0)
+        speed = -speed;
+    if (speed <= BERM_FROM)
+        return 1;
+    ease = speed >= BERM_FULL ? 1 : (speed - BERM_FROM) / (BERM_FULL - BERM_FROM);
+
+    game_FUN_0052da50(vehicle, NULL, n);
+    inward[0] = sign * side[0];         /* across the turn, inwards, level */
+    inward[1] = 0;
+    inward[2] = sign * side[2];
+    flat = square_root(inward[0] * inward[0] + inward[2] * inward[2]);
+    if (flat < 0.001f || n[1] < 0.1f)
+        return 1;
+    lean_in = (n[0] * inward[0] + n[2] * inward[2]) / flat / n[1];     /* tan t */
+    if (lean_in <= 0)
+        return 1;
+    if (lean_in > BERM_STEEPEST)
+        lean_in = BERM_STEEPEST;
+    hold = ease * G * lean_in / (speed * speed);
+    return 1 / (1 + r * hold);
 }
 
 /*
