@@ -134,6 +134,8 @@ static struct {
 
     tell_session sessions[EOS_SESSIONS_MOST];
     DWORD  session_count;
+    DWORD  found_at;                    /* when they came, by timeGetTime; 0 before */
+    ask_settings published;             /* the race last put on our lobby */
 
     struct { DWORD id; char name[EOS_NAME_SIZE]; } peers[16];
     int    peer_count;
@@ -290,6 +292,7 @@ static void heard(BYTE kind, BYTE* fields, DWORD size)
         if (eos.session_count > EOS_SESSIONS_MOST)
             eos.session_count = EOS_SESSIONS_MOST;
         copy(eos.sessions, fields + 4, eos.session_count * sizeof(tell_session));
+        eos.found_at = timeGetTime() | 1;
         break;
     case TELL_HOSTING:
     case TELL_JOINED:
@@ -749,6 +752,7 @@ static HRESULT WINAPI dp_open(dplay* self, const dp_session* session, DWORD flag
         if (!ask_and_wait(ASK_HOST, &host, sizeof host, TELL_HOSTING))
             return DPERR_GENERIC;
         eos.hosting = TRUE;
+        memset(&eos.published, 0xFF, sizeof eos.published);     /* published again */
         return DP_OK;
     }
     if (flags & DPOPEN_JOIN) {
@@ -836,6 +840,34 @@ static HRESULT WINAPI dp_initialize_connection(dplay* self, void* connection, DW
     return DP_OK;
 }
 
+#define race_settings (game_main + 0x2D70)     /* menus.h: the race the menus set up */
+
+/* The race the host has set up, put on its lobby when it changes. */
+static void race_publish(void)
+{
+    ask_settings race = { 0 };
+    const char* track = (const char*) race_settings + 0x36;
+    const char* name = track;
+    int length;
+
+    race.kind = FIELD(race_settings, 0x04, int);
+    race.laps = FIELD(race_settings, 0x20, DWORD);
+    race.trees = FIELD(race_settings, 0x10, DWORD) != 0;
+    for (; *track; track++)                     /* its file's name, without folder or extension */
+        if (*track == '\\' || *track == '/')
+            name = track + 1;
+    lstrcpynA(race.track, name, sizeof race.track);
+    for (length = lstrlenA(race.track); length > 0; length--)
+        if (race.track[length - 1] == '.') {
+            race.track[length - 1] = 0;
+            break;
+        }
+    if (!memcmp(&race, &eos.published, sizeof race))
+        return;
+    eos.published = race;
+    ask(ASK_SETTINGS, &race, sizeof race, NULL, 0);
+}
+
 /* To a player, or to every other one (0, or the host's group). */
 static HRESULT WINAPI dp_send_ex(dplay* self, DWORD from, DWORD to, DWORD flags, const void* data,
                                  DWORD size, DWORD priority, DWORD timeout, void* context,
@@ -856,6 +888,8 @@ static HRESULT WINAPI dp_send_ex(dplay* self, DWORD from, DWORD to, DWORD flags,
     send.to = to == GROUP ? 0 : to;
     send.size = size;
     ask(ASK_SEND, &send, sizeof send, data, size);
+    if (eos.hosting)
+        race_publish();
     return DP_OK;
 }
 
@@ -957,6 +991,39 @@ void eos_install(void)
     eos.co_create = _imp__CoCreateInstance;
     if (!write_protected(&_imp__CoCreateInstance, &mine, sizeof mine))
         log_line("eos: could not take over CoCreateInstance; online play is off");
+}
+
+BOOL eos_lobby(const GUID* instance, online_lobby* lobby)
+{
+    DWORD i;
+    int k;
+
+    memset(lobby, 0, sizeof *lobby);
+    EnterCriticalSection(&eos.lock);
+    for (i = 0; i < eos.session_count; i++) {
+        const tell_session* found = &eos.sessions[i];
+
+        if (instance->Data2 != 'E' || instance->Data3 != 'O' || lobby_hash(found->lobby) != instance->Data1)
+            continue;
+        lobby->players = found->players;
+        lobby->most = found->most;
+        lobby->kind = found->race.kind;
+        lobby->laps = found->race.laps;
+        lobby->trees = found->race.trees;
+        lobby->closed = found->closed;
+        copy(lobby->host, found->host, sizeof lobby->host);
+        copy(lobby->track, found->race.track, sizeof lobby->track);
+        for (k = 0; k < EOS_RIDERS_MOST; k++)
+            copy(lobby->riders[k], found->riders[k], sizeof lobby->riders[k]);
+        break;
+    }
+    LeaveCriticalSection(&eos.lock);
+    return i < eos.session_count;
+}
+
+int eos_found_ago(void)
+{
+    return eos.found_at ? (int) ((timeGetTime() - eos.found_at) / 1000) : -1;
 }
 
 int eos_state(void)

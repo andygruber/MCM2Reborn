@@ -103,3 +103,19 @@ void eos_install(void);
 BOOL eos_online(BOOL on);
 /* 1 signed in to EOS, 0 signing in, -1 not (the helper did not start, or failed). */
 int  eos_state(void);
+
+/* What a lobby found shows: its race is the host's settings, kind -1 until it has published them. */
+typedef struct online_lobby {
+    int  players, most;
+    int  kind, laps, trees;                 /* race_kind's numbers (menus.h) */
+    BOOL closed;                            /* racing: joining is closed */
+    char host[32];
+    char track[48];
+    char riders[8][32];                     /* the host's first; empty ones are open */
+} online_lobby;
+
+/* The lobby a session's instance GUID stands for: FALSE when it is not one of EOS's. */
+BOOL eos_lobby(const GUID* instance, online_lobby* lobby);
+
+/* Seconds since the lobbies were last found, or -1 before they ever were. */
+int  eos_found_ago(void);

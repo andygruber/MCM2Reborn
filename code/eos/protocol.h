@@ -18,8 +18,9 @@
 #define EOS_NAME_SIZE       32          /* a rider's name, as the lobby shows it */
 #define EOS_LOBBY_ID_SIZE   64          /* an EOS lobby id, as text */
 #define EOS_SESSION_NAME_SIZE 64
-#define EOS_SESSIONS_MOST   20          /* the most a search returns */
+#define EOS_SESSIONS_MOST   16          /* the most a search returns (a TELL_SESSIONS fits a frame) */
 #define EOS_DATA_MOST       0x2000      /* the largest message the game sends is 0x8DC bytes */
+#define EOS_RIDERS_MOST     8           /* a lobby's members */
 
 #pragma pack(push, 1)
 
@@ -33,6 +34,7 @@ enum {
     ASK_SEND,           /* ask_send, then the data */
     ASK_CLOSED,         /* no fields: joining is closed (the race has started) or open again */
     ASK_OPENED,
+    ASK_SETTINGS,       /* ask_settings: the race the host has set up, for the lobby to show */
 };
 
 typedef struct ask_host {
@@ -47,6 +49,15 @@ typedef struct ask_join {
 typedef struct ask_player {
     char name[EOS_NAME_SIZE];
 } ask_player;
+
+#define EOS_TRACK_SIZE 48
+
+typedef struct ask_settings {
+    int32_t  kind;                          /* the game's: 0 quarry, 1 Baja, 2 national, 3 SX, 4 tag, 5 enduro */
+    uint32_t laps;
+    uint32_t trees;                         /* tree collision on */
+    char     track[EOS_TRACK_SIZE];
+} ask_settings;
 
 typedef struct ask_send {
     uint32_t to;                            /* a peer, or 0 for every one */
@@ -80,7 +91,13 @@ typedef struct tell_session {
     uint32_t players;
     uint32_t most;
     uint32_t closed;                        /* joining closed */
+    char     host[EOS_NAME_SIZE];
+    char     riders[EOS_RIDERS_MOST][EOS_NAME_SIZE];    /* its members' names, the host's first */
+    ask_settings race;                      /* kind -1 until the host has published it */
 } tell_session;
+
+/* A search's answer fits one frame. */
+_Static_assert(4 + EOS_SESSIONS_MOST * sizeof(tell_session) <= EOS_DATA_MOST, "TELL_SESSIONS is too big");
 
 typedef struct tell_lobby {
     char     lobby[EOS_LOBBY_ID_SIZE];

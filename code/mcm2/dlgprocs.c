@@ -3816,14 +3816,6 @@ static void* online_vtable[ONLINE_VTABLE_SLOTS];
 static BOOL online_internet;        /* the screen open is Online, not LAN */
 static BOOL online_failed;          /* its network did not start: only Back works */
 
-static void online_status(BYTE* self, const char* words)
-{
-    BYTE* status = dialog_find_control(self, NULL, "TxtStatus", 0);
-
-    if (status)
-        control_set_text(status, NULL, words);
-}
-
 /* The network made for the screen and connected through TCP/IP, as LAN's button always did. */
 static BOOL online_connect(void)
 {
@@ -3839,31 +3831,322 @@ static BOOL online_connect(void)
     return connected;
 }
 
-static void online_show_status(BYTE* self)
+/* ---- What the screen shows: its tabs, its cards and the game picked ---- */
+
+int __fastcall control_set_colour(BYTE* self, void* edx_unused, COLORREF colour);
+
+#define ONLINE_CARDS        5                       /* the sessions the game keeps */
+#define ONLINE_RIDERS       8
+#define ONLINE_EVENTS       6                       /* race_kind 0 to 5 */
+#define session_name(i)     ((const char*) game_main + 0x1014 + (i) * 0x10C)
+#define session_instance(i) FIELD(game_main, 0x1118 + (i) * 0x10C, const GUID*)
+#define TEXT_PAPER          RGB(244, 240, 230)      /* build_online.py's colours */
+#define TEXT_GREY           RGB(150, 150, 156)
+#define TEXT_ORANGE         RGB(255, 138, 0)
+#define TEXT_INK            RGB(14, 14, 16)
+#define TEXT_GREEN          RGB(52, 199, 89)
+
+/* Online's tabs and the events each holds, as bits of race_kind; All holds those not known too. */
+static const struct { const char* name; int kinds; } online_tabs[] = {
+    { "TabAll", -1 }, { "TabRaces", 1 << 1 | 1 << 2 | 1 << 3 | 1 << 5 }, { "TabQuarry", 1 << 0 },
+    { "TabTag", 1 << 4 },
+};
+#define ONLINE_TABS ((int) (sizeof online_tabs / sizeof online_tabs[0]))
+
+static const char* event_names[ONLINE_EVENTS] = { "STUNT QUARRY", "BAJA", "NATIONALS", "SUPERCROSS", "TAG",
+                                                  "ENDURO" };
+
+static int online_tab;                  /* the tab chosen */
+static int online_cards[ONLINE_CARDS];  /* the session each card shows */
+static int online_card_count;
+
+static BYTE* online_find(BYTE* self, const char* format, int a, int b)
+{
+    char name[40];
+
+    wsprintfA(name, format, a, b);
+    return dialog_find_control(self, NULL, name, 0);
+}
+
+static void online_show(BYTE* self, BOOL shown, const char* format, int a, int b)
+{
+    BYTE* control = online_find(self, format, a, b);
+
+    if (control)
+        control_show(control, NULL, shown, FALSE);
+}
+
+static void online_write(BYTE* self, const char* words, COLORREF colour, const char* format, int a)
+{
+    BYTE* control = online_find(self, format, a, 0);
+
+    if (control) {
+        control_set_text(control, NULL, words);
+        control_set_colour(control, NULL, colour);
+    }
+}
+
+/* `from` in capitals, as the look's words are. */
+static void capitals(char* to, const char* from, int size)
+{
+    int i;
+
+    for (i = 0; i < size - 1 && from[i]; i++)
+        to[i] = from[i] >= 'a' && from[i] <= 'z' ? from[i] - 'a' + 'A' : from[i];
+    to[i] = 0;
+}
+
+/* A session's lobby; a LAN game, or a lobby not yet found, is known by its name alone. */
+static void online_lobby_of(int session, online_lobby* lobby)
+{
+    static const online_lobby unknown = { 0, 0, -1 };
+
+    if (online_internet && session_instance(session) && eos_lobby(session_instance(session), lobby))
+        return;
+    *lobby = unknown;
+    lstrcpynA(lobby->host, session_name(session), sizeof lobby->host);
+}
+
+static BOOL online_in_tab(int kind, int tab)
+{
+    return online_tabs[tab].kinds == -1 || (kind >= 0 && (online_tabs[tab].kinds >> kind & 1));
+}
+
+/* A lobby's title: its track, or its host's name when the host has not set one up yet. */
+static void online_title(const online_lobby* lobby, char* to, int size)
+{
+    capitals(to, lobby->track[0] ? lobby->track : lobby->host, size);
+}
+
+static void online_fill_card(BYTE* self, int card, int session, BOOL chosen)
+{
+    online_lobby lobby;
+    char words[96], host[32];
+    int k;
+
+    online_lobby_of(session, &lobby);
+    capitals(host, lobby.host, sizeof host);
+    online_title(&lobby, words, sizeof words);
+    online_write(self, words, TEXT_PAPER, "Lobby%dName", card);
+    if (!online_internet)
+        lstrcpyA(words, "ON YOUR NETWORK");
+    else if (lobby.kind >= 0 && lobby.kind < ONLINE_EVENTS)
+        wsprintfA(words, "%s  \xB7  HOSTED BY %s", event_names[lobby.kind], host);
+    else
+        wsprintfA(words, "HOSTED BY %s", host);
+    online_write(self, words, chosen ? TEXT_ORANGE : TEXT_GREY, "Lobby%dInfo", card);
+    words[0] = 0;
+    if (lobby.most)
+        wsprintfA(words, "%d / %d RIDERS", lobby.players, lobby.most);
+    online_write(self, words, TEXT_PAPER, "Lobby%dRiders", card);
+    online_write(self, lobby.closed ? "RACING" : "", TEXT_ORANGE, "Lobby%dTag", card);
+    for (k = 0; k <= ONLINE_RIDERS; k++)
+        online_show(self, lobby.most && k == min(lobby.players, ONLINE_RIDERS), "Lobby%dPips%d", card, k);
+    for (k = 0; k < ONLINE_EVENTS; k++)
+        online_show(self, k == lobby.kind, "Lobby%dPic%d", card, k);
+    online_show(self, chosen, "Lobby%dChosen", card, 0);
+}
+
+static void online_clear_detail(BYTE* self)
+{
+    static const char* texts[] = { "TxtDetailName", "TxtDetailInfo", "TxtDetailCount", "TxtDetailLaps",
+                                   "TxtDetailTrees", "TxtDetailMost" };
+    int k;
+
+    for (k = 0; k < ONLINE_EVENTS; k++)
+        online_show(self, FALSE, "DetailPic%d", k, 0);
+    for (k = 0; k < (int) (sizeof texts / sizeof *texts); k++)
+        online_write(self, "", TEXT_PAPER, texts[k], 0);
+    for (k = 0; k < ONLINE_RIDERS; k++)
+        online_write(self, "", TEXT_PAPER, "TxtRider%d", k);
+}
+
+static void online_fill_detail(BYTE* self, int session)
+{
+    online_lobby lobby;
+    char words[96], host[32];
+    int k;
+
+    if (session < 0) {
+        online_clear_detail(self);
+        return;
+    }
+    online_lobby_of(session, &lobby);
+    for (k = 0; k < ONLINE_EVENTS; k++)
+        online_show(self, k == lobby.kind, "DetailPic%d", k, 0);
+    capitals(host, lobby.host, sizeof host);
+    online_title(&lobby, words, sizeof words);
+    online_write(self, words, TEXT_PAPER, "TxtDetailName", 0);
+    wsprintfA(words, "HOSTED BY %s", host);
+    online_write(self, online_internet ? words : "ON YOUR NETWORK", TEXT_GREY, "TxtDetailInfo", 0);
+    words[0] = 0;
+    if (lobby.most)
+        wsprintfA(words, "%d / %d", lobby.players, lobby.most);
+    online_write(self, words, TEXT_ORANGE, "TxtDetailCount", 0);
+    for (k = 0; k < ONLINE_RIDERS; k++) {
+        capitals(words, lobby.riders[k], sizeof words);
+        if (!words[0] && k < lobby.most)
+            online_write(self, "OPEN", TEXT_GREY, "TxtRider%d", k);
+        else
+            online_write(self, words, TEXT_PAPER, "TxtRider%d", k);
+    }
+    /* Quarry and tag are timed, not raced in laps. */
+    words[0] = 0;
+    if (lobby.kind == 0 || lobby.kind == 4)
+        lstrcpyA(words, "TIMED");
+    else if (lobby.kind > 0)
+        wsprintfA(words, "%d", lobby.laps);
+    online_write(self, words, TEXT_PAPER, "TxtDetailLaps", 0);
+    online_write(self, lobby.kind < 0 ? "" : lobby.trees ? "ON" : "OFF", TEXT_PAPER, "TxtDetailTrees", 0);
+    words[0] = 0;
+    if (lobby.most)
+        wsprintfA(words, "%d", lobby.most);
+    online_write(self, words, TEXT_PAPER, "TxtDetailMost", 0);
+}
+
+static void online_hide_card(BYTE* self, int card)
+{
+    static const char* parts[] = { "Lobby%d", "Lobby%dName", "Lobby%dInfo", "Lobby%dRiders", "Lobby%dTag",
+                                   "Lobby%dChosen" };
+    int k;
+
+    for (k = 0; k < (int) (sizeof parts / sizeof *parts); k++)
+        online_show(self, FALSE, parts[k], card, 0);
+    for (k = 0; k <= ONLINE_RIDERS; k++)
+        online_show(self, FALSE, "Lobby%dPips%d", card, k);
+    for (k = 0; k < ONLINE_EVENTS; k++)
+        online_show(self, FALSE, "Lobby%dPic%d", card, k);
+}
+
+static void online_show_card(BYTE* self, int card)
+{
+    static const char* parts[] = { "Lobby%d", "Lobby%dName", "Lobby%dInfo", "Lobby%dRiders", "Lobby%dTag" };
+    int k;
+
+    for (k = 0; k < (int) (sizeof parts / sizeof *parts); k++)
+        online_show(self, TRUE, parts[k], card, 0);
+}
+
+/* The service's state, the rider playing and when the lobbies were found. */
+static void online_fill_top(BYTE* self, int state)
 {
     char words[64];
+
+    if (!online_internet)
+        online_write(self, "LOCAL NETWORK", TEXT_PAPER, "TxtService", 0);
+    else if (state > 0)
+        online_write(self, "ONLINE  \xB7  EPIC ONLINE SERVICES", TEXT_GREEN, "TxtService", 0);
+    else
+        online_write(self, state == 0 ? "SIGNING IN  \xB7  EPIC ONLINE SERVICES" : "OFFLINE  \xB7  EPIC ONLINE SERVICES",
+                     TEXT_PAPER, "TxtService", 0);
+    capitals(words, game_profile, sizeof words);
+    online_write(self, words, TEXT_PAPER, "TxtPlayer", 0);
+    words[0] = 0;
+    if (online_internet && eos_found_ago() >= 0)
+        wsprintfA(words, "REFRESHED %d S AGO", eos_found_ago());
+    online_write(self, words, TEXT_GREY, "TxtStatus", 0);
+}
+
+/* Everything the screen shows, from the sessions the game found. */
+static void online_fill(BYTE* self)
+{
+    BYTE* list = dialog_find_control(self, NULL, "LstSessions", 0);
+    int chosen = list ? list_selected(list) : -1;
+    int counts[ONLINE_TABS] = { 0 };
     int state = online_internet ? eos_state() : 1;
+    BOOL chosen_shown = FALSE;
+    online_lobby lobby;
+    char words[64];
+    int i, t;
+
+    online_card_count = 0;
+    for (i = 0; i < sessions_found; i++) {
+        online_lobby_of(i, &lobby);
+        for (t = 0; t < ONLINE_TABS; t++)
+            counts[t] += online_in_tab(lobby.kind, t);
+        if (online_in_tab(lobby.kind, online_tab) && online_card_count < ONLINE_CARDS) {
+            chosen_shown |= i == chosen;
+            online_cards[online_card_count++] = i;
+        }
+    }
+    /* The game picked is always one shown: the first, when it was not. */
+    if (!chosen_shown) {
+        chosen = online_card_count ? online_cards[0] : -1;
+        if (list && chosen >= 0)
+            list_select_data(list, NULL, (DWORD) session_name(chosen));
+    }
+
+    for (t = 0; t < ONLINE_TABS; t++) {
+        char name[24];
+
+        wsprintfA(name, "%sOn", online_tabs[t].name);
+        online_show(self, t == online_tab, name, 0, 0);
+        wsprintfA(name, "%sCount", online_tabs[t].name);
+        wsprintfA(words, "%d", counts[t]);
+        online_write(self, words, t == online_tab ? TEXT_INK : TEXT_ORANGE, name, 0);
+    }
+    for (i = 0; i < ONLINE_CARDS; i++) {
+        if (i < online_card_count) {
+            online_show_card(self, i);
+            online_fill_card(self, i, online_cards[i], online_cards[i] == chosen);
+        } else {
+            online_hide_card(self, i);
+        }
+    }
+    online_fill_detail(self, chosen);
 
     if (state < 0)
-        online_status(self, "Epic Online Services could not be reached.");
+        lstrcpyA(words, "EPIC ONLINE SERVICES COULD NOT BE REACHED");
     else if (state == 0)
-        online_status(self, "Signing in to Epic Online Services...");
-    else if (!sessions_found)
-        online_status(self, online_internet ? "No lobbies open: host one." : "No games found: host one.");
-    else {
-        static const char* nouns[2][2] = { { "game", "games" }, { "lobby", "lobbies" } };
+        lstrcpyA(words, "SIGNING IN...");
+    else if (online_card_count)
+        words[0] = 0;
+    else
+        lstrcpyA(words, online_internet ? "NO LOBBIES OPEN  \xB7  HOST ONE" : "NO GAMES FOUND  \xB7  HOST ONE");
+    online_write(self, words, TEXT_PAPER, "TxtEmpty", 0);
+    online_fill_top(self, state);
+}
 
-        wsprintfA(words, "%d %s open.", sessions_found, nouns[online_internet != 0][sessions_found > 1]);
-        online_status(self, words);
+/* A card or a tab clicked: TRUE when it was one. */
+static BOOL online_clicked(BYTE* self, ui_event* event)
+{
+    char name[24];
+    int i;
+
+    for (i = 0; i < online_card_count; i++) {
+        wsprintfA(name, "Lobby%d", i);
+        if (clicked(event, name)) {
+            list_select_data(dialog_find_control(self, NULL, "LstSessions", 0), NULL,
+                             (DWORD) session_name(online_cards[i]));
+            online_fill(self);
+            return TRUE;
+        }
     }
+    for (i = 0; i < ONLINE_TABS; i++) {
+        wsprintfA(name, "%sOn", online_tabs[i].name);
+        if (clicked(event, online_tabs[i].name) || clicked(event, name)) {
+            online_tab = i;
+            online_fill(self);
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 static void __fastcall online_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
     if (event->type == EVENT_OPEN) {
+        online_tab = 0;
         online_failed = !online_connect();
         if (online_failed) {
-            online_status(self, online_internet ? "Online play would not start." : "The network would not start.");
+            int card;
+
+            online_card_count = 0;
+            for (card = 0; card < ONLINE_CARDS; card++)
+                online_hide_card(self, card);
+            online_clear_detail(self);
+            online_write(self, online_internet ? "ONLINE PLAY WOULD NOT START" : "THE NETWORK WOULD NOT START",
+                         TEXT_PAPER, "TxtEmpty", 0);
             return;
         }
     }
@@ -3874,9 +4157,13 @@ static void __fastcall online_handle(BYTE* self, void* edx_unused, ui_event* eve
         }
         return;
     }
+    if (event->type == EVENT_CLICK && online_clicked(self, event)) {
+        event->e = 1;
+        return;
+    }
     sessions_handle(self, edx_unused, event);
     if (event->type == EVENT_OPEN || event->type == EVENT_TIMER)
-        online_show_status(self);
+        online_fill(self);
 }
 
 static void online_open(BYTE* self, BOOL internet)

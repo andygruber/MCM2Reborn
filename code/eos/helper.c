@@ -28,6 +28,11 @@
 #define BUCKET          "mcm2reborn:1"      /* one game, one version of its netcode */
 #define ATTR_NAME       "NAME"
 #define ATTR_CLOSED     "CLOSED"
+#define ATTR_RIDER      "RIDER"             /* a member's: its rider's name */
+#define ATTR_KIND       "KIND"              /* the race the host has set up */
+#define ATTR_LAPS       "LAPS"
+#define ATTR_TREES      "TREES"
+#define ATTR_TRACK      "TRACK"
 #define SOCKET_NAME     "MCM2"
 #define CHANNEL_SMALL   0                   /* a whole packet, unreliable */
 #define CHANNEL_PIECES  1                   /* a larger one's pieces, reliable and in order */
@@ -486,7 +491,7 @@ static void EOS_CALL on_updated(const EOS_Lobby_UpdateLobbyCallbackInfo* info)
         say("the lobby would not change: %s", EOS_EResult_ToString(info->ResultCode));
 }
 
-static void lobby_change(const char* name, int closed)
+static void lobby_change(const char* name, int closed, const ask_settings* race)
 {
     EOS_Lobby_UpdateLobbyModificationOptions options = { EOS_LOBBY_UPDATELOBBYMODIFICATION_API_LATEST, self,
                                                          lobby_id };
@@ -498,6 +503,39 @@ static void lobby_change(const char* name, int closed)
         set_attribute(change, ATTR_NAME, name, 0);
     if (closed >= 0)
         set_attribute(change, ATTR_CLOSED, NULL, closed);
+    if (race) {
+        char track[EOS_TRACK_SIZE];
+
+        memcpy(track, race->track, sizeof track);
+        track[sizeof track - 1] = 0;
+        set_attribute(change, ATTR_KIND, NULL, race->kind);
+        set_attribute(change, ATTR_LAPS, NULL, race->laps);
+        set_attribute(change, ATTR_TREES, NULL, race->trees);
+        set_attribute(change, ATTR_TRACK, track, 0);
+    }
+    {
+        EOS_Lobby_UpdateLobbyOptions update = { EOS_LOBBY_UPDATELOBBY_API_LATEST, change };
+
+        EOS_Lobby_UpdateLobby(lobby_api, &update, NULL, on_updated);
+    }
+    EOS_LobbyModification_Release(change);
+}
+
+/* Our rider's name on our membership, for searches to show who is in the lobby. */
+static void name_in_lobby(void)
+{
+    EOS_Lobby_UpdateLobbyModificationOptions options = { EOS_LOBBY_UPDATELOBBYMODIFICATION_API_LATEST, self,
+                                                         lobby_id };
+    EOS_Lobby_AttributeData data = { EOS_LOBBY_ATTRIBUTEDATA_API_LATEST, ATTR_RIDER };
+    EOS_LobbyModification_AddMemberAttributeOptions add = { EOS_LOBBYMODIFICATION_ADDMEMBERATTRIBUTE_API_LATEST,
+                                                            &data, EOS_LAT_PUBLIC };
+    EOS_HLobbyModification change;
+
+    if (!lobby_id[0] || EOS_Lobby_UpdateLobbyModification(lobby_api, &options, &change) != EOS_Success)
+        return;
+    data.Value.AsUtf8 = player_name[0] ? player_name : self_name;
+    data.ValueType = EOS_AT_STRING;
+    EOS_LobbyModification_AddMemberAttribute(change, &add);
     {
         EOS_Lobby_UpdateLobbyOptions update = { EOS_LOBBY_UPDATELOBBY_API_LATEST, change };
 
@@ -517,7 +555,8 @@ static void EOS_CALL on_created(const EOS_Lobby_CreateLobbyCallbackInfo* info)
         return;
     }
     strncpy(lobby_id, info->LobbyId, sizeof lobby_id - 1);
-    lobby_change(hosting_name, 0);
+    lobby_change(hosting_name, 0, NULL);
+    name_in_lobby();
     strncpy(lobby.lobby, lobby_id, sizeof lobby.lobby - 1);
     lobby.owner = number_of(self);
     say("hosting lobby %s", lobby_id);
@@ -543,12 +582,76 @@ static void host(const ask_host* ask)
 
 static EOS_HLobbySearch search;
 
+/* A member's rider name, into `name` (EOS_NAME_SIZE): TRUE when it has one. */
+static BOOL rider_name(EOS_HLobbyDetails details, EOS_ProductUserId member, char* name)
+{
+    EOS_LobbyDetails_CopyMemberAttributeByKeyOptions by_key = {
+        EOS_LOBBYDETAILS_COPYMEMBERATTRIBUTEBYKEY_API_LATEST, member, ATTR_RIDER };
+    EOS_Lobby_Attribute* attribute;
+    BOOL named = FALSE;
+
+    if (EOS_LobbyDetails_CopyMemberAttributeByKey(details, &by_key, &attribute) == EOS_Success) {
+        if (attribute->Data->ValueType == EOS_AT_STRING) {
+            strncpy(name, attribute->Data->Value.AsUtf8, EOS_NAME_SIZE - 1);
+            named = TRUE;
+        }
+        EOS_Lobby_Attribute_Release(attribute);
+    }
+    return named;
+}
+
+/* The riders in a found lobby, the host first. */
+static void read_riders(EOS_HLobbyDetails details, tell_session* session)
+{
+    EOS_LobbyDetails_GetLobbyOwnerOptions owner_options = { EOS_LOBBYDETAILS_GETLOBBYOWNER_API_LATEST };
+    EOS_LobbyDetails_GetMemberCountOptions count_options = { EOS_LOBBYDETAILS_GETMEMBERCOUNT_API_LATEST };
+    EOS_ProductUserId owner = EOS_LobbyDetails_GetLobbyOwner(details, &owner_options);
+    uint32_t count = EOS_LobbyDetails_GetMemberCount(details, &count_options), i, riders = 0;
+
+    if (owner && rider_name(details, owner, session->host))
+        memcpy(session->riders[riders++], session->host, EOS_NAME_SIZE);
+    for (i = 0; i < count && riders < EOS_RIDERS_MOST; i++) {
+        EOS_LobbyDetails_GetMemberByIndexOptions by_index = { EOS_LOBBYDETAILS_GETMEMBERBYINDEX_API_LATEST, i };
+        EOS_ProductUserId member = EOS_LobbyDetails_GetMemberByIndex(details, &by_index);
+
+        if (member != owner && rider_name(details, member, session->riders[riders]))
+            riders++;
+    }
+}
+
+/* A lobby's number attribute, or `none`. */
+static int64_t number_attribute(EOS_HLobbyDetails details, const char* key, int64_t none)
+{
+    EOS_LobbyDetails_CopyAttributeByKeyOptions by_key = { EOS_LOBBYDETAILS_COPYATTRIBUTEBYKEY_API_LATEST, key };
+    EOS_Lobby_Attribute* attribute;
+    int64_t value = none;
+
+    if (EOS_LobbyDetails_CopyAttributeByKey(details, &by_key, &attribute) == EOS_Success) {
+        if (attribute->Data->ValueType == EOS_AT_INT64)
+            value = attribute->Data->Value.AsInt64;
+        EOS_Lobby_Attribute_Release(attribute);
+    }
+    return value;
+}
+
+/* A lobby's text attribute, into `to` (`size` bytes); empty when it has none. */
+static void text_attribute(EOS_HLobbyDetails details, const char* key, char* to, size_t size)
+{
+    EOS_LobbyDetails_CopyAttributeByKeyOptions by_key = { EOS_LOBBYDETAILS_COPYATTRIBUTEBYKEY_API_LATEST, key };
+    EOS_Lobby_Attribute* attribute;
+
+    to[0] = 0;
+    if (EOS_LobbyDetails_CopyAttributeByKey(details, &by_key, &attribute) == EOS_Success) {
+        if (attribute->Data->ValueType == EOS_AT_STRING)
+            strncpy(to, attribute->Data->Value.AsUtf8, size - 1);
+        EOS_Lobby_Attribute_Release(attribute);
+    }
+}
+
 static void read_session(EOS_HLobbyDetails details, tell_session* session)
 {
     EOS_LobbyDetails_CopyInfoOptions info_options = { EOS_LOBBYDETAILS_COPYINFO_API_LATEST };
     EOS_LobbyDetails_Info* info;
-    EOS_Lobby_Attribute* attribute;
-    EOS_LobbyDetails_CopyAttributeByKeyOptions by_key = { EOS_LOBBYDETAILS_COPYATTRIBUTEBYKEY_API_LATEST, ATTR_NAME };
 
     if (EOS_LobbyDetails_CopyInfo(details, &info_options, &info) == EOS_Success) {
         strncpy(session->lobby, info->LobbyId, sizeof session->lobby - 1);
@@ -556,16 +659,13 @@ static void read_session(EOS_HLobbyDetails details, tell_session* session)
         session->players = info->MaxMembers - info->AvailableSlots;
         EOS_LobbyDetails_Info_Release(info);
     }
-    if (EOS_LobbyDetails_CopyAttributeByKey(details, &by_key, &attribute) == EOS_Success) {
-        if (attribute->Data->ValueType == EOS_AT_STRING)
-            strncpy(session->name, attribute->Data->Value.AsUtf8, sizeof session->name - 1);
-        EOS_Lobby_Attribute_Release(attribute);
-    }
-    by_key.AttrKey = ATTR_CLOSED;
-    if (EOS_LobbyDetails_CopyAttributeByKey(details, &by_key, &attribute) == EOS_Success) {
-        session->closed = attribute->Data->ValueType == EOS_AT_INT64 && attribute->Data->Value.AsInt64;
-        EOS_Lobby_Attribute_Release(attribute);
-    }
+    text_attribute(details, ATTR_NAME, session->name, sizeof session->name);
+    session->closed = number_attribute(details, ATTR_CLOSED, 0) != 0;
+    session->race.kind = (int32_t) number_attribute(details, ATTR_KIND, -1);
+    session->race.laps = (uint32_t) number_attribute(details, ATTR_LAPS, 0);
+    session->race.trees = number_attribute(details, ATTR_TREES, 0) != 0;
+    text_attribute(details, ATTR_TRACK, session->race.track, sizeof session->race.track);
+    read_riders(details, session);
 }
 
 static void EOS_CALL on_found(const EOS_LobbySearch_FindCallbackInfo* info)
@@ -636,6 +736,7 @@ static void EOS_CALL on_joined(const EOS_Lobby_JoinLobbyByIdCallbackInfo* info)
         lobby.owner = number_of(EOS_LobbyDetails_GetLobbyOwner(details, &owner_options));
         EOS_LobbyDetails_Release(details);
     }
+    name_in_lobby();
     say("joined lobby %s, owned by %08X", lobby_id, lobby.owner);
     tell(TELL_JOINED, &lobby, sizeof lobby, NULL, 0);
     members_add();
@@ -696,6 +797,7 @@ static void answer(struct ask* ask)
             memcpy(player_name, ((const ask_player*) ask->fields)->name, EOS_NAME_SIZE - 1);
             for (i = 0; i < peer_count; i++)
                 hello(&peers[i]);
+            name_in_lobby();
         }
         break;
     case ASK_SEND:
@@ -708,7 +810,11 @@ static void answer(struct ask* ask)
         break;
     case ASK_CLOSED:
     case ASK_OPENED:
-        lobby_change(NULL, ask->kind == ASK_CLOSED);
+        lobby_change(NULL, ask->kind == ASK_CLOSED, NULL);
+        break;
+    case ASK_SETTINGS:
+        if (ask->size >= sizeof(ask_settings))
+            lobby_change(NULL, -1, (const ask_settings*) ask->fields);
         break;
     }
 }
