@@ -66,10 +66,8 @@ static struct {
     float yaw, yaw_speed;
     float pitch, pitch_speed;
     float height, height_speed;     /* the chase eye's, above the world's zero */
-    float back, back_speed;         /* the chase distance */
     float roll, roll_speed;
     float head[3], head_speed[3];   /* the helmet relative to the bike */
-    float fov, fov_speed;
 } cam;
 
 static float flat_speed(const float* v)
@@ -80,42 +78,38 @@ static float flat_speed(const float* v)
 /* ---- Chase ---- */
 
 /*
-    The game's own heading is smoothed already, and a spring on it lagged twice over (the camera
-    swung wide in a turn); the height followed slower in the air than on the ground (it hung
-    high and dropped late). So the heading is the bike's going, on one quick spring, and the
-    height follows its arc as it does on the ground. Nothing reads the terrain: the floor is the
-    bike's own height.
+    As MX vs ATV Unleashed's: well back and high, the rider small and a little below the middle
+    with the track ahead in view; straight behind the line ridden, level, barely swinging; the
+    view's width fixed (widening with speed, it warped on every jump). The heading is where the
+    bike is going, on one gentle spring; the height follows the bike's arc.
 */
+#define CHASE_BACK      30.0f           /* feet behind the bike */
+#define CHASE_UP        11.0f           /* ...and above it */
+#define CHASE_AHEAD     25.0f           /* the camera looks this far past the bike */
+#define CHASE_FOV       80.0f
+
 static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
     const float* p = bike_pos(bike);
     const float* v = bike_vel(bike);
-    float speed = flat_speed(v), mph = speed * FT_PER_S_TO_MPH;
-    float target[3] = { p[0], p[1] + 3.2f, p[2] };
-    float heading = speed > 8 ? arc_tangent2(v[0], v[2]) : arc_tangent2(cam_heading(camera)[0], cam_heading(camera)[2]);
-    float slope = bike_air(bike) ? cam.pitch : arc_tangent2(v[1], speed > 8 ? speed : 8) * 0.5f;
-    float back = 12 + (mph < 60 ? mph : 60) * 0.04f;
-    float eye[3], look[3], dir[3], up[3] = { 0, 1, 0 }, length, roll = 0, fov;
+    float speed = flat_speed(v);
+    float heading = speed > 8 ? arc_tangent2(v[0], v[2]) : arc_tangent2(bike_forward(bike)[0], bike_forward(bike)[2]);
+    float eye[3], look[3], dir[3], up[3] = { 0, 1, 0 }, length, roll = 0;
 
     if (begin) {
         cam.yaw = heading;
-        cam.pitch = 0;
-        cam.height = target[1] + 4;
-        cam.back = back;
-        cam.fov = 75;
-        cam.yaw_speed = cam.pitch_speed = cam.height_speed = cam.back_speed = cam.fov_speed = 0;
+        cam.height = p[1] + CHASE_UP;
+        cam.yaw_speed = cam.height_speed = 0;
     }
-    spring_angle(&cam.yaw, &cam.yaw_speed, heading, 6.0f, dt);
-    spring(&cam.pitch, &cam.pitch_speed, slope, 3.0f, dt);
-    spring(&cam.height, &cam.height_speed, target[1] + 4, 8.0f, dt);
-    spring(&cam.back, &cam.back_speed, back, 3.0f, dt);
+    spring_angle(&cam.yaw, &cam.yaw_speed, heading, 4.0f, dt);
+    spring(&cam.height, &cam.height_speed, p[1] + CHASE_UP, 6.0f, dt);
 
-    eye[0] = target[0] - sine(cam.yaw) * cam.back;
-    eye[2] = target[2] - cosine(cam.yaw) * cam.back;
-    eye[1] = cam.height > p[1] + 1.5f ? cam.height : p[1] + 1.5f;
-    look[0] = target[0] + sine(cam.yaw) * 6;
-    look[2] = target[2] + cosine(cam.yaw) * 6;
-    look[1] = target[1] + 0.5f + sine(cam.pitch) * 6;
+    eye[0] = p[0] - sine(cam.yaw) * CHASE_BACK;
+    eye[2] = p[2] - cosine(cam.yaw) * CHASE_BACK;
+    eye[1] = cam.height > p[1] + 4 ? cam.height : p[1] + 4;    /* never below the rider's head */
+    look[0] = p[0] + sine(cam.yaw) * CHASE_AHEAD;
+    look[2] = p[2] + cosine(cam.yaw) * CHASE_AHEAD;
+    look[1] = p[1] + 2;
     dir[0] = look[0] - eye[0];
     dir[1] = look[1] - eye[1];
     dir[2] = look[2] - eye[2];
@@ -125,60 +119,63 @@ static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     dir[0] /= length;
     dir[1] /= length;
     dir[2] /= length;
-
-    spring(&cam.fov, &cam.fov_speed, 75 + (mph < 60 ? mph : 60) / 60 * 10, 2.0f, dt);
-    fov = cam.fov;
     game_FUN_0042f8d0(camera, NULL, eye, dir, up, &roll, NULL);
-    game_FUN_0042f850(camera, NULL, fov);
+    game_FUN_0042f850(camera, NULL, CHASE_FOV);
     cam_rebuild(camera);
 }
 
 /* ---- Rider ---- */
 
 /*
-    From the game's own Rider Cam, which has just placed itself at the helmet and looked the way
-    the bike goes: its place steadied relative to the bike, its look with some of its pitch and
-    lean, on springs.
+    From just in front of the rider's face (from behind it, the helmet showed), looking the way
+    the bike points - so through whips the bars and the hands stay low in the view - a little
+    towards where it is going and a little down, at the bars. The head is held as a neck holds it:
+    its jolts softened, the horizon with only a quarter of the bike's lean.
 */
+#define RIDER_FOV       100.0f
+#define RIDER_FORWARD   0.8f            /* feet in front of the head */
+#define RIDER_UP        0.35f
+
 static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
     const float* p = bike_pos(bike);
     const float* v = bike_vel(bike);
-    const float* raw = cam_eye(camera);
-    const float* game_dir = cam_dir(camera);
-    float speed = flat_speed(v), mph = speed * FT_PER_S_TO_MPH;
-    float yaw = arc_tangent2(game_dir[0], game_dir[2]);
-    float pitch = arc_tangent2(game_dir[1], flat_speed(game_dir)) * 0.4f - 6 * PI / 180;
-    float roll = cam_roll(camera) * 0.35f, fov, eye[3], dir[3], up[3] = { 0, 1, 0 };
+    const float* f = bike_forward(bike);
+    float speed = flat_speed(v);
+    float yaw_bike = arc_tangent2(f[0], f[2]);
+    float yaw = yaw_bike, pitch, roll, eye[3], dir[3], up[3] = { 0, 1, 0 }, head[3];
     int k;
+
+    cam_head(camera, head);
+    if (speed > 10)
+        yaw = yaw_bike + angle_wrap(arc_tangent2(v[0], v[2]) - yaw_bike) * 0.3f;
+    pitch = arc_tangent2(f[1], flat_speed(f)) * 0.3f - 10 * PI / 180;
+    roll = cam_roll(camera) * 0.25f;
 
     if (begin) {
         for (k = 0; k < 3; k++) {
-            cam.head[k] = raw[k] - p[k];
+            cam.head[k] = head[k] - p[k];
             cam.head_speed[k] = 0;
         }
         cam.yaw = yaw;
         cam.pitch = pitch;
         cam.roll = roll;
-        cam.fov = 92;
-        cam.yaw_speed = cam.pitch_speed = cam.roll_speed = cam.fov_speed = 0;
+        cam.yaw_speed = cam.pitch_speed = cam.roll_speed = 0;
     }
     for (k = 0; k < 3; k++)                     /* the neck: the head's jolts softened */
-        spring(&cam.head[k], &cam.head_speed[k], raw[k] - p[k], 28, dt);
-    spring_angle(&cam.yaw, &cam.yaw_speed, yaw, 12, dt);
-    spring(&cam.pitch, &cam.pitch_speed, pitch, 9, dt);
-    spring(&cam.roll, &cam.roll_speed, roll, 8, dt);
+        spring(&cam.head[k], &cam.head_speed[k], head[k] - p[k], 20, dt);
+    spring_angle(&cam.yaw, &cam.yaw_speed, yaw, 10, dt);
+    spring(&cam.pitch, &cam.pitch_speed, pitch, 8, dt);
+    spring(&cam.roll, &cam.roll_speed, roll, 6, dt);
 
     dir[0] = sine(cam.yaw) * cosine(cam.pitch);
     dir[1] = sine(cam.pitch);
     dir[2] = cosine(cam.yaw) * cosine(cam.pitch);
-    for (k = 0; k < 3; k++)
-        eye[k] = p[k] + cam.head[k];
-
-    spring(&cam.fov, &cam.fov_speed, 92 + (mph < 60 ? mph : 60) / 60 * 8, 2.0f, dt);
-    fov = cam.fov;
+    eye[0] = p[0] + cam.head[0] + sine(cam.yaw) * RIDER_FORWARD;
+    eye[1] = p[1] + cam.head[1] + RIDER_UP;
+    eye[2] = p[2] + cam.head[2] + cosine(cam.yaw) * RIDER_FORWARD;
     game_FUN_0042f8d0(camera, NULL, eye, dir, up, &cam.roll, NULL);
-    game_FUN_0042f850(camera, NULL, fov);
+    game_FUN_0042f850(camera, NULL, RIDER_FOV);
     cam_rebuild(camera);
     cam_show_rider(camera);
 }
