@@ -10,6 +10,7 @@
         events=1          every dialog event the ported handlers see
         files=1           every file the profile code looks for
         camera=1          the rider camera's readings, twice a second
+        input=1           each input device's reads, once a second (inputfix.c)
         display=1         every display mode set and every surface made that is not a
                           texture, with the address of the game code that asked
 
@@ -51,6 +52,7 @@ typedef struct dev_switches {
     BOOL trace_files;
     BOOL trace_display;
     BOOL trace_camera;
+    BOOL trace_input;
     BOOL menus_widescreen;
     BOOL menus_fill_sides;
     BOOL menus_modern;

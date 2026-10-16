@@ -41,6 +41,8 @@ static struct device {
     DWORD state_size;                   /* GetDeviceState's, by the data format set */
     BOOL  resync;                       /* acquired again: the next data starts from the state */
     BYTE  held[BUTTONS_MOST];
+    DWORD reads, items, resyncs, since; /* [trace] input=1: this second's */
+    HRESULT last;
 } g_devices[DEVICES_MOST];
 
 typedef HRESULT (WINAPI* create_fn)(HINSTANCE, DWORD, REFIID, void**, void*);
@@ -123,6 +125,24 @@ static DWORD resync_data(struct device* d, object_data* to, DWORD room)
     return n;
 }
 
+/* [trace] input=1: once a second, what each device's reads came to. */
+static void trace(struct device* d, HRESULT result, DWORD items)
+{
+    static const char* kinds[] = { "other", "keyboard", "mouse", "joystick" };
+
+    if (!dev_settings.trace_input)
+        return;
+    d->reads++;
+    d->items += items;
+    d->last = result;
+    if (timeGetTime() - d->since < 1000)
+        return;
+    dev_trace("input", "%s %08X: %lu reads, %lu items, %lu resyncs, last %08lX", kinds[d->kind], (DWORD) d->self,
+              d->reads, d->items, d->resyncs, (DWORD) d->last);
+    d->reads = d->items = d->resyncs = 0;
+    d->since = timeGetTime();
+}
+
 static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data, DWORD* count, DWORD flags)
 {
     struct device* d = device_of(self, FALSE);
@@ -132,6 +152,7 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
 
     if (!d)
         return result;
+    trace(d, result, result >= 0 && count ? *count : 0);
     if (result == DIERR_INPUTLOST || result == DIERR_NOTACQUIRED) {
         d->resync = TRUE;
         return result;
@@ -155,6 +176,7 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
             data[i] = now[i];
         *count += n;
         d->resync = FALSE;
+        d->resyncs++;
     }
     return result;
 }
