@@ -4236,6 +4236,19 @@ static void menu_click(BYTE* self, ui_event* event)
         return;
     if (menu_reborn(self) && multi_clicked(self, event))
         return;
+    /*
+        The modern menus start single player (and Pro Circuit) from the menu itself, where the
+        original reached them only through panels whose opening closed multiplayer's. Its
+        network is closed here instead: a race with one up is a network race, which takes no
+        input from this computer's player and cannot be paused.
+    */
+    if (dev_settings.menus_modern
+        && (clicked(event, NAME(0x0056F708)) || clicked(event, NAME(0x0056F5FC)))) {   /* MenuSingle, ButProCircuit */
+        if (FIELD(self, MENU_MULTI_OPEN, int))
+            multi_close(self);
+        else if (game_net)
+            net_leave();
+    }
 #endif
     if (clicked(event, NAME(0x0056F708))) {                                 /* "MenuSingle" */
 #ifdef OPENMCM2_DEV
