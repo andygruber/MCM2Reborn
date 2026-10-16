@@ -2480,11 +2480,11 @@ static void dialog_art_set(BYTE* dialog, int art, const RECT* view, BOOL reborn)
     for (i = 0; i < 64; i++) {
         if (dialog_arts[i].dialog == dialog)
             break;
-        if (free < 0 && dialog_arts[i].art <= 1)
+        if (free < 0 && dialog_arts[i].art <= 1 && !dialog_arts[i].reborn)
             free = i;
     }
     if (i == 64) {
-        if (art <= 1 || free < 0)
+        if ((art <= 1 && !reborn) || free < 0)      /* nothing to keep */
             return;
         i = free;
         dialog_arts[i].dialog = dialog;
