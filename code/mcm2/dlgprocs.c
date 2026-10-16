@@ -3812,7 +3812,10 @@ static void user_panel_after_profile(BYTE* self)
 
 void __fastcall sessions_handle(BYTE* self, void* edx_unused, ui_event* event);
 
-static void* online_vtable[ONLINE_VTABLE_SLOTS];
+/* The credits' vtable with the handler replaced, and before it, as in any vtable, the pointer to
+   its class's RTTI: the game reads screens' class names when it moves between them. */
+static void* online_vtable_rtti[1 + ONLINE_VTABLE_SLOTS];
+#define online_vtable (online_vtable_rtti + 1)
 static BOOL online_internet;        /* the screen open is Online, not LAN */
 static BOOL online_failed;          /* its network did not start: only Back works */
 
@@ -4171,7 +4174,7 @@ static void online_open(BYTE* self, BOOL internet)
     int i;
 
     if (!online_vtable[0]) {
-        for (i = 0; i < ONLINE_VTABLE_SLOTS; i++)
+        for (i = -1; i < ONLINE_VTABLE_SLOTS; i++)
             online_vtable[i] = CREDITS_VTABLE[i];
         online_vtable[0x74 / 4] = (void*) online_handle;
     }
