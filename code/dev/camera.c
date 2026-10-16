@@ -52,6 +52,7 @@
 #define frame_hidden(f) FIELD(f, 0x14C, int)        /* not drawn, nor the frames under it */
 
 #define FT_PER_S_TO_MPH 0.68181825f
+#define NEAR_PLANE      0.1f            /* feet: the game's 1, set again every frame, cut the bars, hands and legs */
 
 /* Camera: eye, direction, up, roll, fov (NULL keeps one); the fov; its matrices made anew. */
 void __fastcall game_FUN_0042f8d0(BYTE* camera, void* edx_unused, const float* eye, const float* dir,
@@ -87,63 +88,98 @@ static float flat_speed(const float* v)
 
 /*
     In the rider's view the rider is drawn - the arms and hands on the bars, the bike under them -
-    but not the head (and the helmet with it): the view is from where the face is, and the helmet
-    showed from inside. It is shown again whenever the view is not the rider's, and one hidden on a
-    bike since gone is let be.
+    but not the head and helmet, which the view is in. The rider is one mesh whose vertices follow
+    its frames, and its head frame holds no mesh of its own (hiding it did nothing): so for the
+    rider's draw alone the head and everything under it are made to a point - their axes zeroed,
+    their places kept - and put back straight after (bikecamera.c, soul_mesh_draw).
 */
-static BYTE* g_head;                    /* the Head frame hidden, and the bike it is on */
+#define HEAD_FRAMES_MOST 32
+#define frame_child(f)      FIELD(f, 0x140, BYTE*)
+#define frame_sibling(f)    FIELD(f, 0x144, BYTE*)
+#define mesh_dirty(m)       FIELD(m, 0x18C, int)
+
+static BYTE* g_head;                    /* the Head frame, and the rider's model it is in */
+static BYTE* g_head_model;
 static BYTE* g_head_bike;
+static BYTE* g_head_frames[HEAD_FRAMES_MOST];
+static float g_head_axes[HEAD_FRAMES_MOST][12];
+static int   g_head_count;
+static BYTE* g_near_camera;             /* the camera whose near plane is the rider view's */
 
 static void head_hide(BYTE* bike)
 {
     BYTE* rider = bike_rider(bike);
     BYTE* model = rider ? rider_frame(rider) : NULL;
-    BYTE* head = model ? game_FUN_00502970(model, NULL, "Head") : NULL;
 
-    if (!head)
-        return;
-    frame_hidden(head) = 1;
-    g_head = head;
-    g_head_bike = bike;
+    g_head = model ? game_FUN_00502970(model, NULL, "Head") : NULL;
+    g_head_model = g_head ? model : NULL;
+    g_head_bike = g_head ? bike : NULL;
 }
 
 static void head_show(BYTE* bike)
 {
-    if (g_head && bike == g_head_bike)
-        frame_hidden(g_head) = 0;
-    g_head = g_head_bike = NULL;
+    (void) bike;
+    g_head = g_head_model = g_head_bike = NULL;
 }
 
-/*
-    The view's width across, in degrees, for a height of `high` degrees on this camera's screen.
-    The game's projection takes its field of view across and stretches it by the aspect.
-*/
-static float across_for_high(BYTE* camera, float high)
+BOOL rider_head_collapse(BYTE* mesh)
 {
-    float half = high * (PI / 360);
+    BYTE* stack[HEAD_FRAMES_MOST];
+    int n = 0, k;
 
-    return 2 * arc_tangent2(sine(half) / cosine(half) * cam_aspect(camera), 1) * (180 / PI);
+    g_head_count = 0;
+    if (!g_head || mesh != g_head_model)
+        return FALSE;
+    stack[n++] = g_head;
+    while (n > 0 && g_head_count < HEAD_FRAMES_MOST) {
+        BYTE* f = stack[--n];
+        BYTE* child;
+        float* axes = (float*) (f + 0xF8);
+
+        g_head_frames[g_head_count] = f;
+        for (k = 0; k < 12; k++) {
+            g_head_axes[g_head_count][k] = axes[k];
+            axes[k] = 0;
+        }
+        g_head_count++;
+        for (child = frame_child(f); child && n < HEAD_FRAMES_MOST; child = frame_sibling(child))
+            stack[n++] = child;
+    }
+    mesh_dirty(mesh) = 1;
+    return TRUE;
+}
+
+void rider_head_restore(BYTE* mesh)
+{
+    int i, k;
+
+    for (i = 0; i < g_head_count; i++) {
+        float* axes = (float*) (g_head_frames[i] + 0xF8);
+
+        for (k = 0; k < 12; k++)
+            axes[k] = g_head_axes[i][k];
+    }
+    g_head_count = 0;
+    mesh_dirty(mesh) = 1;
+}
+
+float camera_near_plane(BYTE* camera)
+{
+    return camera && camera == g_near_camera ? NEAR_PLANE : 0;
 }
 
 /*
-    The game made its 3D for a 4:3 screen, and on a wider one the renderer stretched it: a view
-    meant for 4:3 was far too tall (the first-person view at 140 degrees bent from the roof to the
-    bars). Each frame the camera's aspect is the picture's own, its viewport's width over height.
+    Each frame the camera's aspect is the picture's own, its viewport's width over height (it was
+    so already in the game's, as the log showed; kept as a guard for other screens).
 */
 static void aspect_true(BYTE* camera)
 {
-    static BOOL told;
     int w = cam_view_w(camera), h = cam_view_h(camera);
     float aspect;
 
     if (w <= 0 || h <= 0)
         return;
     aspect = (float) w / h;
-    if (!told) {
-        log_line("camera: the game's aspect %d/1000, the picture's %dx%d (%d/1000)",
-                 (int) (cam_aspect(camera) * 1000), w, h, (int) (aspect * 1000));
-        told = TRUE;
-    }
     if (cam_aspect(camera) != aspect) {
         cam_aspect(camera) = aspect;
         cam_rebuild(camera);
@@ -167,7 +203,6 @@ static void aspect_true(BYTE* camera)
 #define UP_SAMPLES      250             /* 0.5 s */
 #define VEL_SAMPLES     50              /* 0.1 s */
 #define HEAD_SMOOTHING  0.035f
-#define NEAR_PLANE      0.25f           /* feet: the game's 1 cut the bars and hands */
 
 static const float eye_offset[3] = { 0, 0.52f, 0.3f };     /* in the head's own axes */
 
@@ -405,6 +440,7 @@ static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
         game_FUN_0042f8d0(camera, NULL, eye, dir, view_up, &none, NULL);
     }
     game_FUN_0042f850(camera, NULL, fov);
+    g_near_camera = camera;
     FIELD(camera, 0x1BC, float) = NEAR_PLANE;
     cam_rebuild(camera);
     cam_show_rider(camera);
@@ -414,58 +450,20 @@ static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 /* ---- Chase ---- */
 
 /*
-    MX vs ATV Unleashed's follow camera, "Race Camera 1" (mxacore.dll follow_cam_update, its preset
-    from Data\Cam\FC_MXDefault.pb, 16x9): a boom 15.5 feet long raised 42 degrees behind the way
-    the bike points, from 0.35 feet above it, looking at a point 3 feet over it pushed ahead along
-    its line as it goes faster; the look and the camera each on per-axis lag filters (0.30/0.23/0.30
-    and 0.15/0.25/0.15 s); the view 85 degrees across, eased in from 80; flatter at a walk. Its
-    heading is the bike's facing (the velocity heading sits behind a flag of its not identified,
-    and the facing keeps the way ahead in view), its yaw rate the facing's turn; the terrain lift of
-    the look is not ported (the camera sits ten feet up).
+    Locked behind the rider, as the game's own chase camera is, without its snapping: the game
+    eased its heading 18% of the way each frame, smooth at the 30 a second it was made for and all
+    but instant at 144. Here the heading is the bike's facing on a spring that runs by time, the
+    height the bike's on another, and the camera looks at the rider; nothing moves the look with
+    the speed or the fall (the ported Unleashed camera's look ahead and its rise with the bike's
+    vertical speed swam on every jump). The rider is never out of view.
 */
-#define FC_ANGLE_X      (42 * PI / 180)
-#define FC_DISTANCE     15.5f
-#define FC_FOV          85.0f
-#define FC_FOV_MAX      110.0f
-#define FC_FOV_START    80.0f
-#define FC_FOV_FILTER   0.55f
-#define FC_LOOK_AHEAD   15.0f
-#define FC_LOOK_SWING   0.6f
-#define FC_BODY_UP      0.35f
-#define FC_LOOK_UP      3.0f
-#define FC_SLOW_CUTOFF  30.0f           /* ft/s: below it the boom flattens */
-#define FC_SLOW_SCALE   0.5f
-#define FC_TOP_SPEED    117.33f         /* ft/s, 80 mph */
-
-static const float fc_look_filter[3] = { 0.30f, 0.23f, 0.30f };
-static const float fc_pos_filter[3] = { 0.15f, 0.25f, 0.15f };
-
-/* lerpc: x from x0..x1 onto y0..y1, held within y0..y1. */
-static float lerpc(float x, float x0, float y0, float x1, float y1)
-{
-    float y;
-
-    if (x1 == x0)
-        return y0;
-    y = y0 + (x - x0) / (x1 - x0) * (y1 - y0);
-    if (y0 < y1)
-        return y < y0 ? y0 : y > y1 ? y1 : y;
-    return y < y1 ? y1 : y > y0 ? y0 : y;
-}
-
-/* The game's filter: linear towards the target, its share of the way min(dt, tau) / tau. */
-static void lag(float* value, float target, float tau, float dt)
-{
-    *value += (target - *value) * ((dt < tau ? dt : tau) / tau);
-}
-
-/*
-    The rider is never out of view: if its middle is further from the view's centre than these
-    (degrees, below or above and to either side), the look is turned towards it just so far that it
-    is not. Unleashed's look ahead and its lag, ported, put the rider at the foot of the view at
-    speed and off it on drops.
-*/
-#define KEEP_UP_DOWN    8.0f
+#define CHASE_BACK      14.0f           /* feet behind the bike */
+#define CHASE_UP        7.0f            /* ...and above it */
+#define CHASE_AT        3.0f            /* the camera looks at the rider's middle */
+#define CHASE_FOV       80.0f           /* degrees across */
+#define CHASE_TURN      8.0f            /* the heading's spring, 1/s */
+#define CHASE_RISE      10.0f           /* the height's */
+#define KEEP_UP_DOWN    8.0f            /* the rider is kept within these of the view's centre */
 #define KEEP_SIDES      12.0f
 
 static void keep_in_view(const float* eye, float* dir, const float* rider_at)
@@ -492,98 +490,30 @@ static void keep_in_view(const float* eye, float* dir, const float* rider_at)
 static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
     const float* p = bike_pos(bike);
-    const float* v = bike_vel(bike);
     const float* f = bike_forward(bike);
-    BYTE* body = bike_body(bike);
-    float body_up[3] = { 0, 1, 0 }, base[3], look_base[3], look[3], eye[3], dir[3], up[3] = { 0, 1, 0 };
-    float flat[3] = { f[0], 0, f[2] }, look_dir[3], speed, ratio, pitch, k, ahead, heading, yaw_rate, length;
-    float swing, roll = 0;
+    float heading = arc_tangent2(f[0], f[2]);
+    float rider_at[3] = { p[0], p[1] + CHASE_AT, p[2] };
+    float eye[3], dir[3], up[3] = { 0, 1, 0 }, roll = 0;
     int i;
 
-    if (body)
-        for (i = 0; i < 3; i++)
-            body_up[i] = frame_axis(body, 1)[i];
-    normalise(flat);
-    speed = square_root(dot3(v, v));
-    for (i = 0; i < 3; i++)
-        look_base[i] = p[i] + body_up[i] * FC_BODY_UP;
-
-    /* Reversing: as if still. */
-    if (speed > 4 && dot3(flat, v) < 0)
-        speed = 0;
-
-    heading = arc_tangent2(flat[0], flat[2]);
-    yaw_rate = begin || dt <= 0 ? 0 : angle_wrap(heading - cam.yaw) / dt;
-    cam.yaw = heading;
-
-    if (begin)
-        cam.fov = FC_FOV_START;
-    lag(&cam.fov, FC_FOV, FC_FOV_FILTER, dt);
-    ratio = FC_FOV / FC_FOV_MAX;
-
-    pitch = FC_ANGLE_X;
-    if (speed < FC_SLOW_CUTOFF) {
-        pitch *= (1 - FC_SLOW_SCALE) * (speed / FC_SLOW_CUTOFF) + FC_SLOW_SCALE;
-        pitch -= (f[1] < 0 ? -f[1] : f[1]) * FC_SLOW_SCALE;
-    }
-
-    if (speed < 1e-4f) {
-        for (i = 0; i < 3; i++) {
-            base[i] = look_base[i];
-            look[i] = look_base[i];
-        }
-        look[1] += FC_LOOK_UP;
-    } else {
-        for (i = 0; i < 3; i++)
-            base[i] = look_base[i] + v[i] * (dt < 0.2f ? dt : 0.2f);
-        k = 1.8f * (speed / FC_TOP_SPEED) * (1 - FC_DISTANCE / 600)
-            * (1 + ratio * FC_DISTANCE / 90) * (1 + ratio * FC_DISTANCE / 90);
-        if (v[1] < -9)                  /* falling fast: less look ahead */
-            k *= 1 + (v[1] / speed) * (5.0f / 9);
-        ahead = k * FC_LOOK_AHEAD > 0 ? k * FC_LOOK_AHEAD : 0;
-        swing = 0.147f * FC_LOOK_SWING * ratio * yaw_rate;
-        look_dir[0] = flat[0] * cosine(swing) + flat[2] * sine(swing);
-        look_dir[1] = 0;
-        look_dir[2] = -flat[0] * sine(swing) + flat[2] * cosine(swing);
-        for (i = 0; i < 3; i++)
-            look[i] = base[i] + look_dir[i] * ahead;
-        look[1] += 0.25f * v[1] * (1 - ratio) + FC_LOOK_UP;
-    }
-
-    /* The boom: the flat heading raised by the pitch, turned round behind (yaw 180). */
-    eye[0] = base[0] - flat[0] * cosine(pitch) * FC_DISTANCE;
-    eye[1] = base[1] + sine(pitch) * FC_DISTANCE;
-    eye[2] = base[2] - flat[2] * cosine(pitch) * FC_DISTANCE;
-    if (speed < 1e-4f)
-        for (i = 0; i < 3; i++)
-            eye[i] += v[i] * dt * 10;
-    if (eye[1] < p[1] + 2)              /* the ground clamp's floor: two feet, here over the bike */
-        eye[1] = p[1] + 2;
-
     if (begin) {
-        for (i = 0; i < 3; i++) {
-            cam.look[i] = look[i];
-            cam.eye[i] = eye[i];
-        }
-    } else {
-        for (i = 0; i < 3; i++) {
-            lag(&cam.look[i], look[i], fc_look_filter[i], dt);
-            lag(&cam.eye[i], eye[i], fc_pos_filter[i], dt);
-        }
+        cam.yaw = heading;
+        cam.height = p[1] + CHASE_UP;
+        cam.yaw_speed = cam.height_speed = 0;
     }
+    spring_angle(&cam.yaw, &cam.yaw_speed, heading, CHASE_TURN, dt);
+    spring(&cam.height, &cam.height_speed, p[1] + CHASE_UP, CHASE_RISE, dt);
 
+    eye[0] = p[0] - sine(cam.yaw) * CHASE_BACK;
+    eye[1] = cam.height > p[1] + 2 ? cam.height : p[1] + 2;
+    eye[2] = p[2] - cosine(cam.yaw) * CHASE_BACK;
     for (i = 0; i < 3; i++)
-        dir[i] = cam.look[i] - cam.eye[i];
-    length = normalise(dir);
-    if (length <= 0)
+        dir[i] = rider_at[i] - eye[i];
+    if (normalise(dir) <= 0)
         return;
-    {
-        float rider_at[3] = { p[0], p[1] + FC_LOOK_UP, p[2] };
-
-        keep_in_view(cam.eye, dir, rider_at);
-    }
-    game_FUN_0042f8d0(camera, NULL, cam.eye, dir, up, &roll, NULL);
-    game_FUN_0042f850(camera, NULL, cam.fov);
+    keep_in_view(eye, dir, rider_at);
+    game_FUN_0042f8d0(camera, NULL, eye, dir, up, &roll, NULL);
+    game_FUN_0042f850(camera, NULL, CHASE_FOV);
     cam_rebuild(camera);
 }
 
@@ -678,7 +608,7 @@ static void rider_frames(BYTE* bike)
             indent[i] = ' ';
         indent[i] = 0;
         log_line("camera: rider frame %s%s%s", indent, (const char*) f + 0x38, frame_hidden(f) ? " (hidden)" : "");
-        for (child = FIELD(f, 0x144, BYTE*); child && n < 64; child = FIELD(child, 0x140, BYTE*)) {
+        for (child = frame_child(f); child && n < 64; child = frame_sibling(child)) {
             stack[n] = child;
             depth[n++] = d + 1;
         }
@@ -699,14 +629,16 @@ void camera_after_update(BYTE* camera, float dt)
     if (!dev_settings.menus_modern || !g_reborn.cameras || (mode != CHASE && mode != RIDER) || !bike || !cam_on_bike(camera)
         || cam_crashed(camera) || (event && FIELD(event, 0x18E, BYTE)) || dt <= 0) {
         head_show(bike);
-        if (FIELD(camera, 0x1BC, float) == NEAR_PLANE)
+        if (g_near_camera == camera)
             FIELD(camera, 0x1BC, float) = 1;
+        g_near_camera = NULL;
         cam.camera = NULL;              /* the game's camera: ours begins anew after */
         record_update(camera, bike, 0, dt);
         return;
     }
     if (mode != RIDER) {
         head_show(bike);
+        g_near_camera = NULL;
         FIELD(camera, 0x1BC, float) = 1;    /* the game's near plane, where the depth is fine */
     }
     begin = camera != cam.camera || bike != cam.bike || mode != cam.mode;
