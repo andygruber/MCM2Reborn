@@ -36,6 +36,7 @@ HINT = (LEFT, LIST_BOTTOM + 20, CARD_RIGHT, 1268)     # where the mockup's join 
 DETAIL = (1640, CARD_TOP, RIGHT, HINT[3])
 THUMB = (20, 14, 210, CARD_H - 14)      # in a card
 RIDERS = 8                              # the gate's slots, and a lobby's riders at most
+CHAT_LINES = 4                          # the host's newest, on its lobby (code/eos/protocol.h)
 PIP_W, PIP_H, PIP_GAP = 22, 16, 7
 TABS_Y = (PLACE[1], PLACE[1] + 60)
 PILL_Y = (TOP + 60, TOP + 124)
@@ -44,8 +45,10 @@ PILL_Y = (TOP + 60, TOP + 124)
 KINDS = [(0, "STUNT QUARRY", "LOADQUAR", "stuntquarry"), (1, "BAJA", "LOADBAJA", "baja"),
          (2, "NATIONALS", "LOADNAT", "nationals"), (3, "SUPERCROSS", "LOADSX", "supercross"),
          (4, "TAG", "LOADTAG", "tag"), (5, "ENDURO", "LOADEND", "enduro")]
-# Online's tabs: the control and its words; which events each holds is dlgprocs.c's.
-TABS = [("TabAll", "ALL"), ("TabRaces", "RACES"), ("TabQuarry", "STUNT QUARRY"), ("TabTag", "TAG")]
+# Online's tabs: the control and its words; which events each holds is dlgprocs.c's, and Local
+# Network turns the screen to the game's own LAN.
+TABS = [("TabAll", "ALL"), ("TabRaces", "RACES"), ("TabQuarry", "STUNT QUARRY"), ("TabTag", "TAG"),
+        ("TabLan", "LOCAL NETWORK")]
 
 # Each screen: its layout, title, the service tag and its dot, its tabs, and the line under the gate.
 MODES = {
@@ -180,34 +183,47 @@ def build_cards(screen, board, events):
 
 
 def build_detail(screen, board, events, gate_note):
+    """The game picked: its picture and name, who hosts it, its gate, its race and its chat."""
     kit.panel(board, DETAIL, 230)
     x0, y0, x1, y1 = DETAIL
-    head = (x0, y0, x1, y0 + 240)
+    head_h = 200
     for kind, words, _, _ in KINDS if events else ():
-        picture(screen, "DetailPic%d" % kind, head, header_picture(events[kind], (x1 - x0, 240), words))
-    text(screen, "TxtDetailName", (x0 + 40, y0 + 168, x1 - 40, y0 + 236), 54)
-    text(screen, "TxtDetailInfo", (x0 + 40, y0 + 250, x1 - 40, y0 + 290), 26, GREY, bold=False)
-    heading(board, "ON THE GATE", x0 + 40, y0 + 352, 26, PAPER)
-    text(screen, "TxtDetailCount", (x1 - 240, y0 + 318, x1 - 40, y0 + 360), 28, ORANGE, "RIGHT")
+        picture(screen, "DetailPic%d" % kind, (x0, y0, x1, y0 + head_h),
+                header_picture(events[kind], (x1 - x0, head_h), words))
+    text(screen, "TxtDetailName", (x0 + 40, y0 + 124, x1 - 40, y0 + 192), 54)
+    text(screen, "TxtDetailInfo", (x0 + 40, y0 + 204, x1 - 40, y0 + 240), 26, GREY, bold=False)
+
+    heading(board, "ON THE GATE", x0 + 40, y0 + 290, 26, PAPER)
+    text(screen, "TxtDetailCount", (x1 - 240, y0 + 256, x1 - 40, y0 + 298), 28, ORANGE, "RIGHT")
     slot_w = (x1 - x0 - 80 - 16) / 2
     for k in range(RIDERS):
         sx = x0 + 40 + (k % 2) * (slot_w + 16)
-        sy = y0 + 378 + (k // 2) * 70
-        box(board, (sx, sy, sx + slot_w, sy + 58), RAISED + (255,), 8, EDGE + (255,))
-        text(screen, "TxtRider%d" % k, (sx + 24, sy, sx + slot_w - 24, sy + 58), 28)
+        sy = y0 + 308 + (k // 2) * 60
+        box(board, (sx, sy, sx + slot_w, sy + 50), RAISED + (255,), 8, EDGE + (255,))
+        text(screen, "TxtRider%d" % k, (sx + 24, sy, sx + slot_w - 24, sy + 50), 26)
+
     # The race's settings, in boxes as the mockup's.
     box_w = (x1 - x0 - 80 - 3 * 16) / 4
+    by = y0 + 556
     for k, (name, label) in enumerate((("Laps", "LAPS"), ("Trees", "TREES"), ("Most", "RIDERS"),
                                        ("Version", "VERSION"))):
         bx = x0 + 40 + k * (box_w + 16)
-        by = y0 + 378 + 4 * 70 + 18
-        box(board, (bx, by, bx + box_w, by + 86), RAISED + (255,), 8, EDGE + (255,))
-        sub(board, label, bx + 18, by + 30, 20, GREY)
+        box(board, (bx, by, bx + box_w, by + 80), RAISED + (255,), 8, EDGE + (255,))
+        sub(board, label, bx + 18, by + 28, 20, GREY)
         if name == "Version":
-            heading(board, VERSION, bx + 18, by + 72, 30, PAPER)
+            heading(board, VERSION, bx + 18, by + 68, 30, PAPER)
         else:
-            text(screen, "TxtDetail" + name, (bx + 18, by + 40, bx + box_w - 12, by + 80), 30)
-    sub(board, gate_note, x0 + 40, y1 - 32, 24, GREY)
+            text(screen, "TxtDetail" + name, (bx + 18, by + 36, bx + box_w - 12, by + 76), 30)
+
+    # The host's newest chat, the oldest line at the top.
+    heading(board, "LOBBY CHAT", x0 + 40, y0 + 682, 26, PAPER)
+    chat = (x0 + 40, y0 + 698, x1 - 40, y0 + 852)
+    box(board, chat, (12, 12, 14, 235), 8, EDGE + (255,))
+    for k in range(CHAT_LINES):
+        ly = chat[1] + 8 + k * 36
+        text(screen, "TxtChatName%d" % k, (chat[0] + 20, ly, chat[0] + 220, ly + 34), 24, ORANGE)
+        text(screen, "TxtChatText%d" % k, (chat[0] + 232, ly, chat[2] - 20, ly + 34), 24, PAPER, bold=False)
+    sub(board, gate_note, x0 + 40, y1 - 14, 22, GREY)
 
 
 def build(stem, events):
@@ -223,7 +239,7 @@ def build(stem, events):
     chip = (pill[0] - 24 - 420, PILL_Y[0], pill[0] - 24, PILL_Y[1])
     box(board, chip, (16, 17, 20, 230), 32, EDGE + (255,))
     text(screen, "TxtPlayer", (chip[0] + 32, chip[1], chip[2] - 24, chip[3]), 30)
-    text(screen, "TxtStatus", (CARD_RIGHT - 600, TABS_Y[0], RIGHT, TABS_Y[1]), 24, GREY, "RIGHT", False)
+    text(screen, "TxtStatus", (DETAIL[0], TABS_Y[0], RIGHT, TABS_Y[1]), 24, GREY, "RIGHT", False)
     if tabs:
         build_tabs(screen, board)
     else:

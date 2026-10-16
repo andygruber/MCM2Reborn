@@ -3816,7 +3816,8 @@ void __fastcall sessions_handle(BYTE* self, void* edx_unused, ui_event* event);
    its class's RTTI: the game reads screens' class names when it moves between them. */
 static void* online_vtable_rtti[1 + ONLINE_VTABLE_SLOTS];
 #define online_vtable (online_vtable_rtti + 1)
-static BOOL online_internet;        /* the screen open is Online, not LAN */
+static BOOL online_screen;          /* the screen open is Online, not LAN */
+static BOOL online_internet;        /* its network is EOS's: Online's, but for its Local Network tab */
 static BOOL online_failed;          /* its network did not start: only Back works */
 
 /* The network made for the screen and connected through TCP/IP, as LAN's button always did. */
@@ -3849,10 +3850,16 @@ int __fastcall control_set_colour(BYTE* self, void* edx_unused, COLORREF colour)
 #define TEXT_INK            RGB(14, 14, 16)
 #define TEXT_GREEN          RGB(52, 199, 89)
 
-/* Online's tabs and the events each holds, as bits of race_kind; All holds those not known too. */
+/*
+    Online's tabs and the events each holds, as bits of race_kind; All holds those not known too.
+    Local Network is the LAN screen's games: choosing it turns the screen's network to the game's
+    own TCP/IP, and choosing another turns it back to EOS's.
+*/
+#define ONLINE_ALL  -1
+#define ONLINE_LAN  -2
 static const struct { const char* name; int kinds; } online_tabs[] = {
-    { "TabAll", -1 }, { "TabRaces", 1 << 1 | 1 << 2 | 1 << 3 | 1 << 5 }, { "TabQuarry", 1 << 0 },
-    { "TabTag", 1 << 4 },
+    { "TabAll", ONLINE_ALL }, { "TabRaces", 1 << 1 | 1 << 2 | 1 << 3 | 1 << 5 }, { "TabQuarry", 1 << 0 },
+    { "TabTag", 1 << 4 }, { "TabLan", ONLINE_LAN },
 };
 #define ONLINE_TABS ((int) (sizeof online_tabs / sizeof online_tabs[0]))
 
@@ -3860,6 +3867,7 @@ static const char* event_names[ONLINE_EVENTS] = { "STUNT QUARRY", "BAJA", "NATIO
                                                   "ENDURO" };
 
 static int online_tab;                  /* the tab chosen */
+static int online_counts[sizeof online_tabs / sizeof online_tabs[0]];  /* each tab's games, -1 not known */
 static int online_cards[ONLINE_CARDS];  /* the session each card shows */
 static int online_card_count;
 
@@ -3910,9 +3918,20 @@ static void online_lobby_of(int session, online_lobby* lobby)
     lstrcpynA(lobby->host, session_name(session), sizeof lobby->host);
 }
 
+/* Whether a tab's games are EOS's (on the LAN screen none are). */
+static BOOL online_tab_internet(int tab)
+{
+    return online_screen && online_tabs[tab].kinds != ONLINE_LAN;
+}
+
+/* Whether a game of the network now in use, of `kind`, is one of a tab's. */
 static BOOL online_in_tab(int kind, int tab)
 {
-    return online_tabs[tab].kinds == -1 || (kind >= 0 && (online_tabs[tab].kinds >> kind & 1));
+    int kinds = online_tabs[tab].kinds;
+
+    if (online_tab_internet(tab) != online_internet)
+        return FALSE;
+    return kinds == ONLINE_ALL || kinds == ONLINE_LAN || (kind >= 0 && (kinds >> kind & 1));
 }
 
 /* A lobby's title: its track, or its host's name when the host has not set one up yet. */
@@ -3962,6 +3981,10 @@ static void online_clear_detail(BYTE* self)
         online_write(self, "", TEXT_PAPER, texts[k], 0);
     for (k = 0; k < ONLINE_RIDERS; k++)
         online_write(self, "", TEXT_PAPER, "TxtRider%d", k);
+    for (k = 0; k < 4; k++) {
+        online_write(self, "", TEXT_ORANGE, "TxtChatName%d", k);
+        online_write(self, "", TEXT_PAPER, "TxtChatText%d", k);
+    }
 }
 
 static void online_fill_detail(BYTE* self, int session)
@@ -4005,6 +4028,11 @@ static void online_fill_detail(BYTE* self, int session)
     if (lobby.most)
         wsprintfA(words, "%d", lobby.most);
     online_write(self, words, TEXT_PAPER, "TxtDetailMost", 0);
+    for (k = 0; k < 4; k++) {
+        capitals(words, lobby.chat[k].name, sizeof words);
+        online_write(self, words, TEXT_ORANGE, "TxtChatName%d", k);
+        online_write(self, lobby.chat[k].text, TEXT_PAPER, "TxtChatText%d", k);
+    }
 }
 
 static void online_hide_card(BYTE* self, int card)
@@ -4055,7 +4083,6 @@ static void online_fill(BYTE* self)
 {
     BYTE* list = dialog_find_control(self, NULL, "LstSessions", 0);
     int chosen = list ? list_selected(list) : -1;
-    int counts[ONLINE_TABS] = { 0 };
     int state = online_internet ? eos_state() : 1;
     BOOL chosen_shown = FALSE;
     online_lobby lobby;
@@ -4063,10 +4090,13 @@ static void online_fill(BYTE* self)
     int i, t;
 
     online_card_count = 0;
+    for (t = 0; t < ONLINE_TABS; t++)
+        if (online_tab_internet(t) == online_internet)
+            online_counts[t] = 0;
     for (i = 0; i < sessions_found; i++) {
         online_lobby_of(i, &lobby);
         for (t = 0; t < ONLINE_TABS; t++)
-            counts[t] += online_in_tab(lobby.kind, t);
+            online_counts[t] += online_in_tab(lobby.kind, t);
         if (online_in_tab(lobby.kind, online_tab) && online_card_count < ONLINE_CARDS) {
             chosen_shown |= i == chosen;
             online_cards[online_card_count++] = i;
@@ -4085,7 +4115,9 @@ static void online_fill(BYTE* self)
         wsprintfA(name, "%sOn", online_tabs[t].name);
         online_show(self, t == online_tab, name, 0, 0);
         wsprintfA(name, "%sCount", online_tabs[t].name);
-        wsprintfA(words, "%d", counts[t]);
+        words[0] = 0;
+        if (online_counts[t] >= 0)
+            wsprintfA(words, "%d", online_counts[t]);
         online_write(self, words, t == online_tab ? TEXT_INK : TEXT_ORANGE, name, 0);
     }
     for (i = 0; i < ONLINE_CARDS; i++) {
@@ -4098,7 +4130,9 @@ static void online_fill(BYTE* self)
     }
     online_fill_detail(self, chosen);
 
-    if (state < 0)
+    if (online_failed)
+        lstrcpyA(words, online_internet ? "ONLINE PLAY WOULD NOT START" : "THE NETWORK WOULD NOT START");
+    else if (state < 0)
         lstrcpyA(words, "EPIC ONLINE SERVICES COULD NOT BE REACHED");
     else if (state == 0)
         lstrcpyA(words, "SIGNING IN...");
@@ -4129,6 +4163,12 @@ static BOOL online_clicked(BYTE* self, ui_event* event)
         wsprintfA(name, "%sOn", online_tabs[i].name);
         if (clicked(event, online_tabs[i].name) || clicked(event, name)) {
             online_tab = i;
+            if (online_tab_internet(i) != online_internet) {
+                online_internet = online_tab_internet(i);
+                sessions_found = 0;
+                list_clear(dialog_find_control(self, NULL, "LstSessions", 0));
+                online_failed = !online_connect();
+            }
             online_fill(self);
             return TRUE;
         }
@@ -4138,30 +4178,22 @@ static BOOL online_clicked(BYTE* self, ui_event* event)
 
 static void __fastcall online_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
+    int t;
+
     if (event->type == EVENT_OPEN) {
         online_tab = 0;
+        for (t = 0; t < ONLINE_TABS; t++)
+            online_counts[t] = -1;
         online_failed = !online_connect();
-        if (online_failed) {
-            int card;
-
-            online_card_count = 0;
-            for (card = 0; card < ONLINE_CARDS; card++)
-                online_hide_card(self, card);
-            online_clear_detail(self);
-            online_write(self, online_internet ? "ONLINE PLAY WOULD NOT START" : "THE NETWORK WOULD NOT START",
-                         TEXT_PAPER, "TxtEmpty", 0);
-            return;
-        }
-    }
-    if (online_failed) {
-        if (event->type == EVENT_CLICK && clicked(event, "ButCancel")) {
-            dialog_end(self, NULL, 0);
-            event->e = 1;
-        }
-        return;
     }
     if (event->type == EVENT_CLICK && online_clicked(self, event)) {
         event->e = 1;
+        return;
+    }
+    /* With no network there is nothing to find, host or join: Back works, and the tabs try again. */
+    if (online_failed && (event->type == EVENT_TIMER
+                          || (event->type == EVENT_CLICK && !clicked(event, "ButCancel")))) {
+        online_fill(self);
         return;
     }
     sessions_handle(self, edx_unused, event);
@@ -4178,6 +4210,7 @@ static void online_open(BYTE* self, BOOL internet)
             online_vtable[i] = CREDITS_VTABLE[i];
         online_vtable[0x74 / 4] = (void*) online_handle;
     }
+    online_screen = internet;
     online_internet = internet;
     box_open(self, dialog_new(0x7F5C, 0, internet ? "Online.dtm" : "Lan.dtm", online_vtable), 0, 4, 0);
 }

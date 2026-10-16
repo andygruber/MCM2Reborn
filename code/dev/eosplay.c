@@ -136,6 +136,7 @@ static struct {
     DWORD  session_count;
     DWORD  found_at;                    /* when they came, by timeGetTime; 0 before */
     ask_settings published;             /* the race last put on our lobby */
+    ask_chat chat;                      /* our lobby's newest chat, put on it too */
 
     struct { DWORD id; char name[EOS_NAME_SIZE]; } peers[16];
     int    peer_count;
@@ -753,6 +754,7 @@ static HRESULT WINAPI dp_open(dplay* self, const dp_session* session, DWORD flag
             return DPERR_GENERIC;
         eos.hosting = TRUE;
         memset(&eos.published, 0xFF, sizeof eos.published);     /* published again */
+        memset(&eos.chat, 0, sizeof eos.chat);
         return DP_OK;
     }
     if (flags & DPOPEN_JOIN) {
@@ -1015,10 +1017,38 @@ BOOL eos_lobby(const GUID* instance, online_lobby* lobby)
         copy(lobby->track, found->race.track, sizeof lobby->track);
         for (k = 0; k < EOS_RIDERS_MOST; k++)
             copy(lobby->riders[k], found->riders[k], sizeof lobby->riders[k]);
+        for (k = 0; k < EOS_CHAT_LINES; k++) {
+            copy(lobby->chat[k].name, found->chat.lines[k].name, sizeof lobby->chat[k].name);
+            copy(lobby->chat[k].text, found->chat.lines[k].text, sizeof lobby->chat[k].text);
+        }
         break;
     }
     LeaveCriticalSection(&eos.lock);
     return i < eos.session_count;
+}
+
+/* Lobby attributes are UTF-8: the game's own characters past ASCII become '?'. */
+static void ascii_copy(char* to, const char* from, int size)
+{
+    int i;
+
+    for (i = 0; i < size - 1 && from[i]; i++)
+        to[i] = (BYTE) from[i] < 0x80 ? from[i] : '?';
+    to[i] = 0;
+}
+
+void eos_chat(const char* name, const char* text)
+{
+    chat_line* newest = &eos.chat.lines[EOS_CHAT_LINES - 1];
+    int i;
+
+    if (!eos.online || !eos.hosting)
+        return;
+    for (i = 0; i < EOS_CHAT_LINES - 1; i++)
+        eos.chat.lines[i] = eos.chat.lines[i + 1];
+    ascii_copy(newest->name, name, sizeof newest->name);
+    ascii_copy(newest->text, text, sizeof newest->text);
+    ask(ASK_CHAT, &eos.chat, sizeof eos.chat, NULL, 0);
 }
 
 int eos_found_ago(void)

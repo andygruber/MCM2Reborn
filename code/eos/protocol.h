@@ -18,7 +18,7 @@
 #define EOS_NAME_SIZE       32          /* a rider's name, as the lobby shows it */
 #define EOS_LOBBY_ID_SIZE   64          /* an EOS lobby id, as text */
 #define EOS_SESSION_NAME_SIZE 64
-#define EOS_SESSIONS_MOST   16          /* the most a search returns (a TELL_SESSIONS fits a frame) */
+#define EOS_SESSIONS_MOST   8           /* the most a search returns (a TELL_SESSIONS fits a frame) */
 #define EOS_DATA_MOST       0x2000      /* the largest message the game sends is 0x8DC bytes */
 #define EOS_RIDERS_MOST     8           /* a lobby's members */
 
@@ -35,6 +35,7 @@ enum {
     ASK_CLOSED,         /* no fields: joining is closed (the race has started) or open again */
     ASK_OPENED,
     ASK_SETTINGS,       /* ask_settings: the race the host has set up, for the lobby to show */
+    ASK_CHAT,           /* ask_chat: the host's lobby chat, its newest lines, for the lobby to show */
 };
 
 typedef struct ask_host {
@@ -58,6 +59,17 @@ typedef struct ask_settings {
     uint32_t trees;                         /* tree collision on */
     char     track[EOS_TRACK_SIZE];
 } ask_settings;
+
+#define EOS_CHAT_LINES 4
+
+typedef struct chat_line {
+    char name[24];
+    char text[76];
+} chat_line;
+
+typedef struct ask_chat {
+    chat_line lines[EOS_CHAT_LINES];        /* the oldest first; a line with no name is none */
+} ask_chat;
 
 typedef struct ask_send {
     uint32_t to;                            /* a peer, or 0 for every one */
@@ -94,6 +106,7 @@ typedef struct tell_session {
     char     host[EOS_NAME_SIZE];
     char     riders[EOS_RIDERS_MOST][EOS_NAME_SIZE];    /* its members' names, the host's first */
     ask_settings race;                      /* kind -1 until the host has published it */
+    ask_chat chat;
 } tell_session;
 
 /* A search's answer fits one frame. */

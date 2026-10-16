@@ -112,10 +112,14 @@ typedef struct online_lobby {
     char host[32];
     char track[48];
     char riders[8][32];                     /* the host's first; empty ones are open */
+    struct { char name[24], text[76]; } chat[4];    /* the host's lobby chat, the oldest first */
 } online_lobby;
 
 /* The lobby a session's instance GUID stands for: FALSE when it is not one of EOS's. */
 BOOL eos_lobby(const GUID* instance, online_lobby* lobby);
+
+/* A line of the lobby's chat as the game shows it: hosting, it goes on the lobby for searches. */
+void eos_chat(const char* name, const char* text);
 
 /* Seconds since the lobbies were last found, or -1 before they ever were. */
 int  eos_found_ago(void);

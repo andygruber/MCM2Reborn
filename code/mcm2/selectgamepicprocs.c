@@ -1081,6 +1081,9 @@ void __fastcall chat_show(BYTE* self, void* edx_unused, int player, const char* 
     if (player != -1) {
         if (!game_FUN_004b0e10(game_net, NULL, player, name))
             return;
+#ifdef OPENMCM2_DEV
+        eos_chat(name, text);
+#endif
         game_FUN_0053a11f(line, CHAT_LINE, name, text);
         if (!FIELD(game_main, 0x538, DWORD)) {
             if (net_me == player) {

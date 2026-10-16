@@ -33,6 +33,7 @@
 #define ATTR_LAPS       "LAPS"
 #define ATTR_TREES      "TREES"
 #define ATTR_TRACK      "TRACK"
+#define ATTR_CHAT       "CHAT"              /* its lines, each a name, a tab, the text and a new line */
 #define SOCKET_NAME     "MCM2"
 #define CHANNEL_SMALL   0                   /* a whole packet, unreliable */
 #define CHANNEL_PIECES  1                   /* a larger one's pieces, reliable and in order */
@@ -491,7 +492,42 @@ static void EOS_CALL on_updated(const EOS_Lobby_UpdateLobbyCallbackInfo* info)
         say("the lobby would not change: %s", EOS_EResult_ToString(info->ResultCode));
 }
 
-static void lobby_change(const char* name, int closed, const ask_settings* race)
+/* The chat's lines as one attribute's text, into `to` (big enough for all of them). */
+static void chat_encode(const ask_chat* chat, char* to)
+{
+    int i;
+
+    to[0] = 0;
+    for (i = 0; i < EOS_CHAT_LINES; i++) {
+        const chat_line* line = &chat->lines[i];
+
+        if (!line->name[0])
+            continue;
+        strncat(to, line->name, sizeof line->name - 1);
+        strcat(to, "\t");
+        strncat(to, line->text, sizeof line->text - 1);
+        strcat(to, "\n");
+    }
+}
+
+static void chat_decode(const char* from, ask_chat* chat)
+{
+    int i;
+
+    memset(chat, 0, sizeof *chat);
+    for (i = 0; i < EOS_CHAT_LINES && *from; i++) {
+        const char* tab = strchr(from, '\t');
+        const char* end = strchr(from, '\n');
+
+        if (!tab || !end || tab > end)
+            break;
+        memcpy(chat->lines[i].name, from, min(tab - from, (ptrdiff_t) sizeof chat->lines[i].name - 1));
+        memcpy(chat->lines[i].text, tab + 1, min(end - tab - 1, (ptrdiff_t) sizeof chat->lines[i].text - 1));
+        from = end + 1;
+    }
+}
+
+static void lobby_change(const char* name, int closed, const ask_settings* race, const ask_chat* chat)
 {
     EOS_Lobby_UpdateLobbyModificationOptions options = { EOS_LOBBY_UPDATELOBBYMODIFICATION_API_LATEST, self,
                                                          lobby_id };
@@ -512,6 +548,12 @@ static void lobby_change(const char* name, int closed, const ask_settings* race)
         set_attribute(change, ATTR_LAPS, NULL, race->laps);
         set_attribute(change, ATTR_TREES, NULL, race->trees);
         set_attribute(change, ATTR_TRACK, track, 0);
+    }
+    if (chat) {
+        char text[EOS_CHAT_LINES * sizeof(chat_line) + 1];
+
+        chat_encode(chat, text);
+        set_attribute(change, ATTR_CHAT, text, 0);
     }
     {
         EOS_Lobby_UpdateLobbyOptions update = { EOS_LOBBY_UPDATELOBBY_API_LATEST, change };
@@ -555,7 +597,7 @@ static void EOS_CALL on_created(const EOS_Lobby_CreateLobbyCallbackInfo* info)
         return;
     }
     strncpy(lobby_id, info->LobbyId, sizeof lobby_id - 1);
-    lobby_change(hosting_name, 0, NULL);
+    lobby_change(hosting_name, 0, NULL, NULL);
     name_in_lobby();
     strncpy(lobby.lobby, lobby_id, sizeof lobby.lobby - 1);
     lobby.owner = number_of(self);
@@ -665,6 +707,12 @@ static void read_session(EOS_HLobbyDetails details, tell_session* session)
     session->race.laps = (uint32_t) number_attribute(details, ATTR_LAPS, 0);
     session->race.trees = number_attribute(details, ATTR_TREES, 0) != 0;
     text_attribute(details, ATTR_TRACK, session->race.track, sizeof session->race.track);
+    {
+        char chat[EOS_CHAT_LINES * sizeof(chat_line) + 1];
+
+        text_attribute(details, ATTR_CHAT, chat, sizeof chat);
+        chat_decode(chat, &session->chat);
+    }
     read_riders(details, session);
 }
 
@@ -810,11 +858,15 @@ static void answer(struct ask* ask)
         break;
     case ASK_CLOSED:
     case ASK_OPENED:
-        lobby_change(NULL, ask->kind == ASK_CLOSED, NULL);
+        lobby_change(NULL, ask->kind == ASK_CLOSED, NULL, NULL);
         break;
     case ASK_SETTINGS:
         if (ask->size >= sizeof(ask_settings))
-            lobby_change(NULL, -1, (const ask_settings*) ask->fields);
+            lobby_change(NULL, -1, (const ask_settings*) ask->fields, NULL);
+        break;
+    case ASK_CHAT:
+        if (ask->size >= sizeof(ask_chat))
+            lobby_change(NULL, -1, NULL, (const ask_chat*) ask->fields);
         break;
     }
 }
