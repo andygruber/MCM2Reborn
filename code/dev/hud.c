@@ -15,10 +15,10 @@
 #include "dev.h"
 #include "gl.h"
 #include "hud.h"
+#include "maths.h"
 
 #define BASE_H      1440.0f             /* the mockup's height, which its numbers are in */
 #define MARGIN      40.0f
-#define PI          3.14159265f
 
 typedef struct colour { float r, g, b, a; } colour;
 
@@ -36,44 +36,6 @@ static const colour SHADOW = { 0, 0, 0, 0.63f };
 
 static float g_scale;                   /* window pixels to a mockup pixel */
 static float g_width;                   /* the window's, in mockup pixels */
-
-/* ---- Numbers ---- */
-
-/* sin and cos without the CRT's: reduced to -pi..pi, then the series, near enough for drawing. */
-static float sine(float x)
-{
-    float x2, term, sum;
-    int k;
-
-    while (x > PI)
-        x -= 2 * PI;
-    while (x < -PI)
-        x += 2 * PI;
-    x2 = x * x;
-    term = sum = x;
-    for (k = 1; k < 8; k++) {
-        term *= -x2 / ((2 * k) * (2 * k + 1));
-        sum += term;
-    }
-    return sum;
-}
-
-static float cosine(float x)
-{
-    return sine(x + PI / 2);
-}
-
-static float square_root(float x)
-{
-    float r = x > 1 ? x : 1;
-    int k;
-
-    if (x <= 0)
-        return 0;
-    for (k = 0; k < 20; k++)
-        r = (r + x / r) / 2;
-    return r;
-}
 
 /* ---- Shapes, in mockup pixels ---- */
 
