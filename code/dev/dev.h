@@ -131,3 +131,7 @@ void eos_chat(const char* name, const char* text);
 
 /* Seconds since the lobbies were last found, or -1 before they ever were. */
 int  eos_found_ago(void);
+
+/* DirectInput's devices watched, so that what was held when the window lost the focus is let go
+   when it comes back (inputfix.c). */
+void inputfix_install(void);

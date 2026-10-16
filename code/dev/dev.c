@@ -90,6 +90,7 @@ void dev_install(void)
     log_line("dev build: graphics: vsync %d, anti-aliasing %dx, filtering %d", g_render.vsync,
              g_render.samples, g_render.filtering);
     eos_install();
+    inputfix_install();
 }
 
 void dev_graphics_save(void)
