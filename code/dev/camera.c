@@ -37,6 +37,9 @@
 #define cam_eye(c)      ((float*) ((c) + 0x170))
 #define cam_dir(c)      ((float*) ((c) + 0x17C))
 #define cam_roll(c)     FIELD(c, 0x194, float)
+#define cam_aspect(c)   FIELD(c, 0x19C, float)
+#define cam_view_w(c)   FIELD(c, 0x1A8, int)        /* the viewport's: x, y, w, h from +0x1A0 */
+#define cam_view_h(c)   FIELD(c, 0x1AC, int)
 #define cam_heading(c)  ((float*) ((c) + 0x29C))    /* the game's own, smoothed */
 
 /* KrustyBike. */
@@ -110,6 +113,42 @@ static void head_show(BYTE* bike)
     g_head = g_head_bike = NULL;
 }
 
+/*
+    The view's width across, in degrees, for a height of `high` degrees on this camera's screen.
+    The game's projection takes its field of view across and stretches it by the aspect.
+*/
+static float across_for_high(BYTE* camera, float high)
+{
+    float half = high * (PI / 360);
+
+    return 2 * arc_tangent2(sine(half) / cosine(half) * cam_aspect(camera), 1) * (180 / PI);
+}
+
+/*
+    The game made its 3D for a 4:3 screen, and on a wider one the renderer stretched it: a view
+    meant for 4:3 was far too tall (the first-person view at 140 degrees bent from the roof to the
+    bars). Each frame the camera's aspect is the picture's own, its viewport's width over height.
+*/
+static void aspect_true(BYTE* camera)
+{
+    static BOOL told;
+    int w = cam_view_w(camera), h = cam_view_h(camera);
+    float aspect;
+
+    if (w <= 0 || h <= 0)
+        return;
+    aspect = (float) w / h;
+    if (!told) {
+        log_line("camera: the game's aspect %d/1000, the picture's %dx%d (%d/1000)",
+                 (int) (cam_aspect(camera) * 1000), w, h, (int) (aspect * 1000));
+        told = TRUE;
+    }
+    if (cam_aspect(camera) != aspect) {
+        cam_aspect(camera) = aspect;
+        cam_rebuild(camera);
+    }
+}
+
 /* ---- Chase ---- */
 
 /*
@@ -121,7 +160,7 @@ static void head_show(BYTE* bike)
 #define CHASE_BACK      30.0f           /* feet behind the bike */
 #define CHASE_UP        11.0f           /* ...and above it */
 #define CHASE_AHEAD     8.0f            /* the camera looks this far past the bike: the rider stays put in the view */
-#define CHASE_FOV       80.0f
+#define CHASE_FOV_HIGH  55.0f           /* degrees from top to bottom: the same framing on any screen */
 
 static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
@@ -169,7 +208,7 @@ static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     dir[1] /= length;
     dir[2] /= length;
     game_FUN_0042f8d0(camera, NULL, eye, dir, up, &roll, NULL);
-    game_FUN_0042f850(camera, NULL, CHASE_FOV);
+    game_FUN_0042f850(camera, NULL, across_for_high(camera, CHASE_FOV_HIGH));
     cam_rebuild(camera);
 }
 
@@ -272,6 +311,8 @@ void camera_after_update(BYTE* camera, float dt)
     int mode = cam_mode(camera);
     BOOL begin;
 
+    if (dev_settings.menus_modern)
+        aspect_true(camera);
     if (!dev_settings.menus_modern || (mode != CHASE && mode != RIDER) || !bike || !cam_on_bike(camera)
         || cam_crashed(camera) || (event && FIELD(event, 0x18E, BYTE)) || dt <= 0) {
         head_show(bike);
