@@ -9,6 +9,10 @@
 
 #include "render.h"
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 #include <intrin.h>
 
 HRESULT unsupported(const char* method)
@@ -1005,6 +1009,9 @@ static HRESULT WINAPI v_SetTransform(IDirect3DDevice7* self, D3DTRANSFORMSTATETY
     if (!t)
         return unsupported("Device7::SetTransform of a texture or blend matrix");
     *t = *m;
+#ifdef OPENMCM2_DEV
+    camera_record_transform(type, (const float*) m);
+#endif
     return D3D_OK;
 }
 

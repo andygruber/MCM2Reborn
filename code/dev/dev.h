@@ -85,6 +85,10 @@ extern camera_options g_camera_options;
 
 void dev_camera_save(void);
 
+/* [trace] camera=1: every view and projection the game hands the renderer, into the camera's
+   frame-by-frame record (camera.c, camera-record.csv). `type` is D3DTRANSFORMSTATETYPE's. */
+void camera_record_transform(int type, const float* matrix);
+
 /* A line in the log, prefixed with its area ("screen", "event", ...). */
 void dev_trace(const char* area, const char* fmt, ...);
 

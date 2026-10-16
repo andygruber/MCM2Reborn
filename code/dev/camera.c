@@ -204,93 +204,354 @@ static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 /* ---- Rider ---- */
 
 /*
-    From just in front of the rider's face (from behind it, the helmet showed), looking the way
-    the bike points - so through whips the bars and the hands stay low in the view - a little
-    towards where it is going, with the bike's pitch and the player's pitch down at the bars. The
-    head is held as a neck holds it, its jolts softened. The player's settings (dev.h,
-    camera_options) give the view's width, how much of the lean the horizon takes, and how far the
-    lean turns the view into the corner.
+    The first-person view, ported from Open Unleashed's (MxaOnboardCamera.Apply, its "dynamic"
+    head mode, with its option meanings): from just in front of the rider's head, the eye's place
+    relative to the bike on a critically damped spring of 0.035 s; looking along the bike's going
+    - its velocity over the last 0.1 s laid flat to its "up" over the last 0.5 s (the bike's up on
+    the ground, the world's in the air), the bike's facing below 1 m/s and blended into the going
+    by 5 m/s - so through a whip the view keeps the line and the bike swings under it. Then rolled
+    by the lean times Tilt, turned by the corner anticipation, pitched down Pitch x 20 + 15
+    degrees. The rider is drawn but for the head, which the view is in.
 */
-#define RIDER_FORWARD   0.3f            /* feet in front of the head, which is not drawn */
-#define RIDER_UP        0.25f
+#define FT_TO_M         0.3048f
+#define STEP            0.002f          /* the averages' sample spacing, OU's Box */
+#define UP_SAMPLES      250             /* 0.5 s */
+#define VEL_SAMPLES     50              /* 0.1 s */
+#define HEAD_SMOOTHING  0.035f
+#define NEAR_PLANE      0.25f           /* feet: the game's 1 cut the bars and hands */
+
+static const float eye_offset[3] = { 0, 0.52f, 0.3f };     /* in the head's own axes */
+
+typedef struct box {                    /* OU's Box: the mean of a vector over a window */
+    float buf[UP_SAMPLES][3];
+    int   size, head;
+    float out[3];
+} box;
+
+static box   g_up = { { { 0 } }, UP_SAMPLES }, g_vel = { { { 0 } }, VEL_SAMPLES };
+static float g_up_src[3], g_vel_src[3], g_step_acc;
+
+static void box_fill(box* b, const float* v)
+{
+    int i, k;
+
+    for (i = 0; i < b->size; i++)
+        for (k = 0; k < 3; k++)
+            b->buf[i][k] = v[k];
+    b->head = 0;
+    for (k = 0; k < 3; k++)
+        b->out[k] = v[k];
+}
+
+/* n samples more, from a to b over `elapsed`, as OU's Box.Push. */
+static void box_push(box* b, const float* a, const float* to, int n, float acc0, float elapsed, float frac)
+{
+    float sum[3] = { 0, 0, 0 };
+    int i, k;
+
+    for (i = n - b->size + 1 > 1 ? n - b->size + 1 : 1; i <= n; i++) {
+        float t = (i * STEP - acc0) / elapsed;
+
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        for (k = 0; k < 3; k++)
+            b->buf[b->head][k] = a[k] + (to[k] - a[k]) * t;
+        b->head = (b->head + 1) % b->size;
+    }
+    for (i = 0; i < b->size; i++)
+        for (k = 0; k < 3; k++)
+            sum[k] += b->buf[i][k];
+    for (k = 0; k < 3; k++)
+        b->out[k] = (sum[k] + frac * (to[k] - b->buf[b->head][k])) / b->size;
+}
+
+static float dot3(const float* a, const float* b)
+{
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static void cross3(const float* a, const float* b, float* out)
+{
+    float c[3] = { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+
+    out[0] = c[0];
+    out[1] = c[1];
+    out[2] = c[2];
+}
+
+static float normalise(float* v)
+{
+    float length = square_root(dot3(v, v));
+
+    if (length > 1e-9f) {
+        v[0] /= length;
+        v[1] /= length;
+        v[2] /= length;
+    }
+    return length;
+}
+
+/* The bike's body frame's world axes (scene frame rows at +0xF8: x, y, z). */
+#define bike_body(b)    FIELD(b, 0x3BC, BYTE*)
+#define frame_axis(f, n) ((const float*) ((f) + 0xF8 + (n) * 0x10))
+
+/* The averages, fed with the time since the last frame (OU's UpdateFilters). */
+static void filters_update(const float* up_now, const float* velocity, float dt, BOOL begin)
+{
+    float acc0 = g_step_acc;
+    int n, k;
+
+    if (begin) {
+        box_fill(&g_up, up_now);
+        box_fill(&g_vel, velocity);
+        for (k = 0; k < 3; k++) {
+            g_up_src[k] = up_now[k];
+            g_vel_src[k] = velocity[k];
+        }
+        g_step_acc = 0;
+        return;
+    }
+    g_step_acc += dt;
+    n = (int) ((g_step_acc + 1e-6f) / STEP);
+    g_step_acc = g_step_acc - n * STEP > 0 ? g_step_acc - n * STEP : 0;
+    box_push(&g_up, g_up_src, up_now, n, acc0, dt, g_step_acc / STEP);
+    box_push(&g_vel, g_vel_src, velocity, n, acc0, dt, g_step_acc / STEP);
+    for (k = 0; k < 3; k++) {
+        g_up_src[k] = up_now[k];
+        g_vel_src[k] = velocity[k];
+    }
+}
 
 static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
+    const camera_options* o = &g_camera_options;
     const float* p = bike_pos(bike);
     const float* v = bike_vel(bike);
-    const float* f = bike_forward(bike);
-    float speed = flat_speed(v);
-    float yaw_bike = arc_tangent2(f[0], f[2]);
-    float yaw = yaw_bike, pitch, roll, eye[3], dir[3], up[3] = { 0, 1, 0 }, head[3];
+    BYTE* body = bike_body(bike);
+    float world_up[3] = { 0, 1, 0 };
+    float bike_right[3], bike_up[3], bike_fwd[3], head[3], head_x[3], head_y[3], head_z[3];
+    float up[3], forward[3], right[3], flat[3], eye_world[3], rel[3], eye[3], dir[3], view_up[3];
+    float speed_m, lean_deg, yaw, pitch, roll, fov, cy, sy, cp, sp, cr, sr, local[3];
+    BYTE* rider_model = bike_rider(bike) ? rider_frame(bike_rider(bike)) : NULL;
+    BYTE* head_frame = rider_model ? game_FUN_00502970(rider_model, NULL, "Head") : NULL;
     int k;
 
-    const camera_options* o = &g_camera_options;
-    float lean = cam_roll(camera);              /* the game's Rider Cam's roll: the bike's lean */
-    float fov = (float) (o->fov < 60 ? 60 : o->fov > 160 ? 160 : o->fov);
-
-    cam_head(camera, head);
-    if (speed > 10)
-        yaw = yaw_bike + angle_wrap(arc_tangent2(v[0], v[2]) - yaw_bike) * 0.3f;
-    if (o->corner == 1) {                       /* into the corner by the lean, as far as the setting */
-        float into = lean * (180 / PI) / 50;
-
-        yaw += (into < -1 ? -1 : into > 1 ? 1 : into) * o->lean_heading / 10.0f * (PI / 180);
+    if (!body || !head_frame)
+        return;
+    for (k = 0; k < 3; k++) {
+        bike_right[k] = frame_axis(body, 0)[k];
+        bike_up[k] = frame_axis(body, 1)[k];
+        bike_fwd[k] = bike_forward(bike)[k];
+        head_x[k] = frame_axis(head_frame, 0)[k];
+        head_y[k] = frame_axis(head_frame, 1)[k];
+        head_z[k] = frame_axis(head_frame, 2)[k];
     }
-    /* Up and down with the way the bike goes, half of it, never with its nose: following the
-       bike's pitch, the wide view lurched on every face, landing and whip. */
-    pitch = (speed > 10 ? arc_tangent2(v[1], speed) * 0.5f : 0) - (15 + o->pitch * 20 / 100.0f) * (PI / 180);
-    roll = lean * o->tilt / 100.0f;
+    normalise(bike_up);
+    normalise(bike_fwd);
+    cam_head(camera, head);
 
-    if (begin) {
+    /* The eye: just in front of the head, in its own axes; its place relative to the bike, in
+       the bike's axes, on the 0.035 s spring. */
+    for (k = 0; k < 3; k++)
+        eye_world[k] = head[k] + head_x[k] * eye_offset[0] + head_y[k] * eye_offset[1] + head_z[k] * eye_offset[2]
+                       - p[k];
+    rel[0] = dot3(eye_world, bike_right);
+    rel[1] = dot3(eye_world, bike_up);
+    rel[2] = dot3(eye_world, bike_fwd);
+    filters_update(bike_air(bike) ? world_up : bike_up, v, dt, begin);
+    if (begin)
         for (k = 0; k < 3; k++) {
-            cam.head[k] = head[k] - p[k];
+            cam.head[k] = rel[k];
             cam.head_speed[k] = 0;
         }
-        cam.yaw = yaw;
-        cam.pitch = pitch;
-        cam.roll = roll;
-        cam.yaw_speed = cam.pitch_speed = cam.roll_speed = 0;
-    }
-    for (k = 0; k < 3; k++)                     /* the neck: the head's jolts softened */
-        spring(&cam.head[k], &cam.head_speed[k], head[k] - p[k], 12, dt);
-    spring_angle(&cam.yaw, &cam.yaw_speed, yaw, 10, dt);
-    spring(&cam.pitch, &cam.pitch_speed, pitch, 3, dt);
-    spring(&cam.roll, &cam.roll_speed, roll, 6, dt);
+    else
+        for (k = 0; k < 3; k++)
+            spring(&cam.head[k], &cam.head_speed[k], rel[k], 1 / HEAD_SMOOTHING, dt);
 
-    dir[0] = sine(cam.yaw) * cosine(cam.pitch);
-    dir[1] = sine(cam.pitch);
-    dir[2] = cosine(cam.yaw) * cosine(cam.pitch);
-    eye[0] = p[0] + cam.head[0] + sine(cam.yaw) * RIDER_FORWARD;
-    eye[1] = p[1] + cam.head[1] + RIDER_UP;
-    eye[2] = p[2] + cam.head[2] + cosine(cam.yaw) * RIDER_FORWARD;
-    game_FUN_0042f8d0(camera, NULL, eye, dir, up, &cam.roll, NULL);
+    /* Its look: the going, flat to the averaged up. */
+    for (k = 0; k < 3; k++)
+        up[k] = g_up.out[k];
+    if (normalise(up) < 1e-3f)
+        up[0] = up[2] = 0, up[1] = 1;
+    for (k = 0; k < 3; k++)
+        flat[k] = g_vel.out[k] - up[k] * dot3(g_vel.out, up);
+    speed_m = square_root(dot3(flat, flat)) * FT_TO_M;
+    for (k = 0; k < 3; k++)
+        forward[k] = bike_fwd[k];
+    if (speed_m >= 5) {
+        for (k = 0; k < 3; k++)
+            forward[k] = flat[k];
+        normalise(forward);
+    } else if (speed_m > 1) {
+        float t = (speed_m - 1) * 0.25f;
+
+        normalise(flat);
+        for (k = 0; k < 3; k++)
+            forward[k] = bike_fwd[k] * (1 - t) + flat[k] * t;
+        normalise(forward);
+    }
+    cross3(up, forward, right);
+    right[1] = 0;
+    if (dot3(right, right) < 1e-8f)
+        cross3(bike_up, forward, right);
+    normalise(right);
+    cross3(forward, right, up);
+    normalise(up);
+    if (dot3(bike_up, up) < -0.5f)
+        for (k = 0; k < 3; k++) {
+            up[k] = -up[k];
+            right[k] = -right[k];
+        }
+    cross3(right, up, forward);
+
+    /* The bike's lean, seen from the view: by Tilt, the roll; by the lean, the corner's turn. */
+    lean_deg = arc_tangent2(dot3(bike_up, right), dot3(bike_up, up)) * (180 / PI);
+    yaw = 0;
+    if (o->corner == 1) {
+        float into = lean_deg / 50;
+
+        yaw = (into < -1 ? -1 : into > 1 ? 1 : into) * o->lean_heading / 10.0f;
+        yaw = yaw < -60 ? -60 : yaw > 60 ? 60 : yaw;
+    }
+    if (begin) {
+        cam.yaw = yaw;
+        cam.yaw_speed = 0;
+    } else {
+        spring(&cam.yaw, &cam.yaw_speed, yaw, 8.333334f, dt);
+    }
+    pitch = (o->pitch * 20 / 100.0f + 15) * (PI / 180);    /* down */
+    roll = lean_deg * o->tilt / 100.0f * (PI / 180);
+    cy = cosine(cam.yaw * (PI / 180));
+    sy = sine(cam.yaw * (PI / 180));
+    cp = cosine(pitch);
+    sp = sine(pitch);
+    cr = cosine(-roll);
+    sr = sine(-roll);
+
+    /* forward' = basis * Rz(-roll) * Ry(yaw) * Rx(pitch) * (0, 0, 1); up' likewise of (0, 1, 0). */
+    local[0] = cp * sy;
+    local[1] = -sp;
+    local[2] = cp * cy;
+    {
+        float x = local[0] * cr - local[1] * sr, y = local[0] * sr + local[1] * cr;
+
+        for (k = 0; k < 3; k++)
+            dir[k] = right[k] * x + up[k] * y + forward[k] * local[2];
+    }
+    local[0] = sp * sy;
+    local[1] = cp;
+    local[2] = sp * cy;
+    {
+        float x = local[0] * cr - local[1] * sr, y = local[0] * sr + local[1] * cr;
+
+        for (k = 0; k < 3; k++)
+            view_up[k] = right[k] * x + up[k] * y + forward[k] * local[2];
+    }
+    for (k = 0; k < 3; k++)
+        eye[k] = p[k] + bike_right[k] * cam.head[0] + bike_up[k] * cam.head[1] + bike_fwd[k] * cam.head[2];
+
+    fov = (float) (o->fov < 60 ? 60 : o->fov > 160 ? 160 : o->fov);
+    {
+        float none = 0;
+
+        game_FUN_0042f8d0(camera, NULL, eye, dir, view_up, &none, NULL);
+    }
     game_FUN_0042f850(camera, NULL, fov);
+    FIELD(camera, 0x1BC, float) = NEAR_PLANE;
     cam_rebuild(camera);
     cam_show_rider(camera);
     head_hide(bike);
 }
 
-/* What the camera reads, twice a second ([trace] camera=1), to see which is wrong. */
-static void trace(BYTE* camera, BYTE* bike, float dt)
+/*
+    [trace] camera=1: a frame-by-frame record, camera-record.csv in the game's folder, to find
+    what jumps or flickers when the view warps. Each camera update writes a C line (the mode,
+    whether ours placed it, the bike and the camera as it was left), and each view or projection
+    the game then hands the renderer a T line, what is truly drawn with. Numbers are hundredths.
+*/
+static HANDLE g_record = INVALID_HANDLE_VALUE;
+
+static void record(const char* line)
 {
-    static DWORD last;
-    const float* p = bike_pos(bike);
-    const float* v = bike_vel(bike);
-    const float* f = bike_forward(bike);
+    DWORD done;
+
+    if (g_record == INVALID_HANDLE_VALUE) {
+        g_record = CreateFileA("camera-record.csv", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+                               FILE_ATTRIBUTE_NORMAL, NULL);
+        if (g_record == INVALID_HANDLE_VALUE)
+            return;
+        record("kind,ms,mode,ours,air,bike x,bike y,bike z,eye x,eye y,eye z,dir x,dir y,dir z,fov,aspect,dt,"
+               "fwd88 x,fwd88 y,fwd88 z,body up x,body up y,body up z,body z x,body z y,body z z\r\n");
+    }
+    WriteFile(g_record, line, lstrlenA(line), &done, NULL);
+}
+
+static int hundredths(float x)
+{
+    return (int) (x * 100);
+}
+
+static void record_update(BYTE* camera, BYTE* bike, int ours, float dt)
+{
+    char line[384];
+    const float* p = bike ? bike_pos(bike) : NULL;
+    BYTE* body = bike ? bike_body(bike) : NULL;
+    const float* f = bike ? bike_forward(bike) : NULL;
+    const float zero[3] = { 0, 0, 0 };
+    const float* bu = body ? frame_axis(body, 1) : zero;
+    const float* bz = body ? frame_axis(body, 2) : zero;
+    int n;
     const float* e = cam_eye(camera);
     const float* d = cam_dir(camera);
-    float head[3];
 
-    if (!dev_settings.trace_camera || timeGetTime() - last < 500)
+    if (!dev_settings.trace_camera)
         return;
-    last = timeGetTime();
-    cam_head(camera, head);
-    dev_trace("camera", "mode %d dt %d ms air %d | bike %d %d %d | vel %d %d %d | fwd88 %d %d %d | head %d %d %d"
-              " | game eye %d %d %d dir %d %d %d roll %d", cam_mode(camera), (int) (dt * 1000), bike_air(bike),
-              (int) p[0], (int) p[1], (int) p[2], (int) v[0], (int) v[1], (int) v[2],
-              (int) (f[0] * 100), (int) (f[1] * 100), (int) (f[2] * 100),
-              (int) head[0], (int) head[1], (int) head[2], (int) e[0], (int) e[1], (int) e[2],
-              (int) (d[0] * 100), (int) (d[1] * 100), (int) (d[2] * 100), (int) (cam_roll(camera) * 100));
+    n = wsprintfA(line, "C,%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", timeGetTime(), cam_mode(camera), ours,
+                  bike ? bike_air(bike) : 0, p ? hundredths(p[0]) : 0, p ? hundredths(p[1]) : 0, p ? hundredths(p[2]) : 0,
+                  hundredths(e[0]), hundredths(e[1]), hundredths(e[2]), hundredths(d[0]), hundredths(d[1]), hundredths(d[2]),
+                  hundredths(FIELD(camera, 0x16C, float)), hundredths(cam_aspect(camera)), hundredths(dt * 1000));
+    wsprintfA(line + n, ",%d,%d,%d,%d,%d,%d,%d,%d,%d\r\n", f ? hundredths(f[0]) : 0, f ? hundredths(f[1]) : 0,
+              f ? hundredths(f[2]) : 0, hundredths(bu[0]), hundredths(bu[1]), hundredths(bu[2]), hundredths(bz[0]),
+              hundredths(bz[1]), hundredths(bz[2]));
+    record(line);
+}
+
+void camera_record_transform(int type, const float* m)
+{
+    char line[256];
+
+    if (!dev_settings.trace_camera || (type != 2 && type != 3))     /* VIEW, PROJECTION */
+        return;
+    /* A view: its rows' z (the look) and the translation; a projection: its x and y scales. */
+    wsprintfA(line, "T,%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d\r\n", timeGetTime(), type,
+              hundredths(m[2]), hundredths(m[6]), hundredths(m[10]), hundredths(m[12]), hundredths(m[13]),
+              hundredths(m[14]), hundredths(m[0]), hundredths(m[5]));
+    record(line);
+}
+
+/* The rider's model, every frame in it by name and depth, once: what there is to hide. */
+static void rider_frames(BYTE* bike)
+{
+    static BOOL told;
+    BYTE* rider = bike_rider(bike);
+    BYTE* stack[64];
+    int depth[64], n = 0;
+
+    if (told || !dev_settings.trace_camera || !rider || !rider_frame(rider))
+        return;
+    told = TRUE;
+    stack[n] = rider_frame(rider);
+    depth[n++] = 0;
+    while (n > 0) {
+        BYTE* f = stack[--n];
+        int d = depth[n];
+        BYTE* child;
+
+        log_line("camera: rider frame %*s%s%s", d * 2, "", (const char*) f + 0x38, frame_hidden(f) ? " (hidden)" : "");
+        for (child = FIELD(f, 0x144, BYTE*); child && n < 64; child = FIELD(child, 0x140, BYTE*)) {
+            stack[n] = child;
+            depth[n++] = d + 1;
+        }
+    }
 }
 
 /* ---- Each frame ---- */
@@ -307,20 +568,27 @@ void camera_after_update(BYTE* camera, float dt)
     if (!dev_settings.menus_modern || (mode != CHASE && mode != RIDER) || !bike || !cam_on_bike(camera)
         || cam_crashed(camera) || (event && FIELD(event, 0x18E, BYTE)) || dt <= 0) {
         head_show(bike);
+        if (FIELD(camera, 0x1BC, float) == NEAR_PLANE)
+            FIELD(camera, 0x1BC, float) = 1;
         cam.camera = NULL;              /* the game's camera: ours begins anew after */
+        record_update(camera, bike, 0, dt);
         return;
     }
-    if (mode != RIDER)
+    if (mode != RIDER) {
         head_show(bike);
+        FIELD(camera, 0x1BC, float) = 1;    /* the game's near plane, where the depth is fine */
+    }
     begin = camera != cam.camera || bike != cam.bike || mode != cam.mode;
     cam.camera = camera;
     cam.bike = bike;
     cam.mode = mode;
     if (dt > 0.1f)
         dt = 0.1f;
-    trace(camera, bike, dt);
-    if (mode == CHASE)
+    if (mode == CHASE) {
         chase(camera, bike, dt, begin);
-    else
+    } else {
         rider(camera, bike, dt, begin);
+        rider_frames(bike);
+    }
+    record_update(camera, bike, 1, dt);
 }
