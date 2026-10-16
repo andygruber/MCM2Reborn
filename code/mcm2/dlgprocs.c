@@ -3803,8 +3803,8 @@ static void user_panel_after_profile(BYTE* self)
     MCM2:Reborn's multiplayer is LAN or Internet. LAN is TCP/IP with no address, which looks for
     games on the local network. Internet is the same sessions screen over Epic Online Services
     (code/dev/eosplay.c): the races hosted anywhere are listed, and Host and Join work as on LAN.
+    TRUE when the click was one of them.
 */
-/* The multiplayer panel's LAN and Internet. TRUE when the click was one of them. */
 static BOOL multi_clicked(ui_event* event)
 {
     if (clicked(event, BUT_TCP) || clicked(event, "ButInternet")) {

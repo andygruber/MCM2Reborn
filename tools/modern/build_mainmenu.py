@@ -49,7 +49,10 @@ NAME = (1936, 1124, RIGHT - 32, 1196)               # the rider's name in it, th
 MULTI = ("MenuMultiAnimation", (1240, 556, 2000, 556 + 88 + 2 * 74 + 24), "MULTIPLAYER",
          [("ButTCP", "LAN"), ("ButInternet", "INTERNET")])
 GONE = ["ButIPX", "ButZone", "ButCable", "ButModem"]
-ADDED = {"ButInternet": {"Type": "BUTTON", "Anchor": "MenuMultiAnimation", "RelAnchor": "1"}}
+# Set as LAN's are: shown, after it in the tab order, its sounds.
+ADDED = {"ButInternet": {"Type": "BUTTON", "Anchor": "MenuMultiAnimation", "RelAnchor": "1",
+                         "TabIndex": "21", "Show": "-1'True", "SoundPush": '"Beep"',
+                         "SoundFocus": '"Beep09"'}}
 USER = ("MenuUserAnimation", (1904, 390, RIGHT, 1030), "RIDER PROFILES",
         [("ButNewProfile", "NEW"), ("ButLoadProfile", "LOAD"), ("ButRemoveProfile", "REMOVE"),
          ("ButCancelProfile", "CLOSE")])

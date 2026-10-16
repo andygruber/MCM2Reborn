@@ -373,8 +373,10 @@ static BOOL helper_start(void)
 
     if (eos.pipe && !eos.broken)
         return TRUE;
-    if (!create_pipe || !connect_pipe || !create_process || !process_id || !eos.overlapped_result)
+    if (!create_pipe || !connect_pipe || !create_process || !process_id || !eos.overlapped_result) {
+        log_line("eos: kernel32 is missing what starting " HELPER " needs");
         return FALSE;
+    }
     if (eos.pipe) {                     /* a helper that stopped: start another */
         CloseHandle(eos.pipe);
         eos.pipe = NULL;
@@ -961,9 +963,13 @@ BOOL eos_online(BOOL on)
 {
     if (on == eos.online)
         return TRUE;
+    log_line("eos: online play %s", on ? "on" : "off");
     if (on && !helper_start())
         return FALSE;
     eos.online = on;
     net_leave();
-    return net_make();
+    if (net_make())
+        return TRUE;
+    log_line("eos: the network would not start");
+    return FALSE;
 }
