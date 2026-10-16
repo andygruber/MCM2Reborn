@@ -69,6 +69,7 @@ static struct {
     BYTE* bike;
     int   mode;
     float yaw, yaw_speed;
+    float going[2], going_speed[2];     /* the chase: the bike's velocity across the ground, smoothed */
     float pitch, pitch_speed;
     float height, height_speed;     /* the chase eye's, above the world's zero */
     float roll, roll_speed;
@@ -126,17 +127,31 @@ static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
     const float* p = bike_pos(bike);
     const float* v = bike_vel(bike);
-    float speed = flat_speed(v);
-    float heading = speed > 8 ? arc_tangent2(v[0], v[2]) : arc_tangent2(bike_forward(bike)[0], bike_forward(bike)[2]);
+    float speed, heading;
     float eye[3], look[3], dir[3], up[3] = { 0, 1, 0 }, length, roll = 0;
+    int k;
 
+    /* The way the bike goes, smoothed first: raw, it jitters over every bump and slide, and the
+       view swung side to side twice as much as Unleashed's. */
+    if (begin)
+        for (k = 0; k < 2; k++) {
+            cam.going[k] = v[k * 2];
+            cam.going_speed[k] = 0;
+        }
+    for (k = 0; k < 2; k++)
+        spring(&cam.going[k], &cam.going_speed[k], v[k * 2], 5.0f, dt);
+    speed = square_root(cam.going[0] * cam.going[0] + cam.going[1] * cam.going[1]);
+    heading = speed > 8 ? arc_tangent2(cam.going[0], cam.going[1])
+                        : arc_tangent2(bike_forward(bike)[0], bike_forward(bike)[2]);
     if (begin) {
         cam.yaw = heading;
         cam.height = p[1] + CHASE_UP;
         cam.yaw_speed = cam.height_speed = 0;
     }
     spring_angle(&cam.yaw, &cam.yaw_speed, heading, 4.0f, dt);
-    spring(&cam.height, &cam.height_speed, p[1] + CHASE_UP, 6.0f, dt);
+    /* The height close behind the bike's, so the view rises and falls with the ground, as
+       Unleashed's does: held, it was stiff. */
+    spring(&cam.height, &cam.height_speed, p[1] + CHASE_UP, 12.0f, dt);
 
     eye[0] = p[0] - sine(cam.yaw) * CHASE_BACK;
     eye[2] = p[2] - cosine(cam.yaw) * CHASE_BACK;
@@ -207,9 +222,9 @@ static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
         cam.yaw_speed = cam.pitch_speed = cam.roll_speed = 0;
     }
     for (k = 0; k < 3; k++)                     /* the neck: the head's jolts softened */
-        spring(&cam.head[k], &cam.head_speed[k], head[k] - p[k], 20, dt);
+        spring(&cam.head[k], &cam.head_speed[k], head[k] - p[k], 12, dt);
     spring_angle(&cam.yaw, &cam.yaw_speed, yaw, 10, dt);
-    spring(&cam.pitch, &cam.pitch_speed, pitch, 4, dt);
+    spring(&cam.pitch, &cam.pitch_speed, pitch, 3, dt);
     spring(&cam.roll, &cam.roll_speed, roll, 6, dt);
 
     dir[0] = sine(cam.yaw) * cosine(cam.pitch);
