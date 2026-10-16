@@ -191,7 +191,8 @@ def build_graphics(data):
     # The renderer's own (optionprocs.c, renderer_rows_show): the game has no such controls.
     screen.add("ChkVSync", Type="MULTISTATE", NumStates="2", SoundPush='"Beep"', SourceBlit="-1")
     switch(screen, board, "ChkVSync", rows_area(left, top, 2), "VSYNC")
-    for k, (name, label) in enumerate((("MultAntiAlias", "ANTI-ALIASING"), ("MultFiltering", "TEXTURE FILTERING"))):
+    for k, (name, label) in enumerate((("MultAntiAlias", "ANTI-ALIASING"), ("MultFiltering", "TEXTURE FILTERING"),
+                                       ("MultHudStyle", "HUD"), ("MultCamStyle", "CAMERAS"))):
         screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
         words(screen, board, name, rows_area(left, top, 3 + k), label)
     sub(board, "MORE IN ADVANCED: VISIBILITY, TERRAIN, OBJECTS AND TEXTURES", left[0] + 36, left[3] - 36, 22,

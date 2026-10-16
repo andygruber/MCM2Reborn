@@ -416,12 +416,16 @@ static const int pitch_values[] = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 
 static const int corner_values[] = { 0, 1 };
 static const int lean_values[] = { 0, 100, 200, 300, 352, 400, 500, 600 };
 
+static const int style_values[] = { 1, 0 };
+
 static const struct camera_row {
     const char* name;
     const int*  values;
     int         count;
     int*        setting;
 } camera_rows[] = {
+    { "MultHudStyle", style_values, 2, &g_reborn.hud },
+    { "MultCamStyle", style_values, 2, &g_reborn.cameras },
     { "MultFpFov", fov_values, 9, &g_camera_options.fov },
     { "MultFpTilt", tilt_values, 5, &g_camera_options.tilt },
     { "MultFpPitch", pitch_values, 16, &g_camera_options.pitch },
@@ -441,6 +445,8 @@ static void camera_words(const struct camera_row* row, int value, char* words)
         wsprintfA(words, "%d.%02d (%d\xB0 DOWN)", value / 100, value % 100, 15 + value * 20 / 100);
     else if (row->values == corner_values)
         lstrcpyA(words, value ? "LEAN" : "OFF");
+    else if (row->values == style_values)
+        lstrcpyA(words, value ? "REBORN" : "CLASSIC");
     else
         wsprintfA(words, "%d.%d", value / 10, value % 10);
 }
@@ -479,6 +485,7 @@ static void camera_rows_keep(BYTE* self)
             *camera_rows[r].setting = camera_rows[r].values[i];
     }
     dev_camera_save();
+    dev_reborn_save();
 }
 
 static void renderer_rows_keep(BYTE* self)

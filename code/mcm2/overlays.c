@@ -18,7 +18,7 @@ int __fastcall game_orig_vf_14_521370(BYTE* self);     /* RadarOverlay */
 static BOOL reborn_hud(void)
 {
 #ifdef OPENMCM2_DEV
-    return dev_settings.menus_modern;
+    return dev_settings.menus_modern && g_reborn.hud;
 #else
     return FALSE;
 #endif

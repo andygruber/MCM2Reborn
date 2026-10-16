@@ -676,7 +676,7 @@ void hud_draw(int w, int h)
     static float last_scale;
     BOOL smooth;
 
-    if (h <= 0 || !dev_settings.menus_modern || !hud_read(&v))
+    if (h <= 0 || !dev_settings.menus_modern || !g_reborn.hud || !hud_read(&v))
         return;
     g_scale = h / BASE_H;
     g_width = w / g_scale;

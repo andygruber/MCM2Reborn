@@ -696,7 +696,7 @@ void camera_after_update(BYTE* camera, float dt)
 
     if (dev_settings.menus_modern)
         aspect_true(camera);
-    if (!dev_settings.menus_modern || (mode != CHASE && mode != RIDER) || !bike || !cam_on_bike(camera)
+    if (!dev_settings.menus_modern || !g_reborn.cameras || (mode != CHASE && mode != RIDER) || !bike || !cam_on_bike(camera)
         || cam_crashed(camera) || (event && FIELD(event, 0x18E, BYTE)) || dt <= 0) {
         head_show(bike);
         if (FIELD(camera, 0x1BC, float) == NEAR_PLANE)

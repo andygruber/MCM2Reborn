@@ -83,6 +83,20 @@ typedef struct camera_options {
 
 extern camera_options g_camera_options;
 
+/*
+    Each of MCM2:Reborn's changes to how the race looks can be turned back to the original's, on
+    the Graphics page, kept in [reborn]: 1 Reborn's, 0 the game's own. The HUD (hud.c, and the
+    original's overlays drawn again, overlays.c) and the chase and rider cameras (camera.c).
+*/
+typedef struct reborn_options {
+    int hud;
+    int cameras;
+} reborn_options;
+
+extern reborn_options g_reborn;
+
+void dev_reborn_save(void);
+
 void dev_camera_save(void);
 
 /* [trace] camera=1: every view and projection the game hands the renderer, into the camera's
