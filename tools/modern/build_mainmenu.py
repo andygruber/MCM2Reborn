@@ -407,8 +407,9 @@ def build(original_dat):
         if name == "rbwLabel1":
             continue
         if name.lower() == "set_anim":
-            for added, keys in ADDED.items():
-                out += ["[%s]" % added] + ["%s = %s" % kv for kv in dict(keys, **controls[added]).items()] + [""]
+            for added, added_keys in ADDED.items():
+                keys_ = dict(added_keys, **controls[added])
+                out += ["[%s]" % added] + ["%s = %s" % kv for kv in keys_.items()] + [""]
         if name in controls:
             lines = set_keys(lines, controls[name], drops.get(name, ()))
         out += ["[%s]" % name] + [l for l in lines if l.strip()] + [""]
