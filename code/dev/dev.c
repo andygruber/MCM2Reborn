@@ -10,6 +10,7 @@
 #define SETTINGS_FILE ".\\OpenMCM2-Dev.ini"
 
 dev_switches dev_settings = { 0 };     /* initialised, or it is a common symbol and lands in .data */
+camera_options g_camera_options = { 140, 0, 70, 0, 352 };
 
 typedef UINT (WINAPI* read_int_fn)(LPCSTR section, LPCSTR key, INT fallback, LPCSTR file);
 
@@ -90,8 +91,40 @@ void dev_install(void)
     }
     log_line("dev build: graphics: vsync %d, anti-aliasing %dx, filtering %d", g_render.vsync,
              g_render.samples, g_render.filtering);
+    if (read) {
+        camera_options* c = &g_camera_options;
+
+        c->fov = (int) read("camera", "fov", c->fov, SETTINGS_FILE);
+        c->tilt = (int) read("camera", "tilt", c->tilt, SETTINGS_FILE);
+        c->pitch = (int) read("camera", "pitch", c->pitch, SETTINGS_FILE);
+        c->corner = (int) read("camera", "corner_anticipation", c->corner, SETTINGS_FILE);
+        c->lean_heading = (int) read("camera", "lean_heading", c->lean_heading, SETTINGS_FILE);
+    }
     eos_install();
     inputfix_install();
+}
+
+static void write_number(const char* section, const char* key, int value)
+{
+    typedef BOOL (WINAPI* write_fn)(LPCSTR section, LPCSTR key, LPCSTR value, LPCSTR file);
+    write_fn write = (write_fn) api("kernel32.dll", "WritePrivateProfileStringA");
+    char text[16];
+
+    if (!write)
+        return;
+    wsprintfA(text, "%d", value);
+    write(section, key, text, SETTINGS_FILE);
+}
+
+void dev_camera_save(void)
+{
+    const camera_options* c = &g_camera_options;
+
+    write_number("camera", "fov", c->fov);
+    write_number("camera", "tilt", c->tilt);
+    write_number("camera", "pitch", c->pitch);
+    write_number("camera", "corner_anticipation", c->corner);
+    write_number("camera", "lean_heading", c->lean_heading);
 }
 
 void dev_graphics_save(void)

@@ -194,12 +194,19 @@ def build_graphics(data):
     for k, (name, label) in enumerate((("MultAntiAlias", "ANTI-ALIASING"), ("MultFiltering", "TEXTURE FILTERING"))):
         screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
         words(screen, board, name, rows_area(left, top, 3 + k), label)
+    sub(board, "MORE IN ADVANCED: VISIBILITY, TERRAIN, OBJECTS AND TEXTURES", left[0] + 36, left[3] - 36, 22,
+        (120, 122, 128), bold=True)
     top = panel(board, right, "FEATURES")
     for k, (name, label) in enumerate((("ShadowsCheckBox", "SHADOWS"), ("ParticlesCheckBox", "PARTICLE SYSTEMS"),
                                        ("SkyCheckBox", "SKY"))):
         switch(screen, board, name, rows_area(right, top, k), label)
-    sub(board, "MORE IN ADVANCED: VISIBILITY, TERRAIN, OBJECTS AND TEXTURES", right[0] + 36, right[3] - 36, 22,
-        (120, 122, 128), bold=True)
+    # The first-person view's own (optionprocs.c, camera_rows_show), under a heading of its own.
+    heading(board, "FIRST-PERSON VIEW", right[0] + 36, top + 3 * PITCH + 50, 28, ORANGE)
+    for k, (name, label) in enumerate((("MultFpFov", "FIELD OF VIEW"), ("MultFpTilt", "TILT"), ("MultFpPitch", "PITCH"),
+                                       ("MultFpCorner", "CORNER ANTICIPATION"),
+                                       ("MultFpLean", "LEAN HEADING SCALE"))):
+        screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
+        words(screen, board, name, rows_area(right, top + 70, 3 + k), label)
     return finish_page(screen, board, ("DisplayResolutionBox", "DisplayResolutionText", "TerrainQualityBox",
                                        "TerrainQualityText", "rbwLabel6", "rbwLabel7", "GraphicFeaturesBox",
                                        "GraphicFeaturesText"))

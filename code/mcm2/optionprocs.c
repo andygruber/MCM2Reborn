@@ -386,6 +386,8 @@ static void choices_set(BYTE* control, const char** words, int count, int chosen
     option_select(control, NULL, chosen);
 }
 
+static void camera_rows_show(BYTE* self);
+
 static void renderer_rows_show(BYTE* self)
 {
     BYTE* vsync = find(self, CHK_VSYNC, 2);
@@ -399,6 +401,84 @@ static void renderer_rows_show(BYTE* self)
     choices_set(find(self, MULT_AA, 2), aa_words, AA_CHOICES, aa);
     choices_set(find(self, MULT_FILTERING, 2), filtering_words, FILTERING_CHOICES,
                 g_render.filtering >= 0 && g_render.filtering < FILTERING_CHOICES ? g_render.filtering : 0);
+    camera_rows_show(self);
+}
+
+/*
+    The first-person view's rows (dev.h, camera_options): each a list of the values it offers,
+    clicked through; a setting from the file between two of them shows as the nearest.
+*/
+#define CHOICES_MOST 16
+
+static const int fov_values[] = { 70, 80, 90, 100, 110, 120, 130, 140, 150 };
+static const int tilt_values[] = { 0, 25, 50, 75, 100 };
+static const int pitch_values[] = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150 };
+static const int corner_values[] = { 0, 1 };
+static const int lean_values[] = { 0, 100, 200, 300, 352, 400, 500, 600 };
+
+static const struct camera_row {
+    const char* name;
+    const int*  values;
+    int         count;
+    int*        setting;
+} camera_rows[] = {
+    { "MultFpFov", fov_values, 9, &g_camera_options.fov },
+    { "MultFpTilt", tilt_values, 5, &g_camera_options.tilt },
+    { "MultFpPitch", pitch_values, 16, &g_camera_options.pitch },
+    { "MultFpCorner", corner_values, 2, &g_camera_options.corner },
+    { "MultFpLean", lean_values, 8, &g_camera_options.lean_heading },
+};
+#define CAMERA_ROWS ((int) (sizeof camera_rows / sizeof camera_rows[0]))
+
+/* A value as its row shows it. */
+static void camera_words(const struct camera_row* row, int value, char* words)
+{
+    if (row->values == fov_values)
+        wsprintfA(words, "%d\xB0", value);
+    else if (row->values == tilt_values)
+        wsprintfA(words, "%d.%02d", value / 100, value % 100);
+    else if (row->values == pitch_values)
+        wsprintfA(words, "%d.%02d (%d\xB0 DOWN)", value / 100, value % 100, 15 + value * 20 / 100);
+    else if (row->values == corner_values)
+        lstrcpyA(words, value ? "LEAN" : "OFF");
+    else
+        wsprintfA(words, "%d.%d", value / 10, value % 10);
+}
+
+static void camera_rows_show(BYTE* self)
+{
+    int r, i;
+
+    for (r = 0; r < CAMERA_ROWS; r++) {
+        const struct camera_row* row = &camera_rows[r];
+        BYTE* control = find(self, row->name, 2);
+        char words[CHOICES_MOST][24];
+        const char* list[CHOICES_MOST];
+        int chosen = 0;
+
+        for (i = 0; i < row->count; i++) {
+            camera_words(row, row->values[i], words[i]);
+            list[i] = words[i];
+            if ((row->values[i] - *row->setting) * (row->values[i] - *row->setting)
+                < (row->values[chosen] - *row->setting) * (row->values[chosen] - *row->setting))
+                chosen = i;
+        }
+        choices_set(control, list, row->count, chosen);
+    }
+}
+
+static void camera_rows_keep(BYTE* self)
+{
+    int r;
+
+    for (r = 0; r < CAMERA_ROWS; r++) {
+        BYTE* control = find(self, camera_rows[r].name, 2);
+        int i = control ? option_current_index(control) : -1;
+
+        if (i >= 0 && i < camera_rows[r].count)
+            *camera_rows[r].setting = camera_rows[r].values[i];
+    }
+    dev_camera_save();
 }
 
 static void renderer_rows_keep(BYTE* self)
@@ -422,6 +502,7 @@ static void renderer_rows_keep(BYTE* self)
     if (g_render.vsync != was_vsync)
         gl_vsync_apply();
     dev_graphics_save();
+    camera_rows_keep(self);
 }
 #endif
 

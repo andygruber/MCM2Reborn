@@ -44,6 +44,9 @@
 #define bike_vel(b)     ((float*) ((b) + 0x64))
 #define bike_air(b)     FIELD(b, 0x108, BYTE)
 #define bike_forward(b) ((float*) ((b) + 0x88))     /* the way it points (the game's heading when slow) */
+#define bike_rider(b)   FIELD(b, 0x5C4, BYTE*)
+#define rider_frame(r)  FIELD(r, 0x1A0, BYTE*)      /* the rider's model: its frames, Head among them */
+#define frame_hidden(f) FIELD(f, 0x14C, int)        /* not drawn, nor the frames under it */
 
 #define FT_PER_S_TO_MPH 0.68181825f
 
@@ -51,6 +54,8 @@
 void __fastcall game_FUN_0042f8d0(BYTE* camera, void* edx_unused, const float* eye, const float* dir,
                                   const float* up, const float* roll, const float* fov);
 void __fastcall game_FUN_0042f850(BYTE* camera, void* edx_unused, float fov);
+/* A scene frame: the one of `name` among its children (found with the child's own). */
+BYTE* __fastcall game_FUN_00502970(BYTE* frame, void* edx_unused, const char* name);
 typedef void (__fastcall* camera_fn)(BYTE* camera, void* edx_unused);
 typedef void (__fastcall* head_fn)(BYTE* camera, void* edx_unused, float* out);
 
@@ -75,6 +80,35 @@ static float flat_speed(const float* v)
     return square_root(v[0] * v[0] + v[2] * v[2]);
 }
 
+/*
+    In the rider's view the rider is drawn - the arms and hands on the bars, the bike under them -
+    but not the head (and the helmet with it): the view is from where the face is, and the helmet
+    showed from inside. It is shown again whenever the view is not the rider's, and one hidden on a
+    bike since gone is let be.
+*/
+static BYTE* g_head;                    /* the Head frame hidden, and the bike it is on */
+static BYTE* g_head_bike;
+
+static void head_hide(BYTE* bike)
+{
+    BYTE* rider = bike_rider(bike);
+    BYTE* model = rider ? rider_frame(rider) : NULL;
+    BYTE* head = model ? game_FUN_00502970(model, NULL, "Head") : NULL;
+
+    if (!head)
+        return;
+    frame_hidden(head) = 1;
+    g_head = head;
+    g_head_bike = bike;
+}
+
+static void head_show(BYTE* bike)
+{
+    if (g_head && bike == g_head_bike)
+        frame_hidden(g_head) = 0;
+    g_head = g_head_bike = NULL;
+}
+
 /* ---- Chase ---- */
 
 /*
@@ -85,7 +119,7 @@ static float flat_speed(const float* v)
 */
 #define CHASE_BACK      30.0f           /* feet behind the bike */
 #define CHASE_UP        11.0f           /* ...and above it */
-#define CHASE_AHEAD     25.0f           /* the camera looks this far past the bike */
+#define CHASE_AHEAD     8.0f            /* the camera looks this far past the bike: the rider stays put in the view */
 #define CHASE_FOV       80.0f
 
 static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
@@ -109,7 +143,7 @@ static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     eye[1] = cam.height > p[1] + 4 ? cam.height : p[1] + 4;    /* never below the rider's head */
     look[0] = p[0] + sine(cam.yaw) * CHASE_AHEAD;
     look[2] = p[2] + cosine(cam.yaw) * CHASE_AHEAD;
-    look[1] = p[1] + 2;
+    look[1] = p[1] + 2.5f;
     dir[0] = look[0] - eye[0];
     dir[1] = look[1] - eye[1];
     dir[2] = look[2] - eye[2];
@@ -129,12 +163,13 @@ static void chase(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 /*
     From just in front of the rider's face (from behind it, the helmet showed), looking the way
     the bike points - so through whips the bars and the hands stay low in the view - a little
-    towards where it is going and a little down, at the bars. The head is held as a neck holds it:
-    its jolts softened, the horizon with only a quarter of the bike's lean.
+    towards where it is going, with the bike's pitch and the player's pitch down at the bars. The
+    head is held as a neck holds it, its jolts softened. The player's settings (dev.h,
+    camera_options) give the view's width, how much of the lean the horizon takes, and how far the
+    lean turns the view into the corner.
 */
-#define RIDER_FOV       100.0f
-#define RIDER_FORWARD   0.8f            /* feet in front of the head */
-#define RIDER_UP        0.35f
+#define RIDER_FORWARD   0.3f            /* feet in front of the head, which is not drawn */
+#define RIDER_UP        0.25f
 
 static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
 {
@@ -146,11 +181,20 @@ static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     float yaw = yaw_bike, pitch, roll, eye[3], dir[3], up[3] = { 0, 1, 0 }, head[3];
     int k;
 
+    const camera_options* o = &g_camera_options;
+    float lean = cam_roll(camera);              /* the game's Rider Cam's roll: the bike's lean */
+    float fov = (float) (o->fov < 60 ? 60 : o->fov > 160 ? 160 : o->fov);
+
     cam_head(camera, head);
     if (speed > 10)
         yaw = yaw_bike + angle_wrap(arc_tangent2(v[0], v[2]) - yaw_bike) * 0.3f;
-    pitch = arc_tangent2(f[1], flat_speed(f)) * 0.3f - 10 * PI / 180;
-    roll = cam_roll(camera) * 0.25f;
+    if (o->corner == 1) {                       /* into the corner by the lean, as far as the setting */
+        float into = lean * (180 / PI) / 50;
+
+        yaw += (into < -1 ? -1 : into > 1 ? 1 : into) * o->lean_heading / 10.0f * (PI / 180);
+    }
+    pitch = arc_tangent2(f[1], flat_speed(f)) - (15 + o->pitch * 20 / 100.0f) * (PI / 180);
+    roll = lean * o->tilt / 100.0f;
 
     if (begin) {
         for (k = 0; k < 3; k++) {
@@ -165,7 +209,7 @@ static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     for (k = 0; k < 3; k++)                     /* the neck: the head's jolts softened */
         spring(&cam.head[k], &cam.head_speed[k], head[k] - p[k], 20, dt);
     spring_angle(&cam.yaw, &cam.yaw_speed, yaw, 10, dt);
-    spring(&cam.pitch, &cam.pitch_speed, pitch, 8, dt);
+    spring(&cam.pitch, &cam.pitch_speed, pitch, 4, dt);
     spring(&cam.roll, &cam.roll_speed, roll, 6, dt);
 
     dir[0] = sine(cam.yaw) * cosine(cam.pitch);
@@ -175,9 +219,10 @@ static void rider(BYTE* camera, BYTE* bike, float dt, BOOL begin)
     eye[1] = p[1] + cam.head[1] + RIDER_UP;
     eye[2] = p[2] + cam.head[2] + cosine(cam.yaw) * RIDER_FORWARD;
     game_FUN_0042f8d0(camera, NULL, eye, dir, up, &cam.roll, NULL);
-    game_FUN_0042f850(camera, NULL, RIDER_FOV);
+    game_FUN_0042f850(camera, NULL, fov);
     cam_rebuild(camera);
     cam_show_rider(camera);
+    head_hide(bike);
 }
 
 /* What the camera reads, twice a second ([trace] camera=1), to see which is wrong. */
@@ -214,9 +259,12 @@ void camera_after_update(BYTE* camera, float dt)
 
     if (!dev_settings.menus_modern || (mode != CHASE && mode != RIDER) || !bike || !cam_on_bike(camera)
         || cam_crashed(camera) || (event && FIELD(event, 0x18E, BYTE)) || dt <= 0) {
+        head_show(bike);
         cam.camera = NULL;              /* the game's camera: ours begins anew after */
         return;
     }
+    if (mode != RIDER)
+        head_show(bike);
     begin = camera != cam.camera || bike != cam.bike || mode != cam.mode;
     cam.camera = camera;
     cam.bike = bike;

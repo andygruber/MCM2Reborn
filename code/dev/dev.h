@@ -66,6 +66,25 @@ void dev_install(void);
 /* The renderer's settings (gl.h, g_render), written to [graphics]. */
 void dev_graphics_save(void);
 
+/*
+    The first-person view's settings (camera.c), on the Graphics page, kept in [camera] as whole
+    numbers: the field of view in degrees across; tilt (how much of the bike's lean the horizon
+    takes, 0 to 1) and pitch (0 to 1.5: 15 degrees down and 20 more a whole one), in hundredths;
+    corner anticipation 0 off, 1 by the lean; and how far the lean turns the view at most, in
+    tenths of a degree.
+*/
+typedef struct camera_options {
+    int fov;
+    int tilt;
+    int pitch;
+    int corner;
+    int lean_heading;
+} camera_options;
+
+extern camera_options g_camera_options;
+
+void dev_camera_save(void);
+
 /* A line in the log, prefixed with its area ("screen", "event", ...). */
 void dev_trace(const char* area, const char* fmt, ...);
 
