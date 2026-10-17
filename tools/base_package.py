@@ -1,9 +1,8 @@
 """base_package.py [game folder]: the base game's package, build/release/MCM2-base.zip.
 
 For a player without a copy of Motocross Madness 2 of their own: the launcher's DOWNLOAD choice
-unpacks it, then MCM2:Reborn over it (launcher/Updates.cs, InstallBase). Rainbow Studios and THQ
-Nordic have allowed the game to be bundled so. It is the clean copy given, whole, without what
-is a player's own: the profiles in UI\\PROFILE (its EMPTYFIL kept, as the game ships it), the
+unpacks it, then MCM2:Reborn over it (launcher/Updates.cs, InstallBase). It is the clean copy
+given, whole, without what is a player's own: the profiles in UI\\PROFILE (its EMPTYFIL kept, as the game ships it), the
 settings the game keeps in mcm2_profile.json, and its error log. The player names a first rider
 in the launcher instead.
 

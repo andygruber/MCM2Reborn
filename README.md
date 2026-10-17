@@ -16,8 +16,6 @@ proper gamepad support. Every change can be switched back to the original's beha
 The launcher keeps MCM2:Reborn up to date by itself and shows how many riders are online. Your
 settings are kept across updates.
 
-The base game is bundled with the blessing of Rainbow Studios and THQ Nordic.
-
 ## What's new
 
 **Racing**
