@@ -31,7 +31,7 @@ VERSION, TITLE = kit.VERSION, kit.TITLE
 # The rows, top to bottom: control, title, what it holds.
 ROWS = [("ButProCircuit", "PRO CIRCUIT", "YOUR CAREER · SPONSORS · PRIZE MONEY"),
         ("MenuSingle", "SINGLE PLAYER", "SUPERCROSS · NATIONALS · BAJA · ENDURO · STUNT QUARRY"),
-        ("MenuMulti", "MULTIPLAYER", "LOCAL NETWORK · INTERNET"),
+        ("MenuMulti", "MULTIPLAYER", "LOCAL NETWORK · INTERNET · LEADERBOARDS"),
         ("MenuReplay", "REPLAYS", "WATCH YOUR SAVED RACES"),
         ("MenuHighScore", "LEADERBOARDS", "BEST LAPS BY TRACK · EVENT · BIKE CLASS"),
         ("MenuOptions", "OPTIONS", "CONTROLS · AUDIO · GRAPHICS")]
