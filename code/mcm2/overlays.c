@@ -3,11 +3,12 @@
     statistics and the overview radar, their draw passes (vtable slot 14). In the dev build with
     the modern menus, MCM2:Reborn's own HUD (code/dev/hud.c) is drawn in their place and they draw
     nothing; otherwise each is the game's own. Their passes also tell the HUD the race is on the
-    screen (hud_overlays_drawn): the race loads with its bikes already made, under the loading
-    screen, and the HUD waits for the race's first frame, as the game's overlays do.
+    screen (hud_overlays_drawn), once the loading screen has gone: the race loads with its bikes
+    already made, and is drawn under the loading screen for its last moments.
 */
 
 #include "runtime.h"
+#include "game.h"
 
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
@@ -17,10 +18,21 @@ int __fastcall game_orig_vf_14_51DFC0(BYTE* self);     /* InstrumentOverlay */
 int __fastcall game_orig_vf_14_51F000(BYTE* self);     /* StatsOverlay */
 int __fastcall game_orig_vf_14_521370(BYTE* self);     /* RadarOverlay */
 
+#ifdef OPENMCM2_DEV
+/* The loading screen open: it puts itself in the session (game_main + 0x56C, at +0x490). */
+static BOOL loading_shown(void)
+{
+    BYTE* session = FIELD(game_main, 0x56C, BYTE*);
+
+    return session && FIELD(session, 0x490, BYTE*);
+}
+#endif
+
 static BOOL reborn_hud(void)
 {
 #ifdef OPENMCM2_DEV
-    hud_overlays_drawn();
+    if (!loading_shown())
+        hud_overlays_drawn();
     return dev_settings.menus_modern && g_reborn.hud;
 #else
     return FALSE;
