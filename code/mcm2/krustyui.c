@@ -681,6 +681,20 @@ void __fastcall session_hide_cursors(BYTE* self)
 #define SERIAL      NAME(0x0057391C)    /* "SerPopup.dtm" */
 #define MESSAGE_1   NAME(0x005700BC)    /* "messbox1.dtm" */
 #define MESSAGE_2   NAME(0x0056F734)    /* "messbox2.dtm" */
+
+#ifdef OPENMCM2_DEV
+#define RACE_MENU   "RaceMenu.dtm"      /* MCM2:Reborn's pause menu, with OPTIONS (ingameprocs.c) */
+
+/* Whether the modern menus have the pause menu's own layout. */
+static BOOL race_menu_layout(void)
+{
+    typedef DWORD (WINAPI* attributes_fn)(LPCSTR);
+    attributes_fn attributes = (attributes_fn) api("kernel32.dll", "GetFileAttributesA");
+
+    return dev_settings.menus_modern && attributes
+           && attributes("UI\\modern\\RaceMenu.dat") != INVALID_FILE_ATTRIBUTES;
+}
+#endif
 #define PC_CHOOSE   NAME(0x005738EC)    /* "PCC.dtm" */
 #define PC_RACE     NAME(0x005738F4)    /* "PCLRace.dtm" */
 #define HIGH_SCORES NAME(0x0056F584)    /* "HiScores.dtm" */
@@ -763,6 +777,13 @@ void __fastcall session_go_to(BYTE* self, void* edx_unused, int screen)
         screen_open(self, dialog_new(0x7F58, 0x34C, MESSAGE_2, 0x00559DDC), screen, 0x1C, FALSE);
         break;
     case 0x191:
+#ifdef OPENMCM2_DEV
+        /* MCM2:Reborn's pause menu, with OPTIONS, when the modern menus have its layout. */
+        if (race_menu_layout()) {
+            screen_open(self, dialog_new(0x7F58, 0x347, RACE_MENU, 0x00559D58), screen, 0x1C, FALSE);
+            break;
+        }
+#endif
         screen_open(self, dialog_new(0x7F58, 0x347, MESSAGE_2, 0x00559D58), screen, 0x1C, FALSE);
         break;
     case 0x1F9:

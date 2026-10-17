@@ -123,6 +123,46 @@ static BOOL x87_equal(double a, double b)
 
 /* ---- The menu over a race ---- */
 
+#ifdef OPENMCM2_DEV
+/*
+    MCM2:Reborn's pause menu (RaceMenu.dtm, tools/modern/build_boxes.py) has OPTIONS: the options
+    screen over it as the menus open it, modal, the race held behind (game+0x333C, the menu up).
+    What cannot change in a race is put away there (optionprocs.c, race_menu_up). When it ends the
+    race's own volume is set again, as the race sets it when it starts (0x004E81A0).
+*/
+#define BUTTON_OPTIONS  "ButOptions"
+#define OPTIONS_LAYOUT  NAME(0x0056F690)    /* "OptBase.dtm" */
+#define OPTIONS_VTABLE  ((void*) 0x00556BD0)
+
+void __fastcall game_FUN_004c3100(BYTE* self, void* edx_unused, DWORD a);    /* the race's volume */
+
+static BOOL g_race_options;
+
+static void race_options_open(BYTE* self)
+{
+    BYTE* options = game_new(0x7F70, INGAMEPROCS_CPP, __LINE__);
+
+    if (!options)
+        return;
+    dialog_construct(options, NULL, 1, OPTIONS_LAYOUT);
+    *(void**) options = OPTIONS_VTABLE;
+    g_race_options = TRUE;
+    gui_manager_open(dialog_gui(self), NULL, options, 0, 2, 0, self, 0, 0, 1);
+}
+
+static void race_options_closed(void)
+{
+    float volume = FIELD(game_main, 0xFB8, int) * 0.01f * 2500.0f - 2500.0f;
+
+    if (volume > 0)
+        volume = 0;
+    else if (volume == -2500.0f)
+        volume = -10000.0f;
+    if (FIELD(game_main, 4, BYTE*))
+        game_FUN_004c3100(FIELD(game_main, 4, BYTE*), NULL, (DWORD) (LONG) volume);
+}
+#endif
+
 /*
     Middle shows the replay. Left leaves the race: in a ghost race with a run, after asking (the
     answer, 0x65 or 0x67, comes back as a child's end); in a network game the others are told
@@ -178,6 +218,10 @@ void __fastcall race_menu_handle(BYTE* self, void* edx_unused, ui_event* event)
             gui_manager_show_cursors(dialog_gui(self), NULL, FALSE);
             result_confirm(0x191, event);
             game_FUN_00469760(game_main);
+#ifdef OPENMCM2_DEV
+        } else if (clicked(event, BUTTON_OPTIONS)) {
+            race_options_open(self);
+#endif
         }
     } else if (event->type == EVENT_OPEN) {
         BYTE* middle;
@@ -191,8 +235,25 @@ void __fastcall race_menu_handle(BYTE* self, void* edx_unused, ui_event* event)
             control_show(middle, NULL, FALSE, TRUE);
         control_load_text(find(self, BUTTON_LEFT, 1), NULL, game_language, 0x13DB);
         control_load_text(find(self, BUTTON_RIGHT, 1), NULL, game_language, 0x13DC);
+#ifdef OPENMCM2_DEV
+        {
+            BYTE* options = find(self, BUTTON_OPTIONS, 1);
+
+            /* Not in a network game: the others ride on while the menu is up. */
+            if (options && game_net)
+                control_show(options, NULL, FALSE, TRUE);
+        }
+#endif
         gui_manager_show_cursors(dialog_gui(self), NULL, TRUE);
     } else if (event->type == EVENT_CHILD_ENDED) {
+#ifdef OPENMCM2_DEV
+        if (g_race_options) {
+            g_race_options = FALSE;
+            race_options_closed();
+            gui_manager_show_cursors(dialog_gui(self), NULL, TRUE);
+            return;
+        }
+#endif
         if (event->a == 0x65)
             ghost_answer = 1;
         else if (event->a == 0x67)

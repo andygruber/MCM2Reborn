@@ -5,7 +5,10 @@ and its buttons, whose words are the game's too (they change with the question).
 an edit box for an answer. GlobSet, Restore Defaults, chooses between the factory settings and
 another profile's.
 
-Writes MESSBOX1, MESSBOX2, MESSBOX3 and GLOBSET for the game's ui\modern\.
+RaceMenu is MessBox2 made the race's own pause menu, with OPTIONS among its buttons
+(ingameprocs.c, race_menu_handle; krustyui.c opens it in place of MessBox2 for screen 0x191).
+
+Writes MESSBOX1, MESSBOX2, MESSBOX3, RaceMenu and GLOBSET for the game's ui\modern\.
 """
 import sys
 from pathlib import Path
@@ -27,10 +30,21 @@ def words(screen, name, area, size, colour, top=False):
     screen.set(name, ("AnimNorm",), **keys)
 
 
-def build_message(data, stem, buttons, edit=False):
+# Buttons of a layout's own: their words and shortcut key (a DirectInput key code).
+OWN_BUTTONS = {"ButOptions": ('"Options"', "24")}     # O
+
+
+def build_message(data, stem, buttons, edit=False, layout=None):
     """A message: its title and question, an edit box with `edit`, and `buttons` along the foot,
-    right to left."""
+    right to left; saved as `layout` when it is a screen of its own."""
     screen = Screen(data, stem)
+    if layout:
+        screen.layout = layout
+    for name in buttons:
+        if name in OWN_BUTTONS and name not in dict(screen.sections):
+            text, key = OWN_BUTTONS[name]
+            screen.add(name, Type="BUTTON", Text=text, KeyBind=key, SoundPush='"CLICK04"', TextAlignV="MIDDLE",
+                       TextAlign="CENTER")
     w, h = CARD
     board = card_ground(w, h)
     words(screen, "TitleText", (PAD, PAD - 8, w - PAD, PAD + 56), 40, ORANGE)
@@ -89,6 +103,8 @@ def main(ui, out, previews):
     read = lambda stem: (ui / (stem + ".DAT")).read_bytes()             # noqa: E731
     cards = [build_message(read("MESSBOX1"), "MESSBOX1", ("OKButton", "CancelButton"), edit=True),
              build_message(read("MESSBOX2"), "MESSBOX2", ("ButRight", "ButMiddle", "ButLeft")),
+             build_message(read("MESSBOX2"), "RaceMenu", ("ButRight", "ButOptions", "ButMiddle", "ButLeft"),
+                           layout="RaceMenu.dtm"),
              build_message(read("MESSBOX3"), "MESSBOX3", ("But4", "But3", "But2", "But1")),
              build_restore(read("GLOBSET"))]
     out.mkdir(parents=True, exist_ok=True)

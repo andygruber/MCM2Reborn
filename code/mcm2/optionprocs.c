@@ -130,6 +130,28 @@ typedef int  (__fastcall* input_moved)(BYTE* device, void* edx_unused, int input
 #define display_card    ((const char*) game_display + 0x4BC)
 #define cursors_locked  (game_main[0x2D5] & 2)
 
+#ifdef OPENMCM2_DEV
+/*
+    The options screen opened from the pause menu over a race (ingameprocs.c): what cannot change
+    mid-race is put away - Restore (it reloads the profile over the race's settings), Help (an
+    outside viewer, out of full screen), the Garage (the bike is built as the race loads) and the
+    sound hardware, EAX and bits (they make the sound buffer anew). The resolution and the details
+    take effect from the next race, as they always have.
+*/
+#define race_menu_up (FIELD(game_main, 0x333C, int) != 0)
+
+/* A control put away, if the layout has it. */
+static void put_away(BYTE* control, BOOL hide)
+{
+    if (!control)
+        return;
+    if (hide)
+        control_show(control, NULL, FALSE, TRUE);
+    else
+        VIRTUAL(control, 0xC4, void (__fastcall*)(BYTE*, void*, DWORD))(control, NULL, FALSE);
+}
+#endif
+
 /* The copies of the game's settings the pages edit. */
 #define garage_settings  ((unsigned long*) 0x0068E948)   /* 0x17 dwords: game + 0x1550 */
 #define sound_settings   ((unsigned long*) 0x0068E8D8)   /* 0xB: game + 0xF98 */
@@ -726,7 +748,11 @@ void __fastcall sound_apply(BYTE* self)
     BYTE* flags;
 
     dialog_notify_controls(self, NULL, 1);
-    if (FIELD(game_main, 4, BYTE*)) {
+    if (FIELD(game_main, 4, BYTE*)
+#ifdef OPENMCM2_DEV
+        && !race_menu_up                /* a new sound buffer mid-race: not from the pause menu */
+#endif
+        ) {
         flags = FIELD(game_main, 4, BYTE*) + 0x45C;
         *flags = (BYTE) ((*flags & ~1) | (sound_hardware & 1));
         flags = FIELD(game_main, 4, BYTE*) + 0x45C;
@@ -753,6 +779,14 @@ void __fastcall sound_page_handle(BYTE* self, void* edx_unused, ui_event* event)
     case EVENT_OPEN:
         bind_controls(self, sound_bindings, 7);
         dialog_notify_controls(self, NULL, 0);
+#ifdef OPENMCM2_DEV
+        if (race_menu_up) {
+            put_away(find(self, NAME(0x005753B8), 2), FALSE);          /* SoundHardwareCheckBox */
+            put_away(find(self, NAME(0x00575394), 2), FALSE);          /* ChkEAX */
+            put_away(find(self, NAME(0x005753E8), 4), FALSE);          /* Rad8Bit */
+            put_away(find(self, NAME(0x005753F0), 4), FALSE);          /* Rad16Bit */
+        }
+#endif
         break;
     case EVENT_SLIDE_END:
     case EVENT_SLIDE_HOLD:
@@ -1475,6 +1509,13 @@ static void options_open(BYTE* self, const ui_event* event)
     radio_set(find(self, option_pages[page].tab, 4), NULL, 0);
     if (game_FUN_00527300(game_main))
         control_show(find(self, BUT_RESTORE, 0), NULL, FALSE, TRUE);
+#ifdef OPENMCM2_DEV
+    if (race_menu_up) {
+        put_away(find(self, BUT_RESTORE, 0), TRUE);
+        put_away(find(self, HELP, 0), TRUE);
+        put_away(find(self, option_pages[5].tab, 4), TRUE);
+    }
+#endif
 }
 
 static void options_click(BYTE* self, ui_event* event)
@@ -1482,6 +1523,10 @@ static void options_click(BYTE* self, ui_event* event)
     BYTE** pages = options_pages(self);
     int i;
 
+#ifdef OPENMCM2_DEV
+    if (race_menu_up && (named(event, BUT_RESTORE) || named(event, HELP) || named(event, option_pages[5].tab)))
+        return;
+#endif
     if (named(event, BACK)) {
         for (i = 0; i < 6; i++) {
             if (pages[i]) {
