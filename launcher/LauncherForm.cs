@@ -252,6 +252,13 @@ namespace Mcm2Reborn.Launcher
             string rider = riderName.Text.Trim();
             if (!copy.Download && copy.DataFolder == null && !Install.IsGame(copy.Folder))
                 return;
+            if (copy.NeedsDisc)
+            {
+                status = "THAT COPY'S TRACKS ARE ON ITS CD: PUT THE CD IN, OR PICK DOWNLOAD";
+                statusColour = Theme.Red;
+                Invalidate();
+                return;
+            }
             if (copy.Download && !Updates.BaseOffered(releases))
             {
                 status = releasesFailed != null ? "NO INTERNET: THE GAME COULD NOT BE DOWNLOADED"
@@ -316,8 +323,11 @@ namespace Mcm2Reborn.Launcher
                 else
                 {
                     var copy = new GameCopy { Folder = dialog.SelectedPath, Kind = "CHOSEN" };
-                    if (!Directory.Exists(Path.Combine(copy.Folder, "SX")))
+                    if (!Install.HasData(copy.Folder))
+                    {
                         copy.DataFolder = Install.FindDisc();
+                        copy.NeedsDisc = copy.DataFolder == null;
+                    }
                     copies.Insert(0, copy);
                     chosen = 0;
                     status = "";
@@ -555,7 +565,7 @@ namespace Mcm2Reborn.Launcher
             using (Font tag = Theme.Text(12, true))
             using (Font text = Theme.Text(14))
             {
-                string kind = copy.Kind + (copy.Complete ? "" : copy.DataFolder != null ? "  ·  DATA ON THE CD" : "  ·  CD NEEDED");
+                string kind = copy.Kind + (copy.NeedsDisc ? "  ·  CD NEEDED" : copy.DataFolder != null ? "  ·  DATA ON THE CD" : "");
                 Theme.Words(g, kind, tag, on ? Theme.Orange : Theme.Grey,
                             new RectangleF(area.X + S(14), area.Y + S(2), area.Width - S(28), S(18)));
                 Theme.Words(g, copy.Folder, text, Theme.Paper,

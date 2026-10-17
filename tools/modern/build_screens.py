@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).parent))
 import mainmenu_art as art                                                         # noqa: E402
-from build_mainmenu import read_dtm, rs2, rs2_entries, rs2_files, set_keys          # noqa: E402
+from build_mainmenu import VERSION, read_dtm, rs2, rs2_entries, rs2_files, set_keys         # noqa: E402
 from mainmenu_art import text, width_of                                             # noqa: E402
 from modern_ui import (BLUE, CREAM, DIM, EDGE, GLOW, PALE, SOFT, clear, glass, lit_bar,  # noqa: E402
                        paint, rim, rounded, shown, tga16)
@@ -270,7 +270,7 @@ def full_backdrop(size, side, title):
     glass(img, (side + a(2), a(2), w - 2 * side - a(4), h - a(4)), a(4), PANEL)
     if title:
         side_title(img, side, title)
-    footer = "MCM2:REBORN  ·  VERSION 0.1"
+    footer = "MCM2:REBORN  ·  VERSION " + VERSION
     f = art.font(13, style="SemiBold Condensed")
     text(img, footer, w - art.s(28), h - art.s(26), f, SOFT, right=True, spacing=0.6)
     return img

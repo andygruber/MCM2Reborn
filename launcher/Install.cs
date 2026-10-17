@@ -20,7 +20,7 @@ namespace Mcm2Reborn.Launcher
         public string Kind;         // how it was found: "RETAIL INSTALL", "COPY", "CHOSEN"
         public string DataFolder;   // where its track and bike data are, if not in Folder (the CD)
         public bool Download;       // not a copy here: the game downloaded (Updates.InstallBase)
-        public bool Complete => DataFolder == null;
+        public bool NeedsDisc;      // its tracks are not here, and no CD with them is in a drive
         public override string ToString() => Folder;
     }
 
@@ -33,6 +33,8 @@ namespace Mcm2Reborn.Launcher
 
         // What a copy of the game has: its exe, and the folders its menus and races read.
         static readonly string[] DataFolders = { "BIKES", "RIDERS", "SX", "NATIONAL", "BAJA", "ENDURO", "QUARRIES" };
+        // What is copied from the CD when an install has left it there.
+        static readonly string[] DiscFolders = DataFolders.Concat(new[] { "RES", "TERAFORM" }).ToArray();
         static readonly string[] CopyFolders = { "RES", "UI" };
 
         // Not copied from a copy of the game: a developer's leftovers, recordings and logs.
@@ -82,7 +84,24 @@ namespace Mcm2Reborn.Launcher
             }
         }
 
-        static bool HasData(string folder) => DataFolders.All(f => Directory.Exists(Path.Combine(folder, f)));
+        // An install with the game's data: its archives in RES and its tracks in TERAFORM's folders.
+        public static bool HasData(string folder)
+        {
+            try
+            {
+                string res = Path.Combine(folder, "RES"), tracks = Path.Combine(folder, "TERAFORM");
+                return Directory.Exists(res) && Directory.GetFiles(res, "*.res").Length > 0
+                       && Directory.Exists(tracks) && Directory.GetFiles(tracks, "*.env", SearchOption.AllDirectories).Length > 0;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        // The CD's data folders, as it lays them out.
+        static bool DiscHasData(string folder) => DataFolders.All(f => Directory.Exists(Path.Combine(folder, f)))
+                                                  || HasData(folder);
 
         // Every copy of the game this computer has, as far as can be found.
         public static List<GameCopy> Find()
@@ -106,7 +125,10 @@ namespace Mcm2Reborn.Launcher
                     return;
                 var copy = new GameCopy { Folder = folder, Kind = kind };
                 if (!HasData(folder))
+                {
                     copy.DataFolder = FindDisc();
+                    copy.NeedsDisc = copy.DataFolder == null;
+                }
                 found.Add(copy);
             }
 
@@ -217,7 +239,7 @@ namespace Mcm2Reborn.Launcher
                     continue;
                 foreach (string folder in new[] { drive.RootDirectory.FullName }.Concat(
                              Directory.GetDirectories(drive.RootDirectory.FullName)))
-                    if (HasData(folder))
+                    if (DiscHasData(folder))
                         return folder;
             }
             return null;
@@ -232,7 +254,7 @@ namespace Mcm2Reborn.Launcher
                                StringComparison.OrdinalIgnoreCase))
                 Gather(copy.Folder, to, files, true);
             if (copy.DataFolder != null)
-                foreach (string folder in DataFolders)
+                foreach (string folder in DiscFolders)
                 {
                     string from = Path.Combine(copy.DataFolder, folder);
                     if (Directory.Exists(from) && !Directory.Exists(Path.Combine(to, folder)))

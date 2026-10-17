@@ -6,6 +6,9 @@ else in the text face (Helvetica Oblique); fonts_from() finds them in the game's
 which the dev build loads for the game too. A screen is 2560x1440 on one grid: 96 px side
 margins, 64 px top and bottom, one 40 px gutter between panels.
 """
+import re
+from pathlib import Path
+
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 SYMBOLS = r"C:\Windows\Fonts\seguisym.ttf"
@@ -15,7 +18,7 @@ LEFT, RIGHT = 96, 2464
 TOP, BOTTOM = 64, 1376
 # The game's name and version, wherever the screens (and the launcher) show them.
 TITLE = "MCM2:REBORN"
-VERSION = "0.1"
+VERSION = re.search(r'#define GAME_VERSION "([^"]+)"', (Path(__file__).parents[2] / "code" / "dev" / "dev.h").read_text()).group(1)
 
 GUTTER = 40
 SLANT = 0.21                        # how far cut edges lean: about 12 degrees

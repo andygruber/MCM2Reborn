@@ -11,7 +11,19 @@
 #define PROFILE_FILE "mcm2_profile.json"
 #define DRIVERS_FILE "openmcm2_drivers.json"
 #define DRIVERS_KEY  "DriverInfo"
+#ifdef OPENMCM2_DEV
+/*
+    MCM2:Reborn keeps its settings under a key of its own, so a retail install's are never read (its
+    card profiles crash this renderer, and this renderer's crash the original) and never written
+    over. The game's constructor, FUN_00525EC0, copies its key's name to game+0x4B8 from the
+    string at 0x57B75C, named at the two sites below; every registry call then reads it there.
+*/
+#define GAME_KEY     "Software\\MCM2Reborn\\Game"
+#define RETAIL_KEY   0x0057B75Cu
+static const DWORD k_key_sites[] = { 0x00525FD3, 0x00525FF5 };     /* mov edi, imm32; push imm32 */
+#else
 #define GAME_KEY     "Software\\Microsoft\\Microsoft Games\\Motocross Madness 2"
+#endif
 
 #define MAX_NAME  256
 #define MAX_KEY_PATH 512
@@ -472,10 +484,29 @@ static void WINAPI exit_process(UINT code)
     g_exit(code);
 }
 
+#ifdef OPENMCM2_DEV
+static void key_redirect(void)
+{
+    static const char key[] = GAME_KEY;
+    const char* mine = key;
+    int i;
+
+    for (i = 0; i < (int) (sizeof k_key_sites / sizeof *k_key_sites); i++) {
+        DWORD* site = (DWORD*) k_key_sites[i];
+
+        if (*site != RETAIL_KEY || !write_protected(site, &mine, sizeof mine))
+            log_line("profile: the game's key at %08X is not as expected - left as it is", k_key_sites[i]);
+    }
+}
+#endif
+
 void profile_install(void)
 {
     exit_fn mine = exit_process;
 
+#ifdef OPENMCM2_DEV
+    key_redirect();
+#endif
     load();
 
     g_exit = _imp__ExitProcess;
