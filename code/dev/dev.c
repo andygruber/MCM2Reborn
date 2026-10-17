@@ -105,7 +105,7 @@ void dev_install(void)
         /* The modern menus are drawn at the screen's size. */
         dev_settings.menus_widescreen |= dev_settings.menus_modern;
         dev_settings.fix_last_pick = read_switch(read, "fixes", "last_pick");
-        dev_settings.fix_ai_rate = (int) read("fixes", "ai_rate", 60, SETTINGS_FILE);
+        dev_settings.fix_ai_rate = (int) read("fixes", "ai_rate", 30, SETTINGS_FILE);
     }
     log_line("%s %s", GAME_TITLE, GAME_VERSION);
     log_line("dev build: trace screens %d, events %d, files %d, display %d; "
