@@ -22,7 +22,9 @@
     [trace] ai: steering flicking 0.12 either side, lean between 0.12 and 0.37 step by step).
     The bike's motion does not use them, so the frame shows them smoothed over 0.15 s, the time
     the game's own lean filter has at 30 steps a second (scratchpad physics/ai.md), and the
-    step's own are put back for the next step.
+    step's own are put back for the next step. The rider's body is posed from the steering inside
+    the step itself (KrustyBike slot 89, through slot 90), so that pose takes the smoothed
+    steering too: the upper body turned with each of the computer's corrections.
 */
 
 #include "runtime.h"
@@ -36,6 +38,7 @@
 #endif
 
 void __fastcall game_orig_FUN_00414000(BYTE* self, void* edx_unused, float dt);
+int  __fastcall game_orig_vf_89_48F390(BYTE* self, void* edx_unused, DWORD a);
 
 #ifdef OPENMCM2_DEV
 #define BIKES_MOST  32                  /* a race's riders, 30 at most (riders.c), with room */
@@ -81,12 +84,24 @@ typedef struct ai_bike {
     float commands[2];                  /* steering and lean: the step's, and those shown */
     float shown[2];
     BOOL  smoothed;
+    DWORD stepped_at;                   /* timeGetTime: a bike stepped lately is still a computer's */
 } ai_bike;
 
 #define COMMANDS        0x504           /* steering, then lean */
 #define COMMANDS_TIME   0.15f
 
 static ai_bike g_ai_bikes[BIKES_MOST];
+
+/* The bike's own, if it has stepped as a computer rider; else NULL. */
+static ai_bike* ai_bike_find(BYTE* bike)
+{
+    int i;
+
+    for (i = 0; i < BIKES_MOST; i++)
+        if (g_ai_bikes[i].bike == bike)
+            return &g_ai_bikes[i];
+    return NULL;
+}
 
 static ai_bike* ai_bike_of(BYTE* bike)
 {
@@ -308,6 +323,7 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
         if (steps == STEPS_MOST)
             ai->owed = 0;
         commands_smooth(self, ai, dt);
+        ai->stepped_at = timeGetTime();
         if (g_animate_later) {
             g_animate_later = FALSE;
             VIRTUAL(self, ANIMATE, animate_fn)(self, NULL, dt);
@@ -330,6 +346,26 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
     }
 #endif
     game_orig_FUN_00414000(self, edx_unused, dt);
+}
+
+/* The rider's body posed from the steering: a computer rider's, as smoothed for its frames. */
+PORT(0x0048F390)
+int __fastcall rider_pose(BYTE* self, void* edx_unused, DWORD a)
+{
+#ifdef OPENMCM2_DEV
+    ai_bike* ai = dev_settings.fix_ai_rate > 0 ? ai_bike_find(self) : NULL;
+
+    if (ai && ai->smoothed && timeGetTime() - ai->stepped_at < 250 && !FIELD(self, 0x444, int)) {
+        float steering = FIELD(self, COMMANDS, float);
+        int posed;
+
+        FIELD(self, COMMANDS, float) = ai->shown[0];
+        posed = game_orig_vf_89_48F390(self, edx_unused, a);
+        FIELD(self, COMMANDS, float) = steering;
+        return posed;
+    }
+#endif
+    return game_orig_vf_89_48F390(self, edx_unused, a);
 }
 
 #ifdef OPENMCM2_DEV
