@@ -9,8 +9,8 @@
 
     In the dev build a game pad read through XInput (code/dev/pad.c) steers and leans too,
     whichever is pushed further, and its buttons hold the actions given them; and an analog
-    stick's steering goes through the response and sensitivity chosen in place of the cube, built
-    up no faster than the game builds the keys' steering when [gamepad] smoothing is on.
+    stick's steering goes through the response and sensitivity chosen in place of the cube, eased
+    over [gamepad] smoothing_ms.
 */
 
 #include "runtime.h"
@@ -67,7 +67,7 @@ void __fastcall bike_controls(BYTE* self, void* edx_unused, DWORD unused)
         }
     }
     if (analog)
-        steering = pad_ramp(steering);
+        steering = pad_smooth(steering);
 #endif
     FIELD(self, 0x508, float) = -leaning;
     FIELD(self, 0x474, float) = -steering;
