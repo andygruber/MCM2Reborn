@@ -292,6 +292,21 @@ int  leaders_board(int kind, int cc, const char* track, leader* board, int most,
 /* The tracks this computer has laps of, for an event kind and class. */
 int  leaders_tracks(int kind, int cc, char (*tracks)[64], int most);
 
+/*
+    Files from the other players in a multiplayer lobby (code/mcm2/share.c): the race's track from
+    the host, riders' own skins from their riders. share_take answers the lobby's messages that are
+    its own; share_tick, each tick of the lobby, says SHARE_NEWS when `news` is for the chat and
+    SHARE_TRACK_IN when the race's track has just been downloaded.
+*/
+enum { SHARE_TRACK = 1, SHARE_RIDER, SHARE_BIKE };
+enum { SHARE_NEWS = 1, SHARE_TRACK_IN };
+
+BOOL share_have(int kind, const char* name);
+BOOL share_is_skin(const char* look);
+void share_get(int kind, const char* name, int from);
+BOOL share_take(DWORD type, const BYTE* data, int from);
+int  share_tick(char* news);
+
 /* Room for more riders in a race (riders.c); the most a single race may have. */
 void riders_install(void);
 int  riders_most(void);

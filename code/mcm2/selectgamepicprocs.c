@@ -1391,6 +1391,15 @@ void __fastcall player_kick(BYTE* self, void* edx_unused, int slot)
 #define MSG_RIDER   2
 #define MSG_LEFT    5
 
+#ifdef OPENMCM2_DEV
+/* The lobby's downloads (below, after mp_track_check; code/mcm2/share.c). */
+static int  g_lobby_host;               /* the player the race's settings come from */
+static void skin_note(int kind, const char* look, int from);
+static void downloads_tick(BYTE* self);
+static void track_note(void);
+static void downloads_forget(void);
+#endif
+
 /* Message 2: a player's readiness, looks, bike and the time it was sent. */
 typedef struct rider_status {
     BYTE  header;
@@ -1418,6 +1427,11 @@ _Static_assert(sizeof(rider_status) == 0xD4, "a rider's status is 0xD4 bytes");
 static void rider_status_take(BYTE* self, const rider_status* status, int from, DWORD now)
 {
     int i;
+
+#ifdef OPENMCM2_DEV
+    skin_note(SHARE_RIDER, status->rider_look, from);
+    skin_note(SHARE_BIKE, status->bike_look, from);
+#endif
 
 #ifdef OPENMCM2_DEV
     for (i = 0; i < PLAYER_SLOTS; i++) {
@@ -1566,6 +1580,14 @@ int __fastcall mp_screen_receive(BYTE* self, void* edx_unused, DWORD type, BYTE*
                                  DWORD c, DWORD now)
 {
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (from && share_take(type, data, from))
+        return 1;
+    if (from && (type == MSG_SETTINGS || type == MSG_SETUP || type == MSG_SETUP_PART) && g_lobby_host != from) {
+        g_lobby_host = from;            /* another lobby: what was asked about there is asked again */
+        downloads_forget();
+    }
+#endif
     if (from && type == MSG_RIDER) {
         rider_status_take(self, (const rider_status*) data, from, now);
     } else if (from && type == MSG_SETUP) {
@@ -1828,6 +1850,10 @@ static void mp_screen_tick(BYTE* self)
     int me;
     BYTE* player;
     int i;
+
+#ifdef OPENMCM2_DEV
+    downloads_tick(self);
+#endif
 
     for (i = 0; i < PLAYER_SLOTS; i++)
         game_vf_1_4B23D0(mp_players + i * PLAYER_SIZE);
@@ -2253,7 +2279,159 @@ void __fastcall mp_track_check(BYTE* self)
     text_copy_most((char*) self + MP_TRACK, track, 0x103);
     FIELD(self, MP_TRACK_KIND, DWORD) = FIELD(race_settings, SET_TRACK_KIND, BYTE);
     text_copy_most((char*) game_main + race_kind * 0x80 + 0xC6C, title, 0x7F);
+#ifdef OPENMCM2_DEV
+    track_note();
+#endif
 }
+
+#ifdef OPENMCM2_DEV
+/*
+    The lobby's downloads (share.c): the host's track, when this player has none by its name or
+    another one, and the other riders' own skins - each asked about once, in messbox2.dtm on a
+    copy of its vtable with these events, and downloaded one at a time from the lobby's ticks.
+    A track come in is checked again, so the player can ready up.
+*/
+#define PROMPT_VTABLE   0x00557210      /* messbox2.dtm's (named_choice_handle): slot 29 below */
+#define PROMPT_SLOTS    32
+#define SKINS_MOST      64
+
+typedef struct skin_seen {
+    int  kind, from;
+    BOOL asked;
+    char look[64];
+} skin_seen;
+
+static void*     g_prompt_vtable[PROMPT_SLOTS + 1];
+static BOOL      g_prompt_open, g_track_new;
+static int       g_prompt_kind;         /* SHARE_TRACK, or SHARE_RIDER for the skins */
+static char      g_track_asked[64];
+static skin_seen g_skins[SKINS_MOST];
+static int       g_skin_count;
+
+static void downloads_forget(void)
+{
+    g_track_asked[0] = 0;
+    g_skin_count = 0;
+}
+
+static void track_note(void)
+{
+    const char* track = (const char*) race_settings + SET_TRACK;
+
+    if (net_hosting || (mp_track_state != 2 && mp_track_state != 3) || !lstrcmpiA(g_track_asked, track))
+        return;
+    lstrcpynA(g_track_asked, track, sizeof g_track_asked);
+    g_track_new = TRUE;
+}
+
+static void skin_note(int kind, const char* status_look, int from)
+{
+    char look[64];
+    int i;
+
+    lstrcpynA(look, status_look, sizeof look);
+    if (!share_is_skin(look) || share_have(kind, look) || g_skin_count == SKINS_MOST)
+        return;
+    for (i = 0; i < g_skin_count; i++)
+        if (!lstrcmpiA(g_skins[i].look, look))
+            return;
+    g_skins[g_skin_count].kind = kind;
+    g_skins[g_skin_count].from = from;
+    g_skins[g_skin_count].asked = FALSE;
+    lstrcpynA(g_skins[g_skin_count].look, look, sizeof look);
+    g_skin_count++;
+}
+
+static int skins_unasked(void)
+{
+    int i, n = 0;
+
+    for (i = 0; i < g_skin_count; i++)
+        n += !g_skins[i].asked;
+    return n;
+}
+
+static void prompt_write(BYTE* self, const char* name, const char* words)
+{
+    BYTE* control = dialog_find_control(self, NULL, name, 0);
+
+    if (control)
+        control_set_text(control, NULL, words);
+}
+
+static void __fastcall download_prompt_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    char words[0x180];
+    int i;
+
+    (void) edx_unused;
+    if (event->type == EVENT_OPEN) {
+        BYTE* prompt = dialog_find_control(self, NULL, "TxtPrompt", 12);
+
+        if (g_prompt_kind == SHARE_TRACK)
+            wsprintfA(words, mp_track_state == 3
+                      ? "YOUR TRACK %s IS NOT THE HOST'S. DOWNLOAD THE HOST'S? YOURS IS KEPT AS %s.ENV.BAK."
+                      : "THE HOST'S TRACK, %s, IS NOT INSTALLED. DOWNLOAD IT FROM THE HOST? YOU CAN READY UP "
+                        "ONCE IT IS IN.", g_track_asked, g_track_asked);
+        else
+            wsprintfA(words, "%d OF THE OTHER RIDERS' OWN SKINS ARE NOT INSTALLED. DOWNLOAD THEM FROM THEIR "
+                      "RIDERS?", skins_unasked());
+        prompt_write(self, "TitleText", g_prompt_kind == SHARE_TRACK ? "DOWNLOAD TRACK" : "DOWNLOAD SKINS");
+        if (prompt)
+            FIELD(prompt, 0x1E8, DWORD) = 1;        /* as load_prompt: the words wrap */
+        prompt_write(self, "TxtPrompt", words);
+        prompt_write(self, "ButLeft", "NO");
+        prompt_write(self, "ButRight", "DOWNLOAD");
+        control_show(dialog_find_control(self, NULL, "ButMiddle", 1), NULL, FALSE, TRUE);
+        return;
+    }
+    if (event->type != EVENT_CLICK || (!clicked(event, "ButRight") && !clicked(event, "ButLeft")))
+        return;
+    if (clicked(event, "ButRight") && g_prompt_kind == SHARE_TRACK)
+        share_get(SHARE_TRACK, g_track_asked, g_lobby_host);
+    for (i = 0; g_prompt_kind != SHARE_TRACK && i < g_skin_count; i++) {
+        if (!g_skins[i].asked && clicked(event, "ButRight"))
+            share_get(g_skins[i].kind, g_skins[i].look, g_skins[i].from);
+        g_skins[i].asked = TRUE;
+    }
+    g_prompt_open = FALSE;
+    dialog_end(self, NULL, 0);
+    event->e = 1;
+}
+
+static void prompt_open(BYTE* self, int kind)
+{
+    if (!g_prompt_vtable[1]) {
+        __movsd((unsigned long*) g_prompt_vtable, (const unsigned long*) (PROMPT_VTABLE - 4), PROMPT_SLOTS + 1);
+        g_prompt_vtable[1 + 29] = (void*) download_prompt_handle;
+    }
+    g_prompt_kind = kind;
+    g_prompt_open = TRUE;
+    gui_manager_open(session_gui, NULL, dialog_new(0x7F58, __LINE__, NAME(0x0056F734), &g_prompt_vtable[1]),
+                     0, 4, 0, self, 0, 0, 1);                                 /* messbox2.dtm */
+}
+
+static void downloads_tick(BYTE* self)
+{
+    char news[0x80];
+    int got = share_tick(news);
+
+    if (got)
+        chat_show(self, NULL, -1, news);
+    if (got == SHARE_TRACK_IN) {
+        ((char*) self)[MP_TRACK] = 0;           /* checked again, not taken as seen */
+        mp_track_check(self);
+    }
+    if (g_prompt_open)
+        return;
+    if (g_track_new) {
+        g_track_new = FALSE;
+        prompt_open(self, SHARE_TRACK);
+    } else if (skins_unasked()) {
+        prompt_open(self, SHARE_RIDER);
+    }
+}
+#endif
 
 __declspec(noinline) void __fastcall mp_event_kind_set(BYTE* self);
 __declspec(noinline) void __fastcall mp_event_refresh(BYTE* self);
