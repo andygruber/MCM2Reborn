@@ -59,13 +59,20 @@ void __fastcall game_menus_return(BYTE* self, void* edx_unused, int screen)
         game_FUN_00527090(game_main);
 
     mode = card_mode(video_card, race_mode_index);
-#ifdef OPENMCM2_DEV
-    if (!dev_settings.menus_widescreen)         /* the widescreen menus stay in the races' mode */
-#endif
-    if (FIELD(mode, 0, int) != 640 || FIELD(mode, 4, int) != 480 || FIELD(mode, 8, int) != 16) {
-        int menus = game_FUN_005328c0(video_card, NULL, 640, 480, 16, 0, 0);
+    {
+        int width = 640, height = 480;
 
-        VIRTUAL(game_main, 0x4C, set_display)(game_main, NULL, menus);
+#ifdef OPENMCM2_DEV
+        if (dev_settings.menus_widescreen) {    /* back to the desktop's size, as they came up */
+            width = GetSystemMetrics(SM_CXSCREEN);
+            height = GetSystemMetrics(SM_CYSCREEN);
+        }
+#endif
+        if (FIELD(mode, 0, int) != width || FIELD(mode, 4, int) != height || FIELD(mode, 8, int) != 16) {
+            int menus = game_FUN_005328c0(video_card, NULL, width, height, 16, 0, 0);
+
+            VIRTUAL(game_main, 0x4C, set_display)(game_main, NULL, menus);
+        }
     }
 
     gui_manager_make_background(session_gui);
