@@ -9,12 +9,14 @@
     time: a frame rate over 60 shook the computer riders side to side until they fell.
 
     Steps at a fixed rate land unevenly on the frames (none in one, two in the next), so the bike
-    is drawn between its last two steps, by the time left over: its place in the scene (the
-    matrix at +0xB8, which the rider and everything else on the bike hang from) is blended for
-    the frame and put back before the next step.
+    is drawn between its last two steps, by the time left over. It is drawn from two objects in
+    the scene, each placed by the step as a remote bike's are (0x00494610): the bike's own
+    (+0x3BC) and its rider's (+0x5C4, then +0x1A0). Each one's place (the matrix at +0xB8, which
+    what hangs from it follows) is blended for the frame and put back before the next step.
 */
 
 #include "runtime.h"
+#include "game.h"
 
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
@@ -27,9 +29,10 @@ void __fastcall game_orig_FUN_00414000(BYTE* self, void* edx_unused, float dt);
 #define BIKES_MOST  32                  /* a race's riders, 30 at most (riders.c), with room */
 #define STEPS_MOST  12                  /* a frame of 0.2 s, the most the game gives, at 60 */
 
-/* The bike's place in the scene: side, up and forward (4 floats each), then its position. */
+/* A scene object's place: side, up and forward (4 floats each), then its position. */
 #define PLACE       0xB8
 #define PLACE_SIZE  16
+#define OBJECTS     2                   /* the bike's and its rider's */
 #define JUMP_MOST   20.0f               /* feet in one step: further is a reset, not drawn between */
 
 void __fastcall game_FUN_00500690(BYTE* object);    /* its place changed: what hangs from it follows */
@@ -37,9 +40,10 @@ void __fastcall game_FUN_00500690(BYTE* object);    /* its place changed: what h
 typedef struct ai_bike {
     BYTE* bike;
     float owed;                         /* time not yet stepped */
-    float before[PLACE_SIZE];           /* its place before the last step, and after it */
-    float after[PLACE_SIZE];
-    float drawn[PLACE_SIZE];            /* the place written for this frame */
+    BYTE* objects[OBJECTS];             /* the scene's objects for it when last stepped */
+    float before[OBJECTS][PLACE_SIZE];  /* each one's place before the last step, and after it */
+    float after[OBJECTS][PLACE_SIZE];
+    float drawn[OBJECTS][PLACE_SIZE];   /* the places written for this frame */
     BOOL  blended;
 } ai_bike;
 
@@ -62,15 +66,35 @@ static ai_bike* ai_bike_of(BYTE* bike)
     return &g_ai_bikes[free_slot];
 }
 
-static float* place_of(BYTE* bike)
+/* The bike's object `k` in the scene, or NULL. */
+static BYTE* object_of(BYTE* bike, int k)
 {
-    return (float*) (bike + PLACE);
+    BYTE* rider;
+
+    if (k == 0)
+        return FIELD(bike, 0x3BC, BYTE*);
+    rider = FIELD(bike, 0x5C4, BYTE*);
+    return rider ? FIELD(rider, 0x1A0, BYTE*) : NULL;
 }
 
-static void place_set(BYTE* bike, const float* place)
+static float* place_of(BYTE* object)
 {
-    __movsd((unsigned long*) place_of(bike), (const unsigned long*) place, PLACE_SIZE);
-    game_FUN_00500690(bike);
+    return (float*) (object + PLACE);
+}
+
+static void place_set(BYTE* object, const float* place)
+{
+    __movsd((unsigned long*) place_of(object), (const unsigned long*) place, PLACE_SIZE);
+    game_FUN_00500690(object);
+}
+
+static void places_read(ai_bike* ai, float (*to)[PLACE_SIZE])
+{
+    int k;
+
+    for (k = 0; k < OBJECTS; k++)
+        if (ai->objects[k])
+            __movsd((unsigned long*) to[k], (const unsigned long*) place_of(ai->objects[k]), PLACE_SIZE);
 }
 
 static BOOL place_same(const float* a, const float* b)
@@ -143,18 +167,22 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
     if (dev_settings.fix_ai_rate > 0) {
         float step = 1.0f / dev_settings.fix_ai_rate;
         ai_bike* ai = ai_bike_of(self);
-        int steps = 0;
+        int steps = 0, k;
 
-        /* The true place back for the step, unless something else has moved the bike since. */
-        if (ai->blended && place_same(place_of(self), ai->drawn))
-            place_set(self, ai->after);
+        /* The true places back for the step, unless something else has moved them since. */
+        for (k = 0; ai->blended && k < OBJECTS; k++)
+            if (ai->objects[k] && ai->objects[k] == object_of(self, k)
+                && place_same(place_of(ai->objects[k]), ai->drawn[k]))
+                place_set(ai->objects[k], ai->after[k]);
         ai->blended = FALSE;
 
         ai->owed += dt;
         while (ai->owed >= step && steps < STEPS_MOST) {
-            __movsd((unsigned long*) ai->before, (const unsigned long*) place_of(self), PLACE_SIZE);
+            for (k = 0; k < OBJECTS; k++)
+                ai->objects[k] = object_of(self, k);
+            places_read(ai, ai->before);
             game_orig_FUN_00414000(self, edx_unused, step);
-            __movsd((unsigned long*) ai->after, (const unsigned long*) place_of(self), PLACE_SIZE);
+            places_read(ai, ai->after);
             ai->owed -= step;
             steps++;
         }
@@ -162,11 +190,15 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
             ai->owed = 0;
 
         /* Drawn between its last two steps; not across a reset, nor before it has stepped. */
-        if (place_same(place_of(self), ai->after)
-            && distance_squared(ai->before, ai->after) < JUMP_MOST * JUMP_MOST
-            && !place_same(ai->before, ai->after)) {
-            place_between(ai->drawn, ai->before, ai->after, ai->owed / step);
-            place_set(self, ai->drawn);
+        for (k = 0; k < OBJECTS; k++) {
+            BYTE* object = ai->objects[k];
+
+            if (!object || object != object_of(self, k) || !place_same(place_of(object), ai->after[k])
+                || distance_squared(ai->before[k], ai->after[k]) >= JUMP_MOST * JUMP_MOST
+                || place_same(ai->before[k], ai->after[k]))
+                continue;
+            place_between(ai->drawn[k], ai->before[k], ai->after[k], ai->owed / step);
+            place_set(object, ai->drawn[k]);
             ai->blended = TRUE;
         }
         return;
