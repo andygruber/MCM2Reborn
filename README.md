@@ -16,6 +16,9 @@ proper gamepad support. Every change can be switched back to the original's beha
 The launcher keeps MCM2:Reborn up to date by itself and shows how many riders are online. Your
 settings are kept across updates.
 
+**Linux / Steam Deck:** run the launcher and the game through **GE-Proton** (the latest), which has
+what the game needs; stock Proton does not.
+
 ## What's new
 
 **Racing**
