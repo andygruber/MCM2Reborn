@@ -52,8 +52,32 @@ int __fastcall race_stats_draw(BYTE* self)
     return reborn_hud() ? 1 : game_orig_vf_14_51F000(self);
 }
 
+#ifdef OPENMCM2_DEV
+/*
+    The radar keeps its bikes in a list made bigger for 30 (riders.c), counted at +0x160; but the
+    markers it moves for them, in a table at +0x2D8 of the race's overview ([+0x12C]+0x19C),
+    have room for the game's 11 (FUN_00521520). With more on the gate the classic radar read past
+    them and crashed, so while it draws it is told of the first 11.
+*/
+#define RADAR_BIKES     0x160
+#define RADAR_MARKERS   11
+#endif
+
 PORT(0x00521370)
 int __fastcall radar_draw(BYTE* self)
 {
+#ifdef OPENMCM2_DEV
+    int bikes, drawn;
+
+    if (reborn_hud())
+        return 1;
+    bikes = FIELD(self, RADAR_BIKES, int);
+    if (bikes > RADAR_MARKERS)
+        FIELD(self, RADAR_BIKES, int) = RADAR_MARKERS;
+    drawn = game_orig_vf_14_521370(self);
+    FIELD(self, RADAR_BIKES, int) = bikes;
+    return drawn;
+#else
     return reborn_hud() ? 1 : game_orig_vf_14_521370(self);
+#endif
 }
