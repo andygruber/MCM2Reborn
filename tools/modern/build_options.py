@@ -206,12 +206,12 @@ def build_graphics(data):
 REBORN_COLUMNS = (
     ("PICTURE", (("MultAntiAlias", "ANTI-ALIASING"), ("MultFiltering", "TEXTURE FILTERING"), ("MultVSync", "VSYNC"),
                  ("MultFxaa", "EDGE SMOOTHING"), ("MultSharpen", "SHARPENING"), ("MultVibrance", "COLOUR VIBRANCE"),
-                 ("MultBrightness", "BRIGHTNESS"), ("MultFrameLimit", "FRAME RATE LIMIT"))),
+                 ("MultBrightness", "BRIGHTNESS"), ("MultBloom", "BLOOM"))),
     ("VIEW", (("MultHudStyle", "HUD"), ("MultCamStyle", "FIRST PERSON"), ("MultFpFov", "FIRST-PERSON FOV"),
               ("MultFpTilt", "TILT"), ("MultFpPitch", "PITCH"), ("MultFpCorner", "CORNER ANTICIPATION"),
               ("MultFpLean", "LEAN HEADING SCALE"))),
-    ("RIDING", (("MultPhysStyle", "PHYSICS"), ("MultRiders", "RIDERS ON THE GATE"),
-                ("MultAiRate", "COMPUTER RIDERS' STEPS"))),
+    ("PLAY", (("MultPhysStyle", "PHYSICS"), ("MultRiders", "RIDERS ON THE GATE"),
+              ("MultAiRate", "COMPUTER RIDERS' STEPS"), ("MultFrameLimit", "FRAME RATE LIMIT"))),
 )
 
 

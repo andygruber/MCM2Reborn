@@ -688,13 +688,14 @@ void hud_draw(int w, int h)
     static float last_scale;
     BOOL smooth;
 
-    if (h <= 0 || !dev_settings.menus_modern || !g_reborn.hud)
+    if (h <= 0)
         return;
     if (!hud_read(&v)) {
-        g_race_shown = FALSE;
+        g_race_shown = g_post_race = FALSE;
         return;
     }
-    if (!g_race_shown)
+    g_post_race = g_race_shown;
+    if (!g_race_shown || !dev_settings.menus_modern || !g_reborn.hud)
         return;
     g_scale = h / BASE_H;
     g_width = w / g_scale;

@@ -22,7 +22,7 @@ static HDC         g_dc;
 static swap_fn     g_swap;
 static interval_fn g_interval;
 
-render_options g_render = { TRUE, 0, 0, 0, 0, 0, 0, 100 };   /* initialised, or it is a common symbol */
+render_options g_render = { TRUE, 0, 0, 0, 0, 0, 0, 100, 0 };   /* initialised, or it is a common symbol */
 
 static BOOL load(HMODULE opengl, get_proc_fn get_proc)
 {

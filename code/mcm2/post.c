@@ -1,7 +1,9 @@
 /*
     OpenMCM2 - the picture's finish: the finished frame drawn into the window through one shader
     that can smooth its edges (FXAA, after Timothy Lottes's), sharpen its detail (contrast
-    adaptive, after AMD's FidelityFX CAS), deepen its dull colours and brighten or darken it.
+    adaptive, after AMD's FidelityFX CAS), deepen its dull colours, let its brightest light glow
+    (in a race only; from the frame's own mipmaps, each level a wider blur of it) and brighten or
+    darken it.
     With all of them off, or no shaders on the card, the frame is copied across as it was.
 */
 
@@ -11,6 +13,9 @@
 #define GL_VERTEX_SHADER        0x8B31
 #define GL_COMPILE_STATUS       0x8B81
 #define GL_LINK_STATUS          0x8B82
+#define GL_LINEAR_MIPMAP_LINEAR 0x2703
+
+BOOL g_post_race = FALSE;
 
 static const char* const vertex_source =
     "#version 120\n"
@@ -21,10 +26,15 @@ static const char* const fragment_source =
     "#version 120\n"
     "uniform sampler2D picture;\n"
     "uniform vec2 texel;\n"
-    "uniform float fxaa, sharpen, vibrance, gamma;\n"
+    "uniform float fxaa, sharpen, vibrance, gamma, bloom;\n"
     "varying vec2 at;\n"
     "vec3 tap(vec2 offset) { return texture2D(picture, at + offset * texel).rgb; }\n"
     "float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+    "vec3 blurred(float level) {\n"
+    "    vec2 r = texel * exp2(level) * 0.5;\n"
+    "    return 0.25 * (texture2D(picture, at + vec2(-r.x, -r.y), level) + texture2D(picture, at + vec2(r.x, -r.y), level)\n"
+    "                 + texture2D(picture, at + vec2(-r.x, r.y), level) + texture2D(picture, at + r, level)).rgb;\n"
+    "}\n"
     "void main() {\n"
     "    vec3 middle = tap(vec2(0.0));\n"
     "    vec3 colour = middle;\n"
@@ -53,6 +63,11 @@ static const char* const fragment_source =
     "        vec3 sharp = (middle + (n + s + w + e) * weight) / (1.0 + 4.0 * weight);\n"
     "        colour += clamp(sharp, 0.0, 1.0) - middle;\n"
     "    }\n"
+    "    if (bloom > 0.0) {\n"
+    "        vec3 glow = 0.5 * blurred(3.0) + 0.3 * blurred(4.5) + 0.2 * blurred(6.0);\n"
+    "        vec3 light = clamp((glow - 0.7) / 0.3, 0.0, 1.0);\n"
+    "        colour = 1.0 - (1.0 - colour) * (1.0 - light * light * bloom);\n"
+    "    }\n"
     "    if (vibrance > 0.0) {\n"
     "        float grey = luma(colour);\n"
     "        float saturation = max(colour.r, max(colour.g, colour.b)) - min(colour.r, min(colour.g, colour.b));\n"
@@ -64,7 +79,7 @@ static const char* const fragment_source =
 
 static GLuint g_program;
 static BOOL   g_failed;
-static GLint  g_texel, g_fxaa, g_sharpen, g_vibrance, g_gamma;
+static GLint  g_texel, g_fxaa, g_sharpen, g_vibrance, g_gamma, g_bloom;
 
 static GLuint compile(GLenum kind, const char* source)
 {
@@ -117,6 +132,7 @@ static BOOL program_ready(void)
     g_sharpen = gl.GetUniformLocation(g_program, "sharpen");
     g_vibrance = gl.GetUniformLocation(g_program, "vibrance");
     g_gamma = gl.GetUniformLocation(g_program, "gamma");
+    g_bloom = gl.GetUniformLocation(g_program, "bloom");
     gl.UseProgram(0);
     g_failed = FALSE;
     log_line("post: the picture's finish is ready");
@@ -128,8 +144,9 @@ BOOL post_draw(GLuint texture, int w, int h, int x, int y, int fit_w, int fit_h)
     static const GLfloat corners[] = { -1, -1, 1, -1, -1, 1, 1, 1 };
     static const GLfloat places[] = { 0, 0, 1, 0, 0, 1, 1, 1 };
     float brightness = g_render.brightness > 0 ? g_render.brightness / 100.0f : 1;
+    BOOL glow = g_render.bloom > 0 && g_post_race;
 
-    if ((!g_render.fxaa && !g_render.sharpen && !g_render.vibrance && g_render.brightness == 100)
+    if ((!g_render.fxaa && !g_render.sharpen && !g_render.vibrance && g_render.brightness == 100 && !glow)
         || w <= 0 || h <= 0 || !program_ready())
         return FALSE;
 
@@ -141,12 +158,17 @@ BOOL post_draw(GLuint texture, int w, int h, int x, int y, int fit_w, int fit_h)
     gl.Disable(GL_FOG);
     gl.ActiveTexture(GL_TEXTURE0);
     gl.BindTexture(GL_TEXTURE_2D, texture);
+    if (glow) {
+        gl.GenerateMipmap(GL_TEXTURE_2D);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    }
 
     gl.UseProgram(g_program);
     gl.Uniform2f(g_texel, 1.0f / w, 1.0f / h);
     gl.Uniform1f(g_fxaa, g_render.fxaa ? 1.0f : 0.0f);
     gl.Uniform1f(g_sharpen, g_render.sharpen / 100.0f);
     gl.Uniform1f(g_vibrance, g_render.vibrance / 100.0f);
+    gl.Uniform1f(g_bloom, glow ? g_render.bloom / 100.0f : 0.0f);
     gl.Uniform1f(g_gamma, 1 / brightness);      /* the picture's middle tones raised, its ends kept */
 
     gl.DisableClientState(GL_COLOR_ARRAY);         /* the game's last draw may have left them on */
@@ -162,5 +184,7 @@ BOOL post_draw(GLuint texture, int w, int h, int x, int y, int fit_w, int fit_h)
     gl.DisableClientState(GL_TEXTURE_COORD_ARRAY);
     gl.DisableClientState(GL_VERTEX_ARRAY);
     gl.UseProgram(0);
+    if (glow)
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     return TRUE;
 }

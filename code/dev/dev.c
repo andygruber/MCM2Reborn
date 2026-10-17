@@ -144,11 +144,12 @@ void dev_install(void)
         g_render.sharpen = (int) read("graphics", "sharpen", 0, SETTINGS_FILE);
         g_render.vibrance = (int) read("graphics", "vibrance", 0, SETTINGS_FILE);
         g_render.brightness = (int) read("graphics", "brightness", 100, SETTINGS_FILE);
+        g_render.bloom = (int) read("graphics", "bloom", 0, SETTINGS_FILE);
     }
     log_line("dev build: graphics: vsync %d, anti-aliasing %dx, filtering %d, frame limit %d; "
-             "fxaa %d, sharpen %d, vibrance %d, brightness %d", g_render.vsync, g_render.samples,
+             "fxaa %d, sharpen %d, vibrance %d, brightness %d, bloom %d", g_render.vsync, g_render.samples,
              g_render.filtering, g_render.frame_limit, g_render.fxaa, g_render.sharpen, g_render.vibrance,
-             g_render.brightness);
+             g_render.brightness, g_render.bloom);
     if (read) {
         camera_options* c = &g_camera_options;
 
@@ -255,6 +256,7 @@ void dev_graphics_save(void)
     write_number("graphics", "sharpen", g_render.sharpen);
     write_number("graphics", "vibrance", g_render.vibrance);
     write_number("graphics", "brightness", g_render.brightness);
+    write_number("graphics", "bloom", g_render.bloom);
 }
 
 /* A clock for timing: milliseconds since it was first read. */

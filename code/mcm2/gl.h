@@ -255,7 +255,8 @@ void gl_present(void);
 
     The picture's finish (post.c), each 0 for the picture as the game drew it: `fxaa` 1 smooths
     its edges after it is drawn; `sharpen`, how much its detail is sharpened, and `vibrance`, how
-    much its dull colours are deepened, in percent; `brightness` in percent, 100 as drawn.
+    much its dull colours are deepened, in percent; `brightness` in percent, 100 as drawn; `bloom`,
+    how much the brightest light glows into what is around it, in percent, and only in a race.
 */
 typedef struct render_options {
     BOOL vsync;
@@ -266,6 +267,7 @@ typedef struct render_options {
     int  sharpen;
     int  vibrance;
     int  brightness;
+    int  bloom;
 } render_options;
 
 extern render_options g_render;
@@ -276,3 +278,6 @@ void gl_vsync_apply(void);
 /* The picture `texture` (w x h) drawn finished into the window's x, y, fit_w x fit_h; FALSE when
    it is to be drawn as it is: its finish all off, or no shaders (post.c). */
 BOOL post_draw(GLuint texture, int w, int h, int x, int y, int fit_w, int fit_h);
+
+/* Whether a race is on screen (the dev build's HUD knows): the menus are never given a glow. */
+extern BOOL g_post_race;

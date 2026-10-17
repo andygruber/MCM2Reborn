@@ -425,6 +425,7 @@ static const struct reborn_row {
     ROW("MultSharpen", percent_values, &g_render.sharpen),
     ROW("MultVibrance", percent_values, &g_render.vibrance),
     ROW("MultBrightness", brightness_values, &g_render.brightness),
+    ROW("MultBloom", percent_values, &g_render.bloom),
     ROW("MultFrameLimit", limit_values, &g_render.frame_limit),
     ROW("MultHudStyle", style_values, &g_reborn.hud),
     ROW("MultCamStyle", style_values, &g_reborn.cameras),
