@@ -17,10 +17,12 @@
 
     Berms (vehicleturn.c): a bank turned into holds the bike round, below.
 
-    Suspension (shock.c). Unleashed's springs are straight, as stiff as so many times the bike's
-    weight a foot (front 1.65, rear 2.55), damped at 0.3 and 0.4 of critical for the whole bike,
-    the shock's speed counted to 20 ft/s at most. The game's sprang harder the further in, from
-    nothing at full stretch, damped at 0.7 of critical for half the bike.
+    Suspension (shock.c). The game's springs, which stiffen the further in, damped as Unleashed
+    damps: at 0.3 (fork) and 0.4 (shock) of critical for the whole bike, the shock's speed counted
+    to 20 ft/s at most; the game damped at 0.7 of critical for half the bike. (Unleashed's straight
+    springs, 1.65 and 2.55 times the bike's weight a foot, were made for a bike whose weight sits
+    evenly on its wheels; on MCM2's, the fork carrying nearly three fifths of it, the fork
+    bottomed in every hard turn and the bike tipped over the front, the rear wheel up.)
 */
 
 #include "dev.h"
@@ -214,15 +216,15 @@ void physics_record(BYTE* bike)
 }
 
 /*
-    The Reborn shock's force: its spring as stiff as `stiffness` times the bike's weight a foot,
-    damped at `damping` of critical for the whole bike; `compression` the shock's squeeze as a
+    The Reborn shock's force: the game's spring `k` (lb/ft, its stiffness at this squeeze), damped
+    at Unleashed's part of critical for the whole bike; `compression` the shock's squeeze as a
     vector (its length the squeeze in feet), `speed` its rate. Writes the spring and damper's
     force and the damper's alone.
 */
-void reborn_shock(BOOL front, float mass, const float* compression, const float* speed, float* force, float* damper)
+void reborn_shock(BOOL front, float mass, float k, const float* compression, const float* speed, float* force,
+                  float* damper)
 {
-    float stiffness = front ? 1.65f : 2.55f, damping = front ? 0.3f : 0.4f;
-    float k = stiffness * mass * G;
+    float damping = front ? 0.3f : 0.4f;
     float c = -2 * damping * square_root(k * mass);
     float s = square_root(dot(speed, speed));
     int i;

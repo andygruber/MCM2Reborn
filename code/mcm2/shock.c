@@ -15,7 +15,8 @@
 
 #define INLINE_SHOCK_VTABLE 0x0055CE10      /* the fork's; the swingarm's is 0x0055CE1C */
 
-void reborn_shock(BOOL front, float mass, const float* compression, const float* speed, float* force, float* damper);
+void reborn_shock(BOOL front, float mass, float k, const float* compression, const float* speed, float* force,
+                  float* damper);
 #endif
 
 #define shock_squeeze(s)    FIELD(s, 0x70, float)
@@ -47,7 +48,7 @@ float* __fastcall shock_force_step(BYTE* self, void* edx_unused, float share, fl
     (void) unused;
 #ifdef OPENMCM2_DEV
     if (g_reborn.physics) {
-        reborn_shock(*(DWORD*) self == INLINE_SHOCK_VTABLE, mass, x, v, force, damper);
+        reborn_shock(*(DWORD*) self == INLINE_SHOCK_VTABLE, mass, k, x, v, force, damper);
         return force;
     }
 #endif
