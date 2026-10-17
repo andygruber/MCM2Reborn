@@ -47,6 +47,7 @@ namespace Mcm2Reborn.Launcher
         Bitmap photo;
         float changelogScroll, changelogHeight;
         RectangleF changelogArea;
+        int[] setupChosen;                          // the setup page's choices while it is open, else null
 
         readonly List<Hit> hits = new List<Hit>();
         Hit hover;
@@ -134,8 +135,30 @@ namespace Mcm2Reborn.Launcher
             photo?.Dispose();
             photo = LoadPhoto(Path.Combine(folder, @"UI\modern\photo1.tga"));
             status = "";
+            if (!Setup.Done(folder))
+                OpenSetup(true);
             CountPlayers();
             countTimer.Start();
+            Invalidate();
+        }
+
+        // The setup page, its choices as the settings are now; the first time, the unset ones at
+        // the recommended (the first after CLASSIC for the picture, else the first).
+        void OpenSetup(bool first)
+        {
+            setupChosen = Setup.Current(folder);
+            for (int c = 0; first && c < setupChosen.Length; c++)
+                if (setupChosen[c] < 0)
+                    setupChosen[c] = c == 0 ? 2 : 0;
+            Invalidate();
+        }
+
+        void SaveSetup()
+        {
+            Setup.Save(folder, setupChosen);
+            setupChosen = null;
+            status = "SETTINGS SAVED. EVERY ONE IS ALSO IN THE GAME'S OPTIONS";
+            statusColour = Theme.Green;
             Invalidate();
         }
 
@@ -324,6 +347,8 @@ namespace Mcm2Reborn.Launcher
             DrawTop(g);
             if (folder == null)
                 DrawInstall(g);
+            else if (setupChosen != null)
+                DrawSetup(g);
             else
                 DrawPlay(g);
             DrawChangelog(g);
@@ -405,6 +430,7 @@ namespace Mcm2Reborn.Launcher
                 FetchReleases();
             }, !busy);
             SmallButton(g, R(282, 384, 190, 46), "OPEN FOLDER", () => Process.Start("explorer.exe", "\"" + folder + "\""), true);
+            SmallButton(g, R(488, 384, 150, 46), "SETUP", () => OpenSetup(false), !busy);
             DrawStatus(g, 452);
         }
 
@@ -436,6 +462,48 @@ namespace Mcm2Reborn.Launcher
             y += 56;
             BigButton(g, R(36, y, 300, 62), "INSTALL  ›", InstallNow, !busy && copies.Count > 0);
             DrawStatus(g, y + 76);
+        }
+
+        void DrawSetup(Graphics g)
+        {
+            using (Font big = Theme.Heading(46))
+                Theme.Words(g, "SETUP", big, Theme.Paper, R(36, 118, 620, 64));
+            using (Font text = Theme.Text(14))
+                Theme.Words(g, "A QUICK START: CHANGE ANY OF IT LATER IN THE GAME'S OPTIONS.", text, Theme.Grey,
+                            R(36, 180, 640, 22));
+            float y = 222;
+            for (int c = 0; c < Setup.Choices.Length; c++, y += 76)
+            {
+                SetupChoice choice = Setup.Choices[c];
+                using (Font label = Theme.Heading(15))
+                    Theme.Words(g, choice.Title, label, Theme.Orange, R(36, y, 640, 22));
+                float x = 36, w = (640 - 10 * (choice.Presets.Length - 1)) / (float) choice.Presets.Length;
+                for (int p = 0; p < choice.Presets.Length; p++, x += w + 10)
+                {
+                    int which = c, preset = p;
+                    Option(g, R(x, y + 26, w, 40), choice.Presets[p].Name, setupChosen[c] == p,
+                           () => setupChosen[which] = preset);
+                }
+            }
+            BigButton(g, R(36, y + 4, 260, 58), "SAVE  ›", SaveSetup, !busy);
+            SmallButton(g, R(312, y + 10, 150, 46), "BACK", () => {
+                setupChosen = null;
+                Invalidate();
+            }, true);
+        }
+
+        void Option(Graphics g, RectangleF area, string words, bool on, Action pick)
+        {
+            Hit hit = Add(area, pick, !busy);
+            using (GraphicsPath path = Theme.Rounded(area, 8 * Theme.Scale))
+            using (var fill = new SolidBrush(on ? Theme.Orange : Hovered(hit) ? Theme.Raised : Color.FromArgb(220, Theme.Panel)))
+            using (var edge = new Pen(on ? Theme.Orange : Theme.Edge, Theme.Scale))
+            {
+                g.FillPath(fill, path);
+                g.DrawPath(edge, path);
+            }
+            using (Font font = Theme.Heading(14))
+                Theme.Words(g, words, font, on ? Theme.Ink : Theme.Paper, area, StringAlignment.Center);
         }
 
         void CopyRow(Graphics g, RectangleF area, GameCopy copy, bool on, Action pick)
