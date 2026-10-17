@@ -571,14 +571,14 @@ static void track_map(const hud_view* v)
 
 static void speedometer(const hud_view* v)
 {
-    const float r = 110, start = 150, sweep = 240;
+    const float r = 110, pad = 18, start = 150, sweep = 240;
     const int segments = 24;
-    float cx = g_width - MARGIN - 130, cy = BASE_H - MARGIN - 120;
+    float cx = g_width - MARGIN - r - pad, cy = BASE_H - MARGIN - r - pad;
     int lit = v->revs >= 0 ? (int) (v->revs * segments + 0.5f) : (int) (v->speed_mph / 80 * segments + 0.5f);
     char words[16];
     int k;
 
-    panel(cx - r - 18, cy - r - 18, cx + r + 18, cy + r - 6, 20, FALSE);
+    panel(cx - r - pad, cy - r - pad, cx + r + pad, cy + r + pad, 20, FALSE);
     for (k = 0; k < segments; k++) {
         float a0 = start + k * sweep / segments + 1.5f, a1 = start + (k + 1) * sweep / segments - 1.5f;
         colour c = k < lit ? (k >= segments - 3 ? RED : ORANGE) : DIM;
@@ -588,10 +588,13 @@ static void speedometer(const hud_view* v)
     wsprintfA(words, "%d", (int) (v->speed_mph + 0.5f));
     say(FIGURES, 80, cx, cy + 26, MIDDLE, PAPER, words);
     say(TEXT, 18, cx, cy + 56, MIDDLE, GREY, "MPH");
-    if (v->gear > 0) {
+    if (v->gear > 0) {                  /* "GEAR 3" in one line, in the dial's open foot */
+        float label = words_width(TEXT, 18, "GEAR"), x;
+
         wsprintfA(words, "%d", v->gear);
-        say(TEXT, 26, cx, cy + r - 24, MIDDLE, ORANGE, words);
-        say(TEXT, 14, cx, cy + r - 2, MIDDLE, GREY, "GEAR");
+        x = cx - (label + 10 + words_width(TEXT, 28, words)) / 2;
+        say(TEXT, 18, x, cy + r - 6, LEFT, GREY, "GEAR");
+        say(TEXT, 28, x + label + 10, cy + r - 6, LEFT, ORANGE, words);
     }
 }
 
