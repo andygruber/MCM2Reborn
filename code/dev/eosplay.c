@@ -138,7 +138,7 @@ static struct {
     ask_settings published;             /* the race last put on our lobby */
     ask_chat chat;                      /* our lobby's newest chat, put on it too */
 
-    struct { DWORD id; char name[EOS_NAME_SIZE]; } peers[16];
+    struct { DWORD id; char name[EOS_NAME_SIZE]; } peers[EOS_RIDERS_MOST - 1];
     int    peer_count;
 
     BOOL   player_made;
@@ -304,7 +304,7 @@ static void heard(BYTE kind, BYTE* fields, DWORD size)
         eos.answer = kind;
         break;
     case TELL_PEER:
-        if (eos.in_lobby && eos.peer_count < 16) {
+        if (eos.in_lobby && eos.peer_count < EOS_RIDERS_MOST - 1) {
             const tell_peer* peer = (const tell_peer*) fields;
 
             eos.peers[eos.peer_count].id = peer->peer;
@@ -603,7 +603,7 @@ static HRESULT WINAPI dp_enum_groups(dplay* self, const GUID* instance, players_
 static HRESULT WINAPI dp_enum_players(dplay* self, const GUID* instance, players_callback callback,
                                       void* context, DWORD flags)
 {
-    struct { DWORD id; char name[EOS_NAME_SIZE]; } players[17];
+    struct { DWORD id; char name[EOS_NAME_SIZE]; } players[EOS_RIDERS_MOST];
     int count = 0, i;
 
     (void) self;
@@ -673,7 +673,7 @@ static HRESULT WINAPI dp_get_caps(dplay* self, dp_caps* caps, DWORD flags)
     memset(caps, 0, sizeof *caps);
     caps->size = sizeof *caps;
     caps->buffer_most = EOS_DATA_MOST;
-    caps->players_most = 8;
+    caps->players_most = EOS_RIDERS_MOST;
     caps->latency = 50;
     caps->local_most = 1;
     caps->timeout = 5000;
@@ -734,7 +734,7 @@ static HRESULT WINAPI dp_get_session_desc(dplay* self, void* data, DWORD* size)
     session->size = sizeof *session;
     session->flags = eos.closed ? DPSESSION_NEWPLAYERSDISABLED : 0;
     lobby_guid(eos.lobby, &session->instance);
-    session->most = 8;
+    session->most = EOS_RIDERS_MOST;
     session->players = eos.peer_count + 1;
     session->name = eos.name;
     return DP_OK;
@@ -746,7 +746,7 @@ static HRESULT WINAPI dp_open(dplay* self, const dp_session* session, DWORD flag
     if (flags & DPOPEN_CREATE) {
         ask_host host = { 0 };
 
-        host.most = session->most ? session->most : 8;
+        host.most = session->most ? session->most : EOS_RIDERS_MOST;
         if (session->name)
             lstrcpynA(host.name, session->name, sizeof host.name);
         lstrcpynA(eos.name, host.name, sizeof eos.name);

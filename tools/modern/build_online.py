@@ -35,7 +35,9 @@ LIST_BOTTOM = CARD_TOP + CARDS * (CARD_H + CARD_GAP) - CARD_GAP
 HINT = (LEFT, LIST_BOTTOM + 20, CARD_RIGHT, 1268)     # where the mockup's join code will be
 DETAIL = (1640, CARD_TOP, RIGHT, HINT[3])
 THUMB = (20, 14, 210, CARD_H - 14)      # in a card
-RIDERS = 8                              # the gate's slots, and a lobby's riders at most
+RIDERS = 8                              # the pips on a card: how full its lobby is
+GATE = 30                               # a lobby's riders at most (code/eos/protocol.h)
+GATE_COLUMNS, GATE_ROW = 3, 24
 CHAT_LINES = 4                          # the host's newest, on its lobby (code/eos/protocol.h)
 PIP_W, PIP_H, PIP_GAP = 22, 16, 7
 TABS_Y = (PLACE[1], PLACE[1] + 60)
@@ -117,7 +119,7 @@ def tab_states(board, area, words, on):
 
 
 def pips(count):
-    """`count` of eight riders, as a row of squares."""
+    """A lobby `count` eighths full, as a row of squares."""
     img = clear((RIDERS * (PIP_W + PIP_GAP), PIP_H))
     d = ImageDraw.Draw(img)
     for k in range(RIDERS):
@@ -195,12 +197,14 @@ def build_detail(screen, board, events, gate_note):
 
     heading(board, "ON THE GATE", x0 + 40, y0 + 290, 26, PAPER)
     text(screen, "TxtDetailCount", (x1 - 240, y0 + 256, x1 - 40, y0 + 298), 28, ORANGE, "RIGHT")
-    slot_w = (x1 - x0 - 80 - 16) / 2
-    for k in range(RIDERS):
-        sx = x0 + 40 + (k % 2) * (slot_w + 16)
-        sy = y0 + 308 + (k // 2) * 60
-        box(board, (sx, sy, sx + slot_w, sy + 50), RAISED + (255,), 8, EDGE + (255,))
-        text(screen, "TxtRider%d" % k, (sx + 24, sy, sx + slot_w - 24, sy + 50), 26)
+    gate = (x0 + 40, y0 + 308, x1 - 40, y0 + 548)
+    box(board, gate, RAISED + (255,), 8, EDGE + (255,))
+    rows = -(-GATE // GATE_COLUMNS)
+    column_w = (gate[2] - gate[0] - 32) / GATE_COLUMNS
+    for k in range(GATE):
+        sx = gate[0] + 16 + (k // rows) * column_w
+        sy = gate[1] + (k % rows) * GATE_ROW
+        text(screen, "TxtRider%d" % k, (sx + 8, sy, sx + column_w - 8, sy + GATE_ROW), 20)
 
     # The race's settings, in boxes as the mockup's.
     box_w = (x1 - x0 - 80 - 3 * 16) / 4

@@ -64,16 +64,33 @@
 #define ENTRANT_FOUR_STROKE 0xF0
 #define ENTRANT_F4          0xF4    /* BYTE */
 
-/* The other players: 7 slots of {vtable, id, name[16]}, and the screen's flags about them. */
-#define mp_players        ((BYTE*) 0x0068FE48)
+/*
+    The other players: 7 slots of {vtable, id, name[16]}, and the screen's flags about them. In
+    the dev build a lobby has 30 riders (code/eos/protocol.h, EOS_RIDERS_MOST): the slots and their
+    flags are tables of 29 here, the teams one a player, and the screen shows as many as its
+    layout has rows for (mp_rows).
+*/
 #define PLAYER_SIZE       0x18
+#ifdef OPENMCM2_DEV
+#define PLAYER_SLOTS      29
+static BYTE g_mp_players[PLAYER_SLOTS * PLAYER_SIZE];
+static int  g_mp_ready[PLAYER_SLOTS + 1];           /* + 1: the original reads one past the slots */
+static int  g_mp_announced[PLAYER_SLOTS + 1];
+#define mp_players        g_mp_players
+#define mp_ready          g_mp_ready
+#define mp_announced      g_mp_announced
+#else
+#define mp_players        ((BYTE*) 0x0068FE48)
 #define PLAYER_SLOTS      7
+#endif
 #define PLAYER_CONSTRUCT  0x004B23B0
 #define PLAYER_DESTRUCT   0x005292D0
 #define player_id(i)      FIELD(mp_players + (i) * PLAYER_SIZE, 4, int)
 #define player_name(i)    ((char*) mp_players + (i) * PLAYER_SIZE + 8)
+#ifndef OPENMCM2_DEV
 #define mp_ready          ((int*) 0x0068FEFC)
 #define mp_announced      ((int*) 0x0068FF18)
+#endif
 #define mp_user_ready     (*(int*) 0x0068FF34)
 #define mp_player_count   (*(int*) 0x0068FF38)
 #define mp_track_state    (*(int*) 0x0068FF3C)     /* 0 the host's track, 2 none, 3 another */
@@ -89,8 +106,16 @@ typedef struct mp_team {
 
 #define MP_RACE_PAGE    0x7F58
 #define MP_BIKE_PAGE    0x7F5C
+#ifdef OPENMCM2_DEV
+#define MP_TEAMS        (PLAYER_SLOTS + 1)
+static mp_team g_mp_teams[MP_TEAMS];
+#define mp_teams(self)  ((void) (self), g_mp_teams)
+#else
 #define mp_teams(self)  ((mp_team*) ((self) + 0x7F68))
 #define MP_TEAMS        8
+#endif
+#define MP_RIDERS_MOST  MP_TEAMS                /* a race's riders, the players' and their computers' */
+#define TEAMS_DWORDS    (MP_TEAMS * (int) sizeof(mp_team) / 4)
 
 #define COMBO_BUTTON    0x1EC
 #define LIST_COUNT      0x1EC
@@ -684,7 +709,11 @@ typedef struct sort_entry {
     BYTE  unset[3];
 } sort_entry;
 
+#ifdef OPENMCM2_DEV
+#define race_grid ((grid_slot*) start_grid())
+#else
 #define race_grid ((grid_slot*) (game_main + 0x2EBC))
+#endif
 
 PORT(0x004F6F20)
 int __cdecl grid_by_key(const grid_slot* a, const grid_slot* b)
@@ -819,7 +848,11 @@ static void computers_pick(BYTE* self, int count)
         game_FUN_00539a96(race_grid, total, sizeof(grid_slot),
                           (int (__cdecl*)(const void*, const void*)) grid_by_key);
     } else {
+#ifdef OPENMCM2_DEV
+        sort_entry order[MP_RIDERS_MOST];
+#else
         sort_entry order[10];       /* the room the original has */
+#endif
 
         for (i = 0; i < total; i++) {
             order[i].key = (float) (game__rand() * (double) RAND_SCALE * 10.0f);
@@ -854,30 +887,153 @@ static void computers_pick(BYTE* self, int count)
 #define SETUP_ENGINES       0x898   /* int[8] */
 #define SETUP_FOUR_STROKES  0x8B8
 #define SETUP_SIZE          0x8D8
+#define SETUP_TEAM_DWORDS   0x18    /* the teams it has room for: 8 */
 
-PORT(0x004F71E0)
-void __fastcall mp_setup_send(BYTE* self, void* edx_unused, WORD full)
+#ifdef OPENMCM2_DEV
+/*
+    The dev build's set-up, for races of up to 30 riders: the settings, the teams and the start
+    grid, and each computer rider by its place in the race. It is too big for one of the game's
+    messages (0x8DD bytes at most), so it goes in parts (message 0x93, guaranteed as 0x83 is),
+    which the players gather, in whatever order they come, before taking it.
+*/
+#define MSG_SETUP_PART      0x93
+#define SETUP_PART_DATA     0x800
+
+typedef struct setup_rider {
+    int  skill;
+    char name[16];
+    char maker[0x40], bike[0x40], look[0x40];
+    int  engine, four_stroke;
+} setup_rider;
+
+typedef struct setup_whole {
+    DWORD       settings[0x7B];
+    DWORD       value_60c;
+    mp_team     teams[MP_TEAMS];
+    grid_slot   grid[MP_RIDERS_MOST];
+    setup_rider riders[MP_RIDERS_MOST];     /* the computers', by their place; the players' unused */
+} setup_whole;
+
+typedef struct setup_part {
+    DWORD header;
+    WORD  full;
+    WORD  setup;                            /* the host's count of set-ups, to tell them apart */
+    BYTE  part, parts;
+    WORD  size;
+    BYTE  data[SETUP_PART_DATA];
+} setup_part;
+
+static setup_whole g_setup_out, g_setup_in;
+static WORD g_setup_sent, g_setup_taking;
+static BYTE g_setup_got[sizeof(setup_whole) / SETUP_PART_DATA + 1];
+static BOOL g_setup_taken;
+
+static void setup_whole_send(BYTE* self, WORD full, int humans, int count)
 {
-    BYTE setup[SETUP_SIZE];
-    int count;
+    setup_whole* whole = &g_setup_out;
+    setup_part part;
+    int size, parts, i;
+
+    count = min(count, MP_RIDERS_MOST);
+    __stosd((unsigned long*) whole, 0, sizeof *whole / 4);
+    __movsd(whole->settings, (unsigned long*) race_settings, 0x7B);
+    whole->value_60c = FIELD(game_main, 0x60C, DWORD);
+    __movsd((unsigned long*) whole->teams, (unsigned long*) mp_teams(self), TEAMS_DWORDS);
+    __movsd((unsigned long*) whole->grid, (unsigned long*) race_grid, sizeof whole->grid / 4);
+    for (i = humans; full && i < count; i++) {
+        setup_rider* rider = &whole->riders[i];
+        BYTE* from = entrant(i);
+
+        rider->skill = FIELD(from, ENTRANT_SKILL, int);
+        text_copy_most(rider->name, (const char*) from + ENTRANT_NAME, 15);
+        text_copy_most(rider->maker, (const char*) from + ENTRANT_MAKER, 63);
+        text_copy_most(rider->bike, (const char*) from + ENTRANT_BIKE, 63);
+        text_copy_most(rider->look, (const char*) from + ENTRANT_LOOK, 63);
+        rider->engine = FIELD(from, ENTRANT_ENGINE, int);
+        rider->four_stroke = FIELD(from, ENTRANT_FOUR_STROKE, int);
+    }
+
+    size = (int) ((BYTE*) &whole->riders[full ? count : 0] - (BYTE*) whole);
+    parts = (size + SETUP_PART_DATA - 1) / SETUP_PART_DATA;
+    part.full = full;
+    part.setup = ++g_setup_sent;
+    part.parts = (BYTE) parts;
+    for (i = 0; i < parts; i++) {
+        int at = i * SETUP_PART_DATA;
+
+        part.part = (BYTE) i;
+        part.size = (WORD) min(size - at, SETUP_PART_DATA);
+        __movsb(part.data, (const BYTE*) whole + at, part.size);
+        game_FUN_004b0f20(game_net, NULL, MSG_SETUP_PART, &part,
+                          (DWORD) (part.data - (BYTE*) &part) + part.size, net_me, 0);
+    }
+}
+
+static void setup_whole_take(BYTE* self, const setup_whole* whole, WORD full)
+{
+    int count, i;
+
+    __movsd((unsigned long*) race_settings, whole->settings, 0x7B);
+    FIELD(game_main, 0x60C, DWORD) = whole->value_60c;
+    __movsd((unsigned long*) race_grid, (const unsigned long*) whole->grid, sizeof whole->grid / 4);
+    if (!full) {
+        mp_track_check(self);
+        return;
+    }
+    count = min(race_computers + race_humans, MP_RIDERS_MOST);
+    for (i = race_humans; i < count; i++) {
+        const setup_rider* rider = &whole->riders[i];
+        BYTE* to = entrant(i);
+
+        FIELD(to, ENTRANT_SKILL, int) = rider->skill;
+        text_copy_most((char*) to + ENTRANT_NAME, rider->name, 15);
+        FIELD(to, ENTRANT_INDEX, int) = i;
+        text_copy_most((char*) to + ENTRANT_MAKER, rider->maker, 63);
+        text_copy_most((char*) to + ENTRANT_BIKE, rider->bike, 63);
+        text_copy_most((char*) to + ENTRANT_LOOK, rider->look, 63);
+        FIELD(to, ENTRANT_ENGINE, int) = rider->engine;
+        FIELD(to, ENTRANT_FOUR_STROKE, int) = rider->four_stroke;
+    }
+    __movsd((unsigned long*) mp_teams(self), (const unsigned long*) whole->teams, TEAMS_DWORDS);
+    mp_race_start(self);
+}
+
+/* A part of the host's set-up; the set-up is taken once all its parts are in, and once only. */
+static void setup_part_take(BYTE* self, const setup_part* part)
+{
     int i;
 
-    (void) edx_unused;
-    race_humans = (BYTE) (mp_player_count + 1);
-    humans_count = race_humans;
-    FIELD(game_main, 0x3424, int) = race_computers;
-    riders_count = FIELD(game_main, 0x3424, int) + humans_count;
-    count = riders_count;
-    opponent_max = teams_share(mp_teams(self), NULL, mp_player_count + 1, race_computers);
-    if (opponent_max < race_computers)
-        race_computers = opponent_max;
-    if (full)
-        computers_pick(self, count);
+    if (part->parts == 0 || part->parts > sizeof g_setup_got || part->part >= part->parts
+        || part->size > SETUP_PART_DATA || part->part * SETUP_PART_DATA + part->size > sizeof g_setup_in)
+        return;
+    if (part->setup != g_setup_taking) {
+        g_setup_taking = part->setup;
+        g_setup_taken = FALSE;
+        __stosb(g_setup_got, 0, sizeof g_setup_got);
+        __stosd((unsigned long*) &g_setup_in, 0, sizeof g_setup_in / 4);
+    }
+    if (g_setup_taken)
+        return;
+    __movsb((BYTE*) &g_setup_in + part->part * SETUP_PART_DATA, part->data, part->size);
+    g_setup_got[part->part] = 1;
+    for (i = 0; i < part->parts; i++)
+        if (!g_setup_got[i])
+            return;
+    g_setup_taken = TRUE;
+    setup_whole_take(self, &g_setup_in, part->full);
+}
+#endif
+
+/* The game's set-up message, with room for 8 riders. */
+static void setup_send(BYTE* self, WORD full, int count)
+{
+    BYTE setup[SETUP_SIZE];
+    int i;
 
     FIELD(setup, SETUP_FULL, WORD) = full;
     __movsd((unsigned long*) (setup + SETUP_SETTINGS), (unsigned long*) race_settings, 0x7B);
     FIELD(setup, SETUP_60C, DWORD) = FIELD(game_main, 0x60C, DWORD);
-    __movsd((unsigned long*) (setup + SETUP_TEAMS), (unsigned long*) mp_teams(self), 0x18);
+    __movsd((unsigned long*) (setup + SETUP_TEAMS), (unsigned long*) mp_teams(self), SETUP_TEAM_DWORDS);
     if (full) {
         int humans = mp_player_count + 1;
         char name[0x80];
@@ -905,25 +1061,54 @@ void __fastcall mp_setup_send(BYTE* self, void* edx_unused, WORD full)
         }
     }
     game_FUN_004b0f20(game_net, NULL, MSG_SETUP, setup, SETUP_SIZE, net_me, 0);
+}
+
+PORT(0x004F71E0)
+void __fastcall mp_setup_send(BYTE* self, void* edx_unused, WORD full)
+{
+    int count;
+
+    (void) edx_unused;
+    race_humans = (BYTE) (mp_player_count + 1);
+    humans_count = race_humans;
+    FIELD(game_main, 0x3424, int) = race_computers;
+    riders_count = FIELD(game_main, 0x3424, int) + humans_count;
+    count = riders_count;
+    opponent_max = teams_share(mp_teams(self), NULL, mp_player_count + 1, race_computers);
+    if (opponent_max < race_computers)
+        race_computers = opponent_max;
+    if (full)
+        computers_pick(self, count);
+#ifdef OPENMCM2_DEV
+    setup_whole_send(self, full, mp_player_count + 1, count);
+#else
+    setup_send(self, full, count);
+#endif
     if (full)
         mp_race_start(self);
 }
 
-/* Message 0xF: the settings the screen shows, packed into bits, with the track and teams. */
+/*
+    Message 0xF: the settings the screen shows, packed into bits, with the track and teams. The
+    players and the computer riders have 4 bits each, 15 at most: the dev build's 30 go in full
+    in the two bytes the original leaves unset, and its teams are one a player.
+*/
 #define MSG_SETTINGS 0xF
 
 typedef struct settings_message {
     DWORD   header;
     BYTE    packed[5];
     BYTE    variant;
-    BYTE    unset[2];
+    BYTE    humans, computers;      /* the dev build's; the original leaves them unset */
     DWORD   settings_138;
     DWORD   settings_13c;
     char    track[0x40];
     mp_team teams[MP_TEAMS];
 } settings_message;
 
+#ifndef OPENMCM2_DEV
 _Static_assert(sizeof(settings_message) == 0xB4, "the settings message is 0xB4 bytes");
+#endif
 
 #define setting_byte(offset) FIELD(race_settings, offset, BYTE)
 
@@ -961,7 +1146,11 @@ void __fastcall mp_settings_send(BYTE* self)
     message.settings_138 = FIELD(race_settings, 0x138, DWORD);
     message.settings_13c = FIELD(race_settings, 0x13C, DWORD);
     message.variant = setting_byte(0x34);
-    __movsd((unsigned long*) message.teams, (unsigned long*) mp_teams(self), 0x18);
+#ifdef OPENMCM2_DEV
+    message.humans = race_humans;
+    message.computers = setting_byte(0x28);
+#endif
+    __movsd((unsigned long*) message.teams, (unsigned long*) mp_teams(self), TEAMS_DWORDS);
     message.track[0] = 0;
     game__strncat(message.track, race_track, 0x3F);
     game_FUN_004b0f20(game_net, NULL, MSG_SETTINGS, &message, sizeof message, net_me, 0);
@@ -1029,6 +1218,38 @@ void __fastcall mp_controls_update(BYTE* self)
     }
 }
 
+/*
+    The other players' rows the screen's layout has (NamePlayer2 on): the original's 7, the dev
+    build's own layout 29. Each row is the player in that slot.
+*/
+static int mp_rows(BYTE* self)
+{
+#ifdef OPENMCM2_DEV
+    static BYTE* counted;
+    static int rows;
+    char name[24];
+
+    if (self != counted) {
+        counted = self;
+        for (rows = 0; rows < PLAYER_SLOTS; rows++) {
+            game_FUN_0053a11f(name, NAME_PLAYER, rows + 2);
+            if (!dialog_find_control(self, NULL, name, 0))
+                break;
+        }
+    }
+    return rows;
+#else
+    (void) self;
+    return PLAYER_SLOTS;
+#endif
+}
+
+/* A player's colour in the chat, as "~%1d" takes it: 2 to 8 by its slot. */
+static int chat_colour(int slot)
+{
+    return 2 + slot % 7;
+}
+
 /* Start for the host only; the ready buttons' words, the players' (0x925) when hosting. */
 PORT(0x004F8510)
 void __fastcall mp_buttons_update(BYTE* self)
@@ -1048,7 +1269,7 @@ void __fastcall mp_buttons_update(BYTE* self)
     control_set_text(dialog_find_control(self, NULL, BUT_RDY_USER, 1), NULL, text);
     if (net_hosting)
         load_string(0x925, text);
-    for (i = 0; i < PLAYER_SLOTS; i++) {
+    for (i = 0; i < mp_rows(self); i++) {
         game_FUN_0053a11f(name, BUT_RDY_PLAYER, i + 2);
         control_set_text(dialog_find_control(self, NULL, name, 1), NULL, text);
     }
@@ -1097,7 +1318,7 @@ void __fastcall chat_show(BYTE* self, void* edx_unused, int player, const char* 
 
                 for (i = 0; i < PLAYER_SLOTS; i++) {
                     if (player_id(i) == player)
-                        game_FUN_0053a11f(line, CHAT_PLAYER, i + 2, name, text);
+                        game_FUN_0053a11f(line, CHAT_PLAYER, chat_colour(i), name, text);
                 }
             }
         }
@@ -1198,7 +1419,11 @@ static void rider_status_take(BYTE* self, const rider_status* status, int from, 
 {
     int i;
 
+#ifdef OPENMCM2_DEV
+    for (i = 0; i < PLAYER_SLOTS; i++) {
+#else
     for (i = 0; i < PLAYER_SLOTS + 1; i++) {
+#endif
         char name[0x80];
         BYTE* button;
         BYTE* rider;
@@ -1277,7 +1502,7 @@ static void setup_take(BYTE* self, const BYTE* setup)
         FIELD(rider, ENTRANT_ENGINE, int) = FIELD(setup, SETUP_ENGINES + i * 4, int);
         FIELD(rider, ENTRANT_FOUR_STROKE, int) = FIELD(setup, SETUP_FOUR_STROKES + i * 4, int);
     }
-    __movsd((unsigned long*) mp_teams(self), (unsigned long*) (setup + SETUP_TEAMS), 0x18);
+    __movsd((unsigned long*) mp_teams(self), (unsigned long*) (setup + SETUP_TEAMS), SETUP_TEAM_DWORDS);
     mp_race_start(self);
 }
 
@@ -1293,6 +1518,14 @@ static void settings_take(BYTE* self, const settings_message* message)
     FIELD(race_settings, 0x20, int) = packed[1] >> 3;
     FIELD(race_settings, 0x28, int) = packed[2] & 0xF;
     race_humans = packed[2] >> 4;
+#ifdef OPENMCM2_DEV
+    /* The full counts, when they are a dev build's (the original's bytes there are its stack's). */
+    if (message->humans <= MP_RIDERS_MOST && message->computers <= MP_RIDERS_MOST
+        && (message->humans & 0xF) == race_humans && (message->computers & 0xF) == (packed[2] & 0xF)) {
+        race_humans = message->humans;
+        FIELD(race_settings, 0x28, int) = message->computers;
+    }
+#endif
     FIELD(race_settings, 0x0C, int) = packed[3] & 7;
     FIELD(race_settings, 0x144, int) = packed[4] >> 4 & 1;
     FIELD(race_settings, 0x148, int) = packed[4] >> 5 & 1;
@@ -1307,7 +1540,7 @@ static void settings_take(BYTE* self, const settings_message* message)
     profile_set_event(game_profile, NULL, FIELD(race_settings, 0x08, DWORD));
     race_track[0] = 0;
     game__strncat(race_track, message->track, 0x3F);
-    __movsd((unsigned long*) mp_teams(self), (unsigned long*) message->teams, 0x18);
+    __movsd((unsigned long*) mp_teams(self), (unsigned long*) message->teams, TEAMS_DWORDS);
     mp_track_check(self);
 }
 
@@ -1337,6 +1570,10 @@ int __fastcall mp_screen_receive(BYTE* self, void* edx_unused, DWORD type, BYTE*
         rider_status_take(self, (const rider_status*) data, from, now);
     } else if (from && type == MSG_SETUP) {
         setup_take(self, data);
+#ifdef OPENMCM2_DEV
+    } else if (from && type == MSG_SETUP_PART) {
+        setup_part_take(self, (const setup_part*) data);
+#endif
     } else if (from && type == MSG_SETTINGS) {
         settings_take(self, (const settings_message*) data);
     } else if (from && type == MSG_CHAT) {
@@ -1369,10 +1606,21 @@ int __fastcall mp_screen_receive(BYTE* self, void* edx_unused, DWORD type, BYTE*
 #define MP_SCREEN_RACE_INFO 0x88E
 #define MP_SCREEN_LOBBY     0x868
 
-static const char* const kick_buttons[PLAYER_SLOTS] = {
+static const char* const kick_buttons[7] = {
     NAME(0x00579EB4), NAME(0x00579EA4), NAME(0x00579E94), NAME(0x00579E84),  /* "ButRdyPlayer2".. */
     NAME(0x00579E74), NAME(0x00579E64), NAME(0x00579E54),                    /* .."ButRdyPlayer8" */
 };
+
+/* Slot `i`'s kick button: the original's own names, past them ButRdyPlayer9 and on. */
+static const char* kick_button(int i)
+{
+    static char name[24];
+
+    if (i < 7)
+        return kick_buttons[i];
+    game_FUN_0053a11f(name, BUT_RDY_PLAYER, i + 2);
+    return name;
+}
 
 static void mp_tab_setup(BYTE* self, const char* name, UINT id)
 {
@@ -1475,17 +1723,19 @@ static void mp_screen_open(BYTE* self)
     control = dialog_find_control(self, NULL, BUT_RDY_USER, 0);
     control_set_colour(control, NULL, 0x808080);
     control_set_align(control, NULL, 0x12);
-    for (i = 0; i < PLAYER_SLOTS; i++) {
+    for (i = 0; i < mp_rows(self); i++) {
         game_FUN_0053a11f(text, BUT_RDY_PLAYER, i + 2);
         control = dialog_find_control(self, NULL, text, 0);
         control_set_colour(control, NULL, 0x808080);
         control_set_align(control, NULL, 0x12);
     }
     for (i = 0; i < PLAYER_SLOTS; i++) {
-        game_FUN_0053a11f(text, NAME_PLAYER, i + 2);
-        control = dialog_find_control(self, NULL, text, 0);
-        control_set_shadow(control, NULL, FALSE);
-        control_set_align(control, NULL, 0x12);
+        if (i < mp_rows(self)) {
+            game_FUN_0053a11f(text, NAME_PLAYER, i + 2);
+            control = dialog_find_control(self, NULL, text, 0);
+            control_set_shadow(control, NULL, FALSE);
+            control_set_align(control, NULL, 0x12);
+        }
         mp_ready[i] = 0;
         mp_announced[i] = 0;
     }
@@ -1583,12 +1833,16 @@ static void mp_screen_tick(BYTE* self)
         text_copy_most(player_name(mp_player_count), (const char*) player + 4, 15);
         teams_set(mp_teams(self), NULL, FIELD(player, 0, int), -1);
         mp_player_count++;      /* the original never checks it against the 7 slots */
+#ifdef OPENMCM2_DEV
+        if (mp_player_count == PLAYER_SLOTS)
+            break;
+#endif
     }
-    for (i = 0; i < PLAYER_SLOTS; i++) {
+    for (i = 0; i < mp_rows(self); i++) {
         game_FUN_0053a11f(text, NAME_PLAYER, i + 2);
         control_set_text(dialog_find_control(self, NULL, text, 0), NULL, player_name(i));
     }
-    for (i = 0; i < PLAYER_SLOTS; i++) {
+    for (i = 0; i < mp_rows(self); i++) {
         BYTE* button;
 
         game_FUN_0053a11f(text, BUT_RDY_PLAYER, i + 2);
@@ -1680,8 +1934,8 @@ static void mp_screen_click(BYTE* self, ui_event* event)
     } else if (clicked(event, HELP)) {
         profile_open_help(game_profile, NULL, HELP_TOPIC, 0);
     } else {
-        for (i = 0; i < PLAYER_SLOTS; i++) {
-            if (clicked(event, kick_buttons[i])) {
+        for (i = 0; i < mp_rows(self); i++) {
+            if (clicked(event, kick_button(i))) {
                 player_kick(self, NULL, i);
                 break;
             }

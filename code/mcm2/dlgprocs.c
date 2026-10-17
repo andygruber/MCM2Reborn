@@ -3862,7 +3862,8 @@ static BOOL online_connect(void)
 int __fastcall control_set_colour(BYTE* self, void* edx_unused, COLORREF colour);
 
 #define ONLINE_CARDS        5                       /* the sessions the game keeps */
-#define ONLINE_RIDERS       8
+#define ONLINE_PIPS         8                       /* a card's: how full its lobby is */
+#define ONLINE_RIDERS       30                      /* a lobby's names, the most there are */
 #define ONLINE_EVENTS       6                       /* race_kind 0 to 5 */
 #define session_name(i)     ((const char*) game_main + 0x1014 + (i) * 0x10C)
 #define session_instance(i) FIELD(game_main, 0x1118 + (i) * 0x10C, const GUID*)
@@ -3966,7 +3967,7 @@ static void online_fill_card(BYTE* self, int card, int session, BOOL chosen)
 {
     online_lobby lobby;
     char words[96], host[32];
-    int k;
+    int k, pips;
 
     online_lobby_of(session, &lobby);
     capitals(host, lobby.host, sizeof host);
@@ -3984,8 +3985,9 @@ static void online_fill_card(BYTE* self, int card, int session, BOOL chosen)
         wsprintfA(words, "%d / %d RIDERS", lobby.players, lobby.most);
     online_write(self, words, TEXT_PAPER, "Lobby%dRiders", card);
     online_write(self, lobby.closed ? "RACING" : "", TEXT_ORANGE, "Lobby%dTag", card);
-    for (k = 0; k <= ONLINE_RIDERS; k++)
-        online_show(self, lobby.most && k == min(lobby.players, ONLINE_RIDERS), "Lobby%dPips%d", card, k);
+    pips = lobby.most ? (lobby.players * ONLINE_PIPS + lobby.most - 1) / lobby.most : 0;
+    for (k = 0; k <= ONLINE_PIPS; k++)
+        online_show(self, lobby.most && k == min(pips, ONLINE_PIPS), "Lobby%dPips%d", card, k);
     for (k = 0; k < ONLINE_EVENTS; k++)
         online_show(self, k == lobby.kind, "Lobby%dPic%d", card, k);
     online_show(self, chosen, "Lobby%dChosen", card, 0);
@@ -4013,7 +4015,7 @@ static void online_fill_detail(BYTE* self, int session)
 {
     online_lobby lobby;
     char words[96], host[32];
-    int k;
+    int k, open_at;
 
     if (session < 0) {
         online_clear_detail(self);
@@ -4031,12 +4033,19 @@ static void online_fill_detail(BYTE* self, int session)
     if (lobby.most)
         wsprintfA(words, "%d / %d", lobby.players, lobby.most);
     online_write(self, words, TEXT_ORANGE, "TxtDetailCount", 0);
-    for (k = 0; k < ONLINE_RIDERS; k++) {
+    /* The riders on the gate, then how many places are open. */
+    for (k = 0, open_at = -1; k < ONLINE_RIDERS; k++) {
         capitals(words, lobby.riders[k], sizeof words);
-        if (!words[0] && k < lobby.most)
-            online_write(self, "OPEN", TEXT_GREY, "TxtRider%d", k);
-        else
+        if (words[0]) {
             online_write(self, words, TEXT_PAPER, "TxtRider%d", k);
+            continue;
+        }
+        words[0] = 0;
+        if (open_at < 0 && lobby.most > lobby.players) {
+            wsprintfA(words, "%d OPEN", lobby.most - lobby.players);
+            open_at = k;
+        }
+        online_write(self, words, TEXT_GREY, "TxtRider%d", k);
     }
     /* Quarry and tag are timed, not raced in laps. */
     words[0] = 0;
@@ -4065,7 +4074,7 @@ static void online_hide_card(BYTE* self, int card)
 
     for (k = 0; k < (int) (sizeof parts / sizeof *parts); k++)
         online_show(self, FALSE, parts[k], card, 0);
-    for (k = 0; k <= ONLINE_RIDERS; k++)
+    for (k = 0; k <= ONLINE_PIPS; k++)
         online_show(self, FALSE, "Lobby%dPips%d", card, k);
     for (k = 0; k < ONLINE_EVENTS; k++)
         online_show(self, FALSE, "Lobby%dPic%d", card, k);

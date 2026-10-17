@@ -181,7 +181,7 @@ typedef struct online_lobby {
     BOOL closed;                            /* racing: joining is closed */
     char host[32];
     char track[48];
-    char riders[8][32];                     /* the host's first; empty ones are open */
+    char riders[30][32];                    /* the host's first; empty ones are open */
     struct { char name[24], text[76]; } chat[4];    /* the host's lobby chat, the oldest first */
 } online_lobby;
 
@@ -211,5 +211,7 @@ void steptime_install(void);
 void riders_install(void);
 int  riders_most(void);
 
-/* A multiplayer race's riders, 0xF8 bytes each (game_main + 0x215C in the game; riders.c). */
+/* A multiplayer race's riders, 0xF8 bytes each, and its start grid, 8 bytes a place (game_main +
+   0x215C and + 0x2EBC in the game; riders.c). */
 BYTE* entrants(void);
+BYTE* start_grid(void);

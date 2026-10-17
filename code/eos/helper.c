@@ -25,7 +25,7 @@
 
 #include "protocol.h"
 
-#define BUCKET          "mcm2reborn:1"      /* one game, one version of its netcode */
+#define BUCKET          "mcm2reborn:2"      /* one game, one version of its netcode */
 #define ATTR_NAME       "NAME"
 #define ATTR_CLOSED     "CLOSED"
 #define ATTR_RIDER      "RIDER"             /* a member's: its rider's name */
@@ -39,7 +39,7 @@
 #define CHANNEL_PIECES  1                   /* a larger one's pieces, reliable and in order */
 #define CHANNEL_HELLO   2                   /* a peer's player name, reliable */
 #define PIECE_DATA      1100                /* under EOS_P2P_MAX_PACKET_SIZE, with a header */
-#define PEERS_MOST      16
+#define PEERS_MOST      EOS_RIDERS_MOST
 
 static FILE* log_file;
 static HANDLE pipe = INVALID_HANDLE_VALUE;
@@ -598,7 +598,7 @@ static void host(const ask_host* ask)
     strncpy(hosting_name, ask->name, sizeof hosting_name - 1);
     create.ApiVersion = EOS_LOBBY_CREATELOBBY_API_LATEST;
     create.LocalUserId = self;
-    create.MaxLobbyMembers = ask->most ? ask->most : 8;
+    create.MaxLobbyMembers = ask->most ? ask->most : EOS_RIDERS_MOST;
     create.PermissionLevel = EOS_LPL_PUBLICADVERTISED;
     create.bPresenceEnabled = EOS_FALSE;
     create.bAllowInvites = EOS_TRUE;

@@ -18,9 +18,9 @@
 #define EOS_NAME_SIZE       32          /* a rider's name, as the lobby shows it */
 #define EOS_LOBBY_ID_SIZE   64          /* an EOS lobby id, as text */
 #define EOS_SESSION_NAME_SIZE 64
-#define EOS_SESSIONS_MOST   8           /* the most a search returns (a TELL_SESSIONS fits a frame) */
+#define EOS_SESSIONS_MOST   5           /* the most a search returns (a TELL_SESSIONS fits a frame) */
 #define EOS_DATA_MOST       0x2000      /* the largest message the game sends is 0x8DC bytes */
-#define EOS_RIDERS_MOST     8           /* a lobby's members */
+#define EOS_RIDERS_MOST     30          /* a lobby's members, the most there may be */
 
 #pragma pack(push, 1)
 

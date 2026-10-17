@@ -17,6 +17,8 @@
       - The name tags (ChatOverlay) have room for 11 riders: the first 11 get them.
       - A multiplayer race's riders (the entrants, game_main + 0x215C, 0xF8 bytes each) had room
         for 8, the players' and their computers': they move to a table of 32 here (entrants).
+      - Its start grid (game_main + 0x2EBC, in the race's settings) had room for 20: it moves to a
+        table of 32 (start_grid), and LoadBikes's 8 flags of the riders placed to one of 32.
     The race's standings, the end-of-race sort and the quarry's ranking have room for 32 in
     standings.c.
 */
@@ -31,8 +33,8 @@ static int g_start_slots[RIDERS_MOST];
 /* A site: the bytes the game has there, and what goes in their place (an address of ours at `at`). */
 typedef struct site {
     DWORD       address;
-    BYTE        was[8];
-    BYTE        now[8];
+    BYTE        was[12];
+    BYTE        now[12];
     int         length;
     int         at;             /* where in `now` the address of ours goes, or -1 */
     const void* target;
@@ -47,6 +49,26 @@ static const site slot_sites[] = {
     { 0x0041C245, { 0x8B, 0x84, 0x24, 0x8C, 0x01, 0x00, 0x00 }, { 0xA1, 0, 0, 0, 0, 0x90, 0x90 }, 7, 1, g_start_slots },
     { 0x0041C5DA, { 0x8B, 0x94, 0x24, 0x98, 0x01, 0x00, 0x00 }, { 0x8B, 0x15, 0, 0, 0, 0, 0x90 }, 7, 2, g_start_slots },
     { 0x0041C882, { 0x8D, 0x8C, 0x24, 0x90, 0x01, 0x00, 0x00 }, { 0xB9, 0, 0, 0, 0, 0x90, 0x90 }, 7, 1, &g_start_slots[1] },
+};
+
+/*
+    LoadBikes's flags of the multiplayer riders placed on the grid, 8 ints on its stack at frame
+    offset -2544 (scratchpad riders/lb_frame.txt): cleared, then set by the entrant's index.
+*/
+static int g_placed[RIDERS_MOST];
+
+static const site placed_sites[] = {
+    { 0x0041B24F, { 0xB9, 0x08, 0x00, 0x00, 0x00 }, { 0xB9, 0x20, 0x00, 0x00, 0x00 }, 5, -1, NULL },   /* mov ecx, 8 */
+    { 0x0041B256, { 0x8D, 0xBC, 0x24, 0xDC, 0x00, 0x00, 0x00 }, { 0xBF, 0, 0, 0, 0, 0x90, 0x90 }, 7, 1, g_placed },
+    { 0x0041B534, { 0xC7, 0x84, 0xB4, 0xDC, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00 },
+                  { 0xC7, 0x04, 0xB5, 0, 0, 0, 0, 0x01, 0x00, 0x00, 0x00 }, 11, 3, g_placed },
+    { 0x0041B912, { 0xC7, 0x84, 0x9C, 0xDC, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00 },
+                  { 0xC7, 0x04, 0x9D, 0, 0, 0, 0, 0x01, 0x00, 0x00, 0x00 }, 11, 3, g_placed },
+    { 0x0041BDF4, { 0x8D, 0x84, 0x24, 0xDC, 0x00, 0x00, 0x00 }, { 0xB8, 0, 0, 0, 0, 0x90, 0x90 }, 7, 1, g_placed },
+    { 0x0041BE20, { 0xC7, 0x84, 0x9C, 0xDC, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00 },
+                  { 0xC7, 0x04, 0x9D, 0, 0, 0, 0, 0x01, 0x00, 0x00, 0x00 }, 11, 3, g_placed },
+    { 0x0041D401, { 0x8D, 0x8C, 0x24, 0xDC, 0x00, 0x00, 0x00 }, { 0xB9, 0, 0, 0, 0, 0x90, 0x90 }, 7, 1, g_placed },
+    { 0x0041D42B, { 0x89, 0xBC, 0x9C, 0xDC, 0x00, 0x00, 0x00 }, { 0x89, 0x3C, 0x9D, 0, 0, 0, 0 }, 7, 3, g_placed },
 };
 
 /*
@@ -75,6 +97,12 @@ static const site cue_sites[] = {
     { 0x0048BEF9, { 0x89, 0x84, 0x8E, 0xCC, 0x00, 0x00, 0x00 }, { 0x89, 0x84, 0x8E, 0xFC, 0x00, 0x00, 0x00 }, 7, -1, NULL },   /* mov dword ptr [esi + ecx*4 + 0xcc], eax */
     { 0x0048BF51, { 0x8D, 0x8E, 0xCC, 0x00, 0x00, 0x00 }, { 0x8D, 0x8E, 0xFC, 0x00, 0x00, 0x00 }, 6, -1, NULL },   /* lea ecx, [esi + 0xcc] */
     { 0x0048C804, { 0x8B, 0x84, 0x86, 0xCC, 0x00, 0x00, 0x00 }, { 0x8B, 0x84, 0x86, 0xFC, 0x00, 0x00, 0x00 }, 7, -1, NULL },   /* mov eax, dword ptr [esi + eax*4 + 0xcc] */
+};
+
+/* A session hosted (Net.cpp, 0x004B0AB0) takes 8 players: 30, as a lobby has room for (eosplay.c). */
+static const site session_sites[] = {
+    { 0x004B0B2E, { 0xC7, 0x44, 0x24, 0x38, 0x08, 0x00, 0x00, 0x00 },
+                  { 0xC7, 0x44, 0x24, 0x38, 0x1E, 0x00, 0x00, 0x00 }, 8, -1, NULL },   /* dwMaxPlayers = 8 */
 };
 
 /* RaceSound's filling (0x004E81A0): ebp the records filled, the next rider fetched at SOUND_NEXT. */
@@ -223,35 +251,58 @@ static const offset_site entrant_sites[] = {
     { 0x004E657C,  7, 3, { 0x8D, 0x94, 0xCA, 0x38, 0x22, 0x00, 0x00 } },   /* lea edx, [edx + ecx*8 + 0x2238] */
 };
 
-static BYTE  g_entrants[RIDERS_MOST * ENTRANT_SIZE];
-static BOOL  g_entrants_moved;
+/* The same for the start grid's, at game_main + 0x2EBC, 8 bytes a place. */
+#define GRID_AT         0x2EBC
+#define GRID_SIZE       8
 
-static void entrants_move(void)
+static const offset_site grid_sites[] = {
+    { 0x0041B4E7,  6, 2, { 0x8D, 0xB2, 0xC1, 0x2E, 0x00, 0x00 } },   /* lea esi, [edx + 0x2ec1] */
+    { 0x0041B510,  7, 3, { 0x8B, 0xBC, 0xCA, 0xBC, 0x2E, 0x00, 0x00 } },   /* mov edi, dword ptr [edx + ecx*8 + 0x2ebc] */
+    { 0x0041B8C3,  7, 3, { 0x8B, 0x8C, 0xC2, 0xBC, 0x2E, 0x00, 0x00 } },   /* mov ecx, dword ptr [edx + eax*8 + 0x2ebc] */
+    { 0x0041B8DA,  7, 3, { 0x8A, 0x9C, 0xC2, 0xC1, 0x2E, 0x00, 0x00 } },   /* mov bl, byte ptr [edx + eax*8 + 0x2ec1] */
+    { 0x0041BDC8,  7, 3, { 0x8B, 0xB4, 0xC2, 0xBC, 0x2E, 0x00, 0x00 } },   /* mov esi, dword ptr [edx + eax*8 + 0x2ebc] */
+    { 0x0041BDDF,  7, 3, { 0x8A, 0x9C, 0xC2, 0xC1, 0x2E, 0x00, 0x00 } },   /* mov bl, byte ptr [edx + eax*8 + 0x2ec1] */
+    { 0x0041D3D3,  7, 3, { 0x8B, 0xB4, 0xC8, 0xBC, 0x2E, 0x00, 0x00 } },   /* mov esi, dword ptr [eax + ecx*8 + 0x2ebc] */
+    { 0x0041D3E6,  7, 3, { 0x8A, 0x94, 0xC8, 0xC1, 0x2E, 0x00, 0x00 } },   /* mov dl, byte ptr [eax + ecx*8 + 0x2ec1] */
+};
+
+static BYTE g_entrants[RIDERS_MOST * ENTRANT_SIZE];
+static BYTE g_grid[RIDERS_MOST * GRID_SIZE];
+static BOOL g_entrants_moved, g_grid_moved;
+
+/* A table's uses moved from `from` to `to`, if every one is the game's as known. */
+static BOOL offsets_move(const char* what, const offset_site* sites, int count, const BYTE* from, const BYTE* to)
 {
-    int count = sizeof entrant_sites / sizeof entrant_sites[0];
-    DWORD by = (DWORD) g_entrants - (DWORD) (game_main + ENTRANTS_AT);
+    DWORD by = (DWORD) to - (DWORD) from;
     int i, k;
 
     for (i = 0; i < count; i++)
-        for (k = 0; k < entrant_sites[i].length; k++)
-            if (((const BYTE*) entrant_sites[i].address)[k] != entrant_sites[i].was[k]) {
-                log_line("dev build: the entrants left as they are (0x%08X is not the game's as known)",
-                         entrant_sites[i].address);
-                return;
+        for (k = 0; k < sites[i].length; k++)
+            if (((const BYTE*) sites[i].address)[k] != sites[i].was[k]) {
+                log_line("dev build: %s left as they are (0x%08X is not the game's as known)", what,
+                         sites[i].address);
+                return FALSE;
             }
     for (i = 0; i < count; i++) {
-        DWORD offset = *(const DWORD*) (entrant_sites[i].was + entrant_sites[i].at) + by;
+        DWORD offset = *(const DWORD*) (sites[i].was + sites[i].at) + by;
 
-        write_protected((void*) (entrant_sites[i].address + entrant_sites[i].at), &offset, 4);
+        write_protected((void*) (sites[i].address + sites[i].at), &offset, 4);
     }
-    g_entrants_moved = TRUE;
-    log_line("dev build: the entrants with room for %d", RIDERS_MOST);
+    log_line("dev build: %s with room for %d", what, RIDERS_MOST);
+    return TRUE;
 }
 
-/* The multiplayer race's riders: here when moved, else where the game keeps them. */
+#define OFFSETS(list) list, (int) (sizeof list / sizeof list[0])
+
+/* The multiplayer race's riders, and its start grid: here when moved, else where the game keeps them. */
 BYTE* entrants(void)
 {
     return g_entrants_moved ? g_entrants : game_main + ENTRANTS_AT;
+}
+
+BYTE* start_grid(void)
+{
+    return g_grid_moved ? g_grid : game_main + GRID_AT;
 }
 
 #define SITES(list) list, (int) (sizeof list / sizeof list[0])
@@ -305,7 +356,7 @@ static void enlarge(const char* what, const site* sites, int count)
 
     if (known)
         sites_write(sites, count);
-    log_line("dev build: %s %s", what, known ? "with room for 32" : "left as it is (not the game's as known)");
+    log_line("dev build: %s %s", what, known ? "made bigger" : "left as it is (not the game's as known)");
 }
 
 void riders_install(void)
@@ -316,7 +367,10 @@ void riders_install(void)
     enlarge("the visual cue's riders", SITES(cue_sites));
     log_line("dev build: the race's engine sounds %s", jump_over(SOUND_NEXT, sound_next_was,
              sizeof sound_next_was, sound_next) ? "for the nearest 11" : "left as they are (not the game's as known)");
-    entrants_move();
+    g_entrants_moved = offsets_move("the entrants", OFFSETS(entrant_sites), game_main + ENTRANTS_AT, g_entrants);
+    g_grid_moved = offsets_move("the start grid", OFFSETS(grid_sites), game_main + GRID_AT, g_grid);
+    enlarge("the riders placed on the grid", SITES(placed_sites));
+    enlarge("a hosted session's players", SITES(session_sites));
     log_line("dev build: the riders' name tags %s", jump_over(TAGS_NEXT, tags_next_was,
              sizeof tags_next_was, tags_next) ? "for the first 11" : "left as they are (not the game's as known)");
 }

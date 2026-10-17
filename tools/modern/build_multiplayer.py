@@ -14,7 +14,7 @@ from reborn_kit import EDGE, GREY, LEFT, ORANGE, PAPER, RIGHT, box, heading, sub
 from reborn_layout import (LABEL, Screen, arrow_states, button_states, colorref, font, segment_states, under,
                            xywh)
 from reborn_pages import (bike_picker, build_base, card_ground, card_info, chip, combo, engine_row, finish_bike,
-                          ground, page_info, plate_row, preview, radio, scroll_bar, stepper, table, text_button,
+                          ground, page_info, plate_row, preview, radio, scroll_bar, stepper, table,
                           toggle, bike_page)
 
 MP_PLACE = (LEFT, 274, 1700, 1264)          # the pages' room: the riders and the chat take the right
@@ -45,22 +45,46 @@ def drop(screen, board, name, row, label, list_h=230, start=0.42):
 
 # ---- MPBase ----
 
+LOBBY = 30                                  # a lobby's riders (code/eos/protocol.h, EOS_RIDERS_MOST)
+LOBBY_ROWS, LOBBY_PITCH, LOBBY_ROW_H = 15, 31, 27
+
+
+def keys_of(screen, section):
+    """A control of the original's, its keys but its place and pictures, to make more like it."""
+    keys = {}
+    for line in dict(screen.sections)[section]:
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key and key != "Xywh" and not key.startswith("Anim"):
+            keys[key] = value.strip()
+    return keys
+
+
 def riders_and_chat(screen, board):
-    """The riders: the player's Ready, then each other rider's (the host's Kick) and name; the
-    chat under them. The buttons' words are the game's."""
+    """The riders: the player's Ready, then each other rider's (the host's Kick) and name, 30 in
+    two columns; the chat under them. The buttons' words are the game's. The original has rows
+    for 8: those past them are made like its last."""
     kit.panel(board, RIDERS, 230)
     heading(board, "RIDERS", RIDERS[0] + 36, RIDERS[1] + 56, 28, ORANGE)
     x0, x1 = RIDERS[0] + 24, RIDERS[2] - 24
-    for k in range(8):
-        top = RIDERS[1] + 78 + k * 57
+    column_w = (x1 - x0 - 16) / 2
+    for k in range(LOBBY):
+        left = x0 + (k // LOBBY_ROWS) * (column_w + 16)
+        top = RIDERS[1] + 78 + (k % LOBBY_ROWS) * LOBBY_PITCH
         button = "ButRdyUser" if not k else "ButRdyPlayer%d" % (k + 1)
         name = "UserName" if not k else "NamePlayer%d" % (k + 1)
-        text_button(screen, board, button, (x0, top, x0 + 180, top + 50))
-        area = (x0 + 196, top, x1, top + 50)
-        box(board, area, (30, 31, 36, 255), 6, (ORANGE if not k else EDGE) + (255,))
-        keys = {"Xywh": xywh(area), "TextLMargin": "16", "TextTMargin": "0",
+        if k >= 8:
+            screen.add(button, **keys_of(screen, "ButRdyPlayer8"))
+            screen.add(name, **keys_of(screen, "NamePlayer8"))
+        area = (left, top, left + 96, top + LOBBY_ROW_H)
+        keys = {"TextColor": colorref(PAPER)}
+        keys.update(font(18, PAPER, "CENTER"))
+        screen.button(button, area, button_states(board, area, ""), keep_text=True, **keys)
+        area = (left + 104, top, left + column_w, top + LOBBY_ROW_H)
+        box(board, area, (30, 31, 36, 255), 5, (ORANGE if not k else EDGE) + (255,))
+        keys = {"Xywh": xywh(area), "TextLMargin": "10", "TextTMargin": "0",
                 "AnimNorm": screen.picture("M%s" % name, under(board, area))}
-        keys.update(font(26, PAPER))
+        keys.update(font(20, PAPER))
         screen.set(name, **keys)
 
     kit.panel(board, CHAT, 230)
