@@ -38,7 +38,7 @@ static const char* settings_file(void)
 
 dev_switches dev_settings = { 0 };     /* initialised, or it is a common symbol and lands in .data */
 camera_options g_camera_options = { 140, 0, 70, 0, 352 };
-reborn_options g_reborn = { 1, 1, 1, 11 };     /* riders: 11 until every table has room for 30 */
+reborn_options g_reborn = { 1, 1, 1, 30 };
 
 typedef UINT (WINAPI* read_int_fn)(LPCSTR section, LPCSTR key, INT fallback, LPCSTR file);
 

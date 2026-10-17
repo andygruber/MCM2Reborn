@@ -77,8 +77,18 @@ int __fastcall game_FUN_004ec820(BYTE* self, void* edx_unused, void* callback, v
 int __fastcall game_FUN_004ed460(BYTE* self, void* edx_unused, void* header, DWORD size,
                                  DWORD flag);
 
+#define VCR_RIDERS_MOST 11      /* the header's room */
+
+/*
+    The header holds 11 riders. In the dev build a race may have more (riders.c): the riders past
+    the 11th are not kept, and played back each takes the looks of one of the computers kept.
+*/
 static BYTE* vcr_rider(BYTE* self, int slot)
 {
+#ifdef OPENMCM2_DEV
+    if (slot >= VCR_RIDERS_MOST)
+        slot = 1 + (slot - 1) % (VCR_RIDERS_MOST - 1);
+#endif
     return self + VCR_RIDERS + slot * VCR_RIDER_SIZE;
 }
 
@@ -134,6 +144,10 @@ void __fastcall vcr_set_rider(BYTE* self, void* edx_unused, DWORD id, BYTE kind,
     BYTE* rider = vcr_rider(self, slot);
 
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (slot >= VCR_RIDERS_MOST)
+        return;
+#endif
     FIELD(rider, 0x0, DWORD) = id;
     FIELD(rider, 0x4, BYTE) = kind;
     text_copy_most((char*) rider + 0x05, name, 0xF);

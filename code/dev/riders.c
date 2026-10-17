@@ -11,6 +11,10 @@
         28th over the path it builds for the bike's files: its seven uses now read a table of 32.
       - The radar (RadarOverlay) and the visual cue (VisualCue) each list 11 bikes, the 12th over
         the list's count: the lists move to the end of their objects, made bigger.
+      - The race's engine sounds (RaceSound) fill a record for each rider with room for 11: the
+        filling stops at 11 (the player is the first), and racesound.c gives the records the
+        nearest bikes each frame.
+      - The name tags (ChatOverlay) have room for 11 riders: the first 11 get them.
     The race's standings, the end-of-race sort and the quarry's ranking have room for 32 in
     standings.c.
 */
@@ -70,6 +74,55 @@ static const site cue_sites[] = {
     { 0x0048C804, { 0x8B, 0x84, 0x86, 0xCC, 0x00, 0x00, 0x00 }, { 0x8B, 0x84, 0x86, 0xFC, 0x00, 0x00, 0x00 }, 7, -1, NULL },   /* mov eax, dword ptr [esi + eax*4 + 0xcc] */
 };
 
+/* RaceSound's filling (0x004E81A0): ebp the records filled, the next rider fetched at SOUND_NEXT. */
+#define SOUND_NEXT      0x004E8272  /* mov ecx, [edi + 34h]; lea eax, [esp + 10h] */
+#define SOUND_FETCH     0x004E8279  /* push eax; call the riders' next */
+#define SOUND_FILLED    0x004E8283  /* mov [edi + 94h], ebp */
+
+static const BYTE sound_next_was[] = { 0x8B, 0x4F, 0x34, 0x8D, 0x44, 0x24, 0x10 };
+
+static __declspec(naked) void sound_next(void)
+{
+    __asm {
+        cmp ebp, 11
+        jl more
+        push SOUND_FILLED
+        ret
+    more:
+        mov ecx, dword ptr [edi + 34h]
+        lea eax, [esp + 10h]
+        push SOUND_FETCH
+        ret
+    }
+}
+
+/* ChatOverlay's filling (0x00522D80): its riders' name tags, each a cell of a text atlas with
+   room for 13 (11 riders and the quarry's own), so the first 11 riders - the player first - get
+   them. ebp the riders taken. */
+#define TAGS_NEXT       0x00522DE7  /* call the riders' next; cmp eax, ebx; jne TAGS_MORE */
+#define TAGS_MORE       0x00522DC2
+#define TAGS_TAKEN      0x00522DF0
+#define RIDERS_NEXT     0x00421420
+
+static const BYTE tags_next_was[] = { 0xE8, 0x34, 0xE6, 0xEF, 0xFF, 0x3B, 0xC3, 0x75, 0xD2 };
+
+static __declspec(naked) void tags_next(void)
+{
+    __asm {
+        mov eax, RIDERS_NEXT
+        call eax
+        test eax, eax
+        jz taken
+        cmp ebp, 11
+        jge taken
+        push TAGS_MORE
+        ret
+    taken:
+        push TAGS_TAKEN
+        ret
+    }
+}
+
 #define SITES(list) list, (int) (sizeof list / sizeof list[0])
 
 static BOOL sites_are_the_games(const site* sites, int count)
@@ -98,6 +151,22 @@ static void sites_write(const site* sites, int count)
     }
 }
 
+/* A jump to `to` written over `at`, if the bytes there are still the game's; the rest nops. */
+static BOOL jump_over(DWORD at, const BYTE* was, int size, void (*to)(void))
+{
+    BYTE code[16];
+    int i;
+
+    for (i = 0; i < size; i++)
+        if (((const BYTE*) at)[i] != was[i])
+            return FALSE;
+    code[0] = 0xE9;
+    *(DWORD*) (code + 1) = (DWORD) to - (at + 5);
+    for (i = 5; i < size; i++)
+        code[i] = 0x90;
+    return write_protected((void*) at, code, size);
+}
+
 /* Each table made bigger only if all its bytes are the game's as known. */
 static void enlarge(const char* what, const site* sites, int count)
 {
@@ -114,6 +183,10 @@ void riders_install(void)
     enlarge("the riders' start slots", SITES(slot_sites));
     enlarge("the radar's riders", SITES(radar_sites));
     enlarge("the visual cue's riders", SITES(cue_sites));
+    log_line("dev build: the race's engine sounds %s", jump_over(SOUND_NEXT, sound_next_was,
+             sizeof sound_next_was, sound_next) ? "for the nearest 11" : "left as they are (not the game's as known)");
+    log_line("dev build: the riders' name tags %s", jump_over(TAGS_NEXT, tags_next_was,
+             sizeof tags_next_was, tags_next) ? "for the first 11" : "left as they are (not the game's as known)");
 }
 
 /* The most riders a single race may have: the player and the computers. */
