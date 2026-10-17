@@ -167,6 +167,9 @@ def build_game(data):
                                        ("RiderPositionCheckBox", "RIDER POSITION"))):
         switch(screen, board, name, rows_area(left, top, k), label)
     words(screen, board, "MultChatMode", rows_area(left, top, 5), "CHAT BOX (MULTIPLAYER)")
+    # Reborn's bike physics or the game's own (optionprocs.c, camera_rows): the game has no such row.
+    screen.add("MultPhysStyle", Type="MULTISTATE", SoundPush='"Beep"')
+    words(screen, board, "MultPhysStyle", rows_area(left, top, 6), "PHYSICS")
     top = panel(board, right, "GAME")
     for k, (name, label) in enumerate((("ChkPodiums", "END OF RACE ANIMATIONS"), ("ChkUIAnims", "MENU ANIMATIONS"),
                                        ("ChkIntroMovie", "INTRO MOVIE"), ("ChkPlayerIndicator", "PLAYER INDICATOR"),

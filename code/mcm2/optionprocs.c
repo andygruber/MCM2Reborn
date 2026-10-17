@@ -322,6 +322,11 @@ void __fastcall game_page_handle(BYTE* self, void* edx_unused, ui_event* event)
     }
 }
 
+#ifdef OPENMCM2_DEV
+static void camera_rows_show(BYTE* self);
+static void camera_rows_keep(BYTE* self);
+#endif
+
 /* Slot 31: the chat mode (0 to 2), and the tooltips unless the cursors are locked. */
 PORT(0x004B69E0)
 void __fastcall game_page_sync(BYTE* self, void* edx_unused, DWORD out)
@@ -332,8 +337,14 @@ void __fastcall game_page_sync(BYTE* self, void* edx_unused, DWORD out)
     (void) edx_unused;
     if (!out) {
         option_select(chat, NULL, chat_mode == 1 || chat_mode == 2 ? chat_mode : 0);
+#ifdef OPENMCM2_DEV
+        camera_rows_show(self);             /* the PHYSICS row */
+#endif
         return;
     }
+#ifdef OPENMCM2_DEV
+    camera_rows_keep(self);
+#endif
     mode = option_current_index(chat);
     chat_mode = mode == 1 || mode == 2 ? mode : 0;
     if (!cursors_locked)
@@ -406,7 +417,8 @@ static void renderer_rows_show(BYTE* self)
 
 /*
     The first-person view's rows (dev.h, camera_options), the Reborn or Classic ones on the
-    Graphics page, and the Advanced page's picture finish and frame limit (gl.h, g_render): each a list of the values it offers, clicked through; a setting from
+    Graphics page and the Game page's PHYSICS, and the Advanced page's picture finish and frame
+    limit (gl.h, g_render): each a list of the values it offers, clicked through; a setting from
     the file between two of them shows as the nearest. A page shows and keeps the rows it has.
 */
 #define CHOICES_MOST 16
@@ -431,6 +443,7 @@ static const struct camera_row {
 } camera_rows[] = {
     { "MultHudStyle", style_values, 2, &g_reborn.hud },
     { "MultCamStyle", style_values, 2, &g_reborn.cameras },
+    { "MultPhysStyle", style_values, 2, &g_reborn.physics },
     { "MultFpFov", fov_values, 9, &g_camera_options.fov },
     { "MultFpTilt", tilt_values, 5, &g_camera_options.tilt },
     { "MultFpPitch", pitch_values, 16, &g_camera_options.pitch },

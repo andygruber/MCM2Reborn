@@ -98,11 +98,13 @@ extern camera_options g_camera_options;
 /*
     Each of MCM2:Reborn's changes to how the race looks can be turned back to the original's, on
     the Graphics page, kept in [reborn]: 1 Reborn's, 0 the game's own. The HUD (hud.c, and the
-    original's overlays drawn again, overlays.c) and the first-person view (camera.c).
+    original's overlays drawn again, overlays.c) and the first-person view (camera.c); on the Game
+    page the bike's physics the same at any frame rate (steptime.c).
 */
 typedef struct reborn_options {
     int hud;
     int cameras;
+    int physics;
 } reborn_options;
 
 extern reborn_options g_reborn;
@@ -189,3 +191,6 @@ void inputfix_install(void);
 
 /* The terrain grid's cells kept inside it (gridfix.c). */
 void gridfix_install(void);
+
+/* The physics step's per-step constants taken by the step's length (steptime.c). */
+void steptime_install(void);
