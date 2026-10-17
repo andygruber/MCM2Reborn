@@ -485,6 +485,24 @@ static void WINAPI exit_process(UINT code)
 }
 
 #ifdef OPENMCM2_DEV
+/*
+    The game shows its 2000 licence through EBUEula.dll on a first run, and quits without a word
+    when that does not come back accepted; the DLL keeps FIRSTRUN under the game's key once it has.
+    MCM2:Reborn's own key starts empty, so FIRSTRUN is set there before the game starts, as the
+    portable copy's wrapper did.
+*/
+static void licence_accepted(void)
+{
+    DWORD one = 1, type = 0, size = sizeof one;
+    HKEY key;
+
+    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, GAME_KEY, 0, NULL, 0, KEY_READ | KEY_WRITE, NULL, &key, NULL))
+        return;
+    if (RegQueryValueExA(key, "FIRSTRUN", NULL, &type, NULL, &size) != ERROR_SUCCESS)
+        RegSetValueExA(key, "FIRSTRUN", 0, REG_DWORD, (const BYTE*) &one, sizeof one);
+    RegCloseKey(key);
+}
+
 static void key_redirect(void)
 {
     static const char key[] = GAME_KEY;
@@ -508,6 +526,9 @@ void profile_install(void)
     key_redirect();
 #endif
     load();
+#ifdef OPENMCM2_DEV
+    licence_accepted();
+#endif
 
     g_exit = _imp__ExitProcess;
     if (!write_protected(&_imp__ExitProcess, &mine, sizeof mine))
