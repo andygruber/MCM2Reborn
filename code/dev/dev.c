@@ -172,6 +172,12 @@ void dev_install(void)
         g_pad.deadzone = (int) read("gamepad", "deadzone", g_pad.deadzone, SETTINGS_FILE);
         g_pad.lean_stick = (int) read("gamepad", "lean_stick", g_pad.lean_stick, SETTINGS_FILE);
         g_pad.analog_di = (int) read("gamepad", "directinput_pads_analog", g_pad.analog_di, SETTINGS_FILE);
+        g_pad.smoothing = (int) read("gamepad", "smoothing", g_pad.smoothing, SETTINGS_FILE);
+        g_pad.sensitivity = (int) read("gamepad", "sensitivity", -1, SETTINGS_FILE);
+        if (g_pad.sensitivity < 0) {            /* saved before the sensitivity: the new curve too */
+            g_pad.sensitivity = 80;
+            g_pad.response = 30;
+        }
         for (a = 0; a < PAD_ACTIONS; a++)
             if (pad_keys[a]) {
                 int control = (int) read("gamepad", pad_keys[a], g_pad.bind[a], SETTINGS_FILE);
@@ -238,6 +244,8 @@ void dev_pad_save(void)
     write_number("gamepad", "deadzone", g_pad.deadzone);
     write_number("gamepad", "lean_stick", g_pad.lean_stick);
     write_number("gamepad", "directinput_pads_analog", g_pad.analog_di);
+    write_number("gamepad", "sensitivity", g_pad.sensitivity);
+    write_number("gamepad", "smoothing", g_pad.smoothing);
     for (a = 0; a < PAD_ACTIONS; a++)
         if (pad_keys[a])
             write_number("gamepad", pad_keys[a], g_pad.bind[a]);

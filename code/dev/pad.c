@@ -14,10 +14,11 @@
 
 #include <mmsystem.h>
 
-pad_options g_pad = { 1, 15, 15, 0, 1,
+pad_options g_pad = { 1, 30, 15, 0, 1,
                       /* steer left, right, lean forward, back: the sticks */
                       { 0, 0, 0, 0,
-                        PAD_RT, PAD_LT, PAD_A, PAD_B, PAD_Y, PAD_UP, PAD_BACK, PAD_LB, PAD_RB, PAD_X } };
+                        PAD_RT, PAD_LT, PAD_A, PAD_B, PAD_Y, PAD_UP, PAD_BACK, PAD_LB, PAD_RB, PAD_X },
+                      80, 1 };
 
 typedef struct xinput_state {           /* XINPUT_STATE */
     DWORD packet;
@@ -188,5 +189,35 @@ float pad_curve(float v)
     case 30: curved = size * size * size; break;
     default: curved = size; break;
     }
+    curved *= g_pad.sensitivity / 100.0f;
     return v < 0 ? -curved : curved;
+}
+
+/* The game's keys steer by 0.018 every 10 ms, 1.8 a second, and snap back to the middle when let
+   go or turned the other way (FUN_0048B050): with smoothing, a stick's steering grows no faster,
+   by time, whatever the frame rate. */
+#define KEYS_STEER_RATE 1.8f
+
+static float magnitude(float v)
+{
+    return v < 0 ? -v : v;
+}
+
+float pad_ramp(float v)
+{
+    static float now;
+    static DWORD at;
+    DWORD time = timeGetTime();
+    float seconds = at ? (time - at) / 1000.0f : 0, step;
+
+    at = time;
+    if (!g_pad.smoothing)
+        return now = v;
+    if (v * now < 0)
+        now = 0;                            /* turned the other way: from the middle, as the keys */
+    if (magnitude(v) <= magnitude(now))
+        return now = v;                     /* eased off: at once */
+    step = KEYS_STEER_RATE * (seconds < 0.1f ? seconds : 0.1f);
+    now = magnitude(v) - magnitude(now) > step ? now + (v < 0 ? -step : step) : v;
+    return now;
 }

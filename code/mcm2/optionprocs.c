@@ -407,6 +407,7 @@ static const int lean_values[] = { 0, 100, 200, 300, 352, 400, 500, 600 };
 static const int ai_rate_values[] = { 0, 30 };
 static const int riders_values[] = { 11, 16, 20, 24, 30 };
 static const int response_values[] = { 10, 15, 20, 30 };
+static const int sensitivity_values[] = { 40, 50, 60, 70, 80, 90, 100 };
 static const int deadzone_values[] = { 5, 10, 15, 20, 25, 30 };
 static const int stick_values[] = { 0, 1 };
 
@@ -442,6 +443,8 @@ static const struct reborn_row {
     ROW("MultPadOn", on_off_values, &g_pad.on),
     ROW("MultPadResponse", response_values, &g_pad.response),
     ROW("MultPadDeadzone", deadzone_values, &g_pad.deadzone),
+    ROW("MultPadSensitivity", sensitivity_values, &g_pad.sensitivity),
+    ROW("MultPadSmooth", on_off_values, &g_pad.smoothing),
     ROW("MultPadLean", stick_values, &g_pad.lean_stick),
     ROW("MultPadDirect", on_off_values, &g_pad.analog_di),
 };
@@ -489,7 +492,7 @@ static void row_words(const struct reborn_row* row, int value, char* words)
         wsprintfA(words, value ? "%d A SECOND" : "THE GAME'S", value);
     else if (row->values == response_values)
         lstrcpyA(words, value == 10 ? "STRAIGHT" : value == 15 ? "SMOOTH" : value == 20 ? "SOFT" : "THE GAME'S (CUBED)");
-    else if (row->values == deadzone_values)
+    else if (row->values == deadzone_values || row->values == sensitivity_values)
         wsprintfA(words, "%d%%", value);
     else if (row->values == stick_values)
         lstrcpyA(words, value ? "RIGHT STICK" : "LEFT STICK");

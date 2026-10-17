@@ -220,7 +220,8 @@ REBORN_COLUMNS = (
 # code/dev/pad.c). Actions 0 to 3, steering and lean, are the sticks.
 PAD_COLUMNS = (
     ("STICKS", (("MultPadOn", "XINPUT PADS"), ("MultPadResponse", "STEERING RESPONSE"),
-                ("MultPadDeadzone", "STICK DEAD ZONE"), ("MultPadLean", "LEAN WITH"),
+                ("MultPadDeadzone", "STICK DEAD ZONE"), ("MultPadSensitivity", "STEERING SENSITIVITY"),
+                ("MultPadSmooth", "STEERING SMOOTHING"), ("MultPadLean", "LEAN WITH"),
                 ("MultPadDirect", "OTHER PADS' STICKS"))),
     ("RIDING", (("BtnPad4", "ACCELERATE"), ("BtnPad5", "BRAKE"), ("BtnPad12", "CLUTCH"),
                 ("BtnPad13", "BACK UP"), ("BtnPad6", "STUNTS 1-8"), ("BtnPad7", "STUNTS 9-16"))),

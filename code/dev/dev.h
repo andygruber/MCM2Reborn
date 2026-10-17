@@ -49,9 +49,12 @@
 
         [gamepad]         the GAMEPAD page's: XInput pads (pad.c)
         xinput=1          the first XInput pad read
-        response=15       its stick's steering curve, in tenths: 10 straight, 15, 20, 30 the
+        response=30       its stick's steering curve, in tenths: 10 straight, 15, 20, 30 the
                           game's own cube (which the game gives its joysticks)
         deadzone=15       percent of a stick's travel, round its middle
+        sensitivity=80    percent of full lock the stick's whole travel steers
+        smoothing=1       the stick's steering built up at the game's own rate for keys, 1.8 a
+                          second, and let go of at once, as the keys' is (0 as the stick is)
         lean_stick=0      0 the left stick leans, 1 the right
         directinput_pads_analog=1  a DirectInput pad (a DualSense) steers by its axes
         accelerate=8 ...  each action's pad control, by enum pad_control (0 none)
@@ -254,6 +257,8 @@ typedef struct pad_options {
     int lean_stick;                     /* 0 the left stick leans, 1 the right */
     int analog_di;                      /* DirectInput game pads (a DualSense) steer by their axes */
     int bind[PAD_ACTIONS];              /* each action's control (pad_control); 0..3 are the sticks */
+    int sensitivity;                    /* percent of full lock at the stick's edge */
+    int smoothing;                      /* the stick's steering built up at the keys' rate */
 } pad_options;
 
 extern pad_options g_pad;
@@ -267,8 +272,10 @@ BOOL  pad_start_down(void);
 BOOL  pad_connected(void);
 /* The first control down that an action may be given, or PAD_NONE (the GAMEPAD page's binding). */
 int   pad_pressed(void);
-/* A stick's steering through the chosen response. */
+/* A stick's steering through the chosen response and sensitivity. */
 float pad_curve(float v);
+/* An analog stick's steering, each frame, built up as the game builds the keys' (with smoothing). */
+float pad_ramp(float v);
 void  dev_pad_save(void);
 /* Whether the modern menus are on and UI\modern has `file` (a screen's own layout). */
 BOOL  dev_modern_has(const char* file);
