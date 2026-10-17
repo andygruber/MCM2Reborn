@@ -11,3 +11,6 @@ __pycache__/
 .vscode/
 *.swp
 .mcp.json
+
+# Shipped game content, built by tools/content.py (too big for git; it goes in the release)
+dist/content/
