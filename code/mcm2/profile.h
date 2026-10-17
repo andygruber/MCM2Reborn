@@ -8,6 +8,11 @@
 
     The file holds one object per key, named by its path below the game's key ("" for the key
     itself), and each value as [type, "hex bytes"].
+
+    The game's card profile (DriverInfo) of OpenMCM2's renderer is kept apart, in
+    openmcm2_drivers.json the same way, and the original game's left in mcm2_profile.json and the
+    registry as it was: shared, each game's run overwrote the other's, and the original game,
+    given OpenMCM2's, crashed as it started.
 */
 
 #pragma once

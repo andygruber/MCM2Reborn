@@ -1,5 +1,6 @@
 /*
-    OpenMCM2 - the game's settings, kept in mcm2_profile.json beside it. See profile.h.
+    OpenMCM2 - the game's settings, kept in mcm2_profile.json beside it, and its renderer's own card
+    profile in openmcm2_drivers.json. See profile.h.
 */
 
 #include "profile.h"
@@ -8,6 +9,8 @@
 #include <intrin.h>
 
 #define PROFILE_FILE "mcm2_profile.json"
+#define DRIVERS_FILE "openmcm2_drivers.json"
+#define DRIVERS_KEY  "DriverInfo"
 #define GAME_KEY     "Software\\Microsoft\\Microsoft Games\\Motocross Madness 2"
 
 #define MAX_NAME  256
@@ -137,75 +140,135 @@ static BOOL load_key(reader* r, HKEY key, BYTE* value)
             !expect(r, ']'))
             return FALSE;
 
-        RegSetValueExA(key, name, 0, type, value, length);
+        if (key)
+            RegSetValueExA(key, name, 0, type, value, length);
     }
     while (expect(r, ','));
 
     return expect(r, '}');
 }
 
-static void load(void)
+/* DriverInfo and the keys under it: the card profile the game makes of each display card. */
+static BOOL is_drivers(const char* subkey)
 {
-    HANDLE file = CreateFileA(PROFILE_FILE, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    int n = lstrlenA(DRIVERS_KEY);
+    char head[16];
+
+    lstrcpynA(head, subkey, n + 1);
+    return !lstrcmpiA(head, DRIVERS_KEY) && (subkey[n] == 0 || subkey[n] == '\\');
+}
+
+/*
+    The original game's card profile, as PROFILE_FILE had it: the text of its entries, kept to be
+    written back unchanged. OpenMCM2's renderer is profiled as a card of its own; with the two in
+    one place each run of either game overwrote the other's, and the original game, given
+    OpenMCM2's, crashed in its DirectDraw as it started.
+*/
+static char* g_theirs;
+static DWORD g_theirs_length;
+
+static void keep_theirs(const char* from, const char* to)
+{
+    DWORD n = (DWORD) (to - from);
+
+    if (!g_theirs)
+        return;
+    if (g_theirs_length)
+        g_theirs[g_theirs_length++] = ',';
+    __movsb((unsigned char*) g_theirs + g_theirs_length, (const unsigned char*) from, n);
+    g_theirs_length += n;
+}
+
+/*
+    The keys in `text` into the registry; with `set_aside`, the card profile's are kept in
+    g_theirs instead. Returns how many keys were read, or -1 if the text is malformed.
+*/
+static int load_text(const char* text, DWORD size, BOOL set_aside, BYTE* value)
+{
     char subkey[MAX_NAME], path[MAX_KEY_PATH];
-    DWORD size, got;
-    char* text;
-    BYTE* value;
     reader r;
     int keys = 0;
 
+    r.at = text;
+    r.end = text + size;
+    if (!expect(&r, '{') || expect(&r, '}'))
+        return 0;
+    do
+    {
+        const char* entry;
+        HKEY key = NULL;
+        BOOL aside;
+
+        skip_space(&r);
+        entry = r.at;
+        if (!read_string(&r, subkey, sizeof subkey) || !expect(&r, ':'))
+            return -1;
+        aside = set_aside && is_drivers(subkey);
+        join_key(path, subkey);
+        if (!aside && RegCreateKeyExA(HKEY_LOCAL_MACHINE, path, 0, NULL, 0, KEY_WRITE, NULL, &key, NULL))
+            return -1;
+        if (!load_key(&r, key, value))
+        {
+            if (key)
+                RegCloseKey(key);
+            return -1;
+        }
+        if (key)
+            RegCloseKey(key);
+        if (aside)
+            keep_theirs(entry, r.at);
+        ++keys;
+    }
+    while (expect(&r, ','));
+    return expect(&r, '}') ? keys : -1;
+}
+
+/* A file's text, with MAX_VALUE bytes of room after it; NULL if there is none. */
+static char* read_file(const char* name, DWORD* size)
+{
+    HANDLE file = CreateFileA(name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    DWORD got;
+    char* text;
+
     if (file == INVALID_HANDLE_VALUE)
+        return NULL;
+    *size = GetFileSize(file, NULL);
+    text = (char*) VirtualAlloc(NULL, *size + MAX_VALUE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (text && (!ReadFile(file, text, *size, &got, NULL) || got != *size))
+    {
+        VirtualFree(text, 0, MEM_RELEASE);
+        text = NULL;
+    }
+    CloseHandle(file);
+    return text;
+}
+
+static void load(void)
+{
+    DWORD size;
+    char* text = read_file(PROFILE_FILE, &size);
+    int keys;
+
+    if (!text)
     {
         log_line("profile: no %s yet - the game starts from its defaults", PROFILE_FILE);
         return;
     }
-
-    size = GetFileSize(file, NULL);
-    text = (char*) VirtualAlloc(NULL, size + MAX_VALUE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!text || !ReadFile(file, text, size, &got, NULL) || got != size)
-    {
-        CloseHandle(file);
-        if (text)
-            VirtualFree(text, 0, MEM_RELEASE);
-        log_line("profile: could not read %s", PROFILE_FILE);
-        return;
-    }
-    CloseHandle(file);
-
-    value = (BYTE*) text + size;
-    r.at = text;
-    r.end = text + size;
-
-    if (expect(&r, '{') && !expect(&r, '}'))
-    {
-        do
-        {
-            HKEY key;
-
-            if (!read_string(&r, subkey, sizeof subkey) || !expect(&r, ':'))
-                break;
-
-            join_key(path, subkey);
-            if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, path, 0, NULL, 0, KEY_WRITE, NULL, &key, NULL))
-                break;
-
-            if (!load_key(&r, key, value))
-            {
-                RegCloseKey(key);
-                break;
-            }
-            RegCloseKey(key);
-            ++keys;
-        }
-        while (expect(&r, ','));
-    }
-
-    if (r.at < r.end && !expect(&r, '}'))
-        log_line("profile: %s is malformed after %d keys", PROFILE_FILE, keys);
+    g_theirs = (char*) VirtualAlloc(NULL, size + 1, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    keys = load_text(text, size, TRUE, (BYTE*) text + size);
+    if (keys < 0)
+        log_line("profile: %s is malformed", PROFILE_FILE);
     else
         log_line("profile: loaded %d keys from %s", keys, PROFILE_FILE);
-
     VirtualFree(text, 0, MEM_RELEASE);
+
+    text = read_file(DRIVERS_FILE, &size);
+    if (text)
+    {
+        keys = load_text(text, size, FALSE, (BYTE*) text + size);
+        log_line("profile: the renderer's card profile, %d keys from %s", keys, DRIVERS_FILE);
+        VirtualFree(text, 0, MEM_RELEASE);
+    }
 }
 
 /* ------------------------------------------------------------------ writing it back */
@@ -281,8 +344,9 @@ static void save_values(writer* w, HKEY key, enum_value_fn enum_value, BYTE* val
     put(w, first ? "}" : "\n }");
 }
 
-/* `subkey` and everything below it, each as its own entry. */
-static void save_key(writer* w, const char* subkey, enum_value_fn enum_value, BYTE* value, int* entries)
+/* `subkey` and everything below it, each as its own entry; with `no_drivers`, not the card profile. */
+static void save_key(writer* w, const char* subkey, enum_value_fn enum_value, BYTE* value, int* entries,
+                     BOOL no_drivers)
 {
     char path[MAX_KEY_PATH], child[MAX_NAME], below[MAX_KEY_PATH];
     HKEY key;
@@ -304,49 +368,89 @@ static void save_key(writer* w, const char* subkey, enum_value_fn enum_value, BY
         if (*subkey)
             lstrcpyA(below + lstrlenA(below), "\\");
         lstrcpyA(below + lstrlenA(below), child);
-        save_key(w, below, enum_value, value, entries);
+        if (!no_drivers || !is_drivers(below))
+            save_key(w, below, enum_value, value, entries, no_drivers);
     }
     RegCloseKey(key);
 }
 
-static void save(void)
+/* `w` written to `name`: beside it and then moved over it, so an interrupted save cannot lose it. */
+static void write_file(const char* name, const writer* w, int entries)
 {
     typedef BOOL (WINAPI *move_fn)(LPCSTR, LPCSTR, DWORD);
-    enum_value_fn enum_value = (enum_value_fn) api("advapi32.dll", "RegEnumValueA");
     move_fn move = (move_fn) api("kernel32.dll", "MoveFileExA");
-    writer w;
-    BYTE* value;
+    char temporary[MAX_PATH];
     HANDLE file;
     DWORD written;
+
+    wsprintfA(temporary, "%s.new", name);
+    file = CreateFileA(temporary, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+    if (move && entries && w->length < w->capacity && file != INVALID_HANDLE_VALUE &&
+        WriteFile(file, w->text, w->length, &written, NULL) && written == w->length)
+    {
+        CloseHandle(file);
+        if (move(temporary, name, MOVEFILE_REPLACE_EXISTING))
+            log_line("profile: saved %d keys to %s", entries, name);
+    }
+    else if (file != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(file);
+        DeleteFileA(temporary);
+    }
+}
+
+/*
+    The settings back to PROFILE_FILE with the original game's card profile as it was, and the
+    renderer's to DRIVERS_FILE; then the original's put back in the registry, for the original game
+    started on its own.
+*/
+static void save(void)
+{
+    typedef LONG (WINAPI *delete_tree_fn)(HKEY, LPCSTR);
+    enum_value_fn enum_value = (enum_value_fn) api("advapi32.dll", "RegEnumValueA");
+    delete_tree_fn delete_tree = (delete_tree_fn) api("advapi32.dll", "RegDeleteTreeA");
+    char path[MAX_KEY_PATH];
+    writer w;
+    BYTE* value;
     int entries = 0;
 
-    if (!enum_value || !move)
+    if (!enum_value)
         return;
 
     w.capacity = 4 << 20;
-    w.length = 0;
     w.text = (char*) VirtualAlloc(NULL, w.capacity + MAX_VALUE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!w.text)
         return;
     value = (BYTE*) w.text + w.capacity;
 
+    w.length = 0;
     put(&w, "{");
-    save_key(&w, "", enum_value, value, &entries);
-    put(&w, "\n}");
-
-    /* Written beside it and then moved over it, so an interrupted save cannot lose the profile. */
-    file = CreateFileA(PROFILE_FILE ".new", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
-    if (entries && w.length < w.capacity && file != INVALID_HANDLE_VALUE &&
-        WriteFile(file, w.text, w.length, &written, NULL) && written == w.length)
+    save_key(&w, "", enum_value, value, &entries, TRUE);
+    if (entries && g_theirs_length && w.length + g_theirs_length + 4 < w.capacity)
     {
-        CloseHandle(file);
-        if (move(PROFILE_FILE ".new", PROFILE_FILE, MOVEFILE_REPLACE_EXISTING))
-            log_line("profile: saved %d keys to %s", entries, PROFILE_FILE);
+        put(&w, ",");
+        __movsb((unsigned char*) w.text + w.length, (const unsigned char*) g_theirs, g_theirs_length);
+        w.length += g_theirs_length;
     }
-    else if (file != INVALID_HANDLE_VALUE)
+    put(&w, "\n}");
+    write_file(PROFILE_FILE, &w, entries);
+
+    entries = 0;
+    w.length = 0;
+    put(&w, "{");
+    save_key(&w, DRIVERS_KEY, enum_value, value, &entries, FALSE);
+    put(&w, "\n}");
+    write_file(DRIVERS_FILE, &w, entries);
+
+    join_key(path, DRIVERS_KEY);
+    if (delete_tree)
+        delete_tree(HKEY_LOCAL_MACHINE, path);
+    if (g_theirs_length && g_theirs_length + 2 < w.capacity)
     {
-        CloseHandle(file);
-        DeleteFileA(PROFILE_FILE ".new");
+        w.text[0] = '{';
+        __movsb((unsigned char*) w.text + 1, (const unsigned char*) g_theirs, g_theirs_length);
+        w.text[g_theirs_length + 1] = '}';
+        load_text(w.text, g_theirs_length + 2, FALSE, value);
     }
 
     VirtualFree(w.text, 0, MEM_RELEASE);
