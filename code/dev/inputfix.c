@@ -10,7 +10,14 @@
     So every device the game makes is watched: what is held is followed through its data, and
     each time the game acquires the device again (after it was lost, or the first time) the next
     data it reads begins with the device as it is now - a release for each button no longer held
-    and, for a joystick, each axis and hat where it now is.
+    and, for a joystick, each axis and hat where it now is. Each read of the keyboard or a joystick
+    after that also checks what it thinks held against the device itself, and lets go what is no
+    longer down (not the mouse's: its state is its movement since the last, which the game reads).
+
+    And the game gets its devices back only from the window's focus messages: its keyboard read
+    acquires again on DIERR_INPUTLOST alone, and the game's own Unacquire leaves it at
+    DIERR_NOTACQUIRED (scratchpad input/input.md, "Focus / alt-tab"). So a read that finds its
+    device not acquired while the game's window is the one in front acquires it and reads again.
 */
 
 #include "dev.h"
@@ -52,6 +59,9 @@ typedef HRESULT (WINAPI* acquire_fn)(void*);
 typedef HRESULT (WINAPI* state_fn)(void*, DWORD, void*);
 typedef HRESULT (WINAPI* data_fn)(void*, DWORD, object_data*, DWORD*, DWORD);
 typedef HRESULT (WINAPI* format_fn)(void*, const data_format*);
+typedef HWND    (WINAPI* foreground_fn)(void);
+typedef DWORD   (WINAPI* window_process_fn)(HWND, DWORD*);
+typedef DWORD   (WINAPI* process_id_fn)(void);
 
 extern create_fn _imp__DirectInputCreateEx;     /* the game's own import slot */
 
@@ -62,6 +72,26 @@ static acquire_fn          g_acquire;
 static state_fn            g_get_state;
 static data_fn             g_get_data;
 static format_fn           g_set_format;
+
+/* The window in front is one of the game's. */
+static BOOL game_in_front(void)
+{
+    static foreground_fn foreground;
+    static window_process_fn window_process;
+    static process_id_fn process_id;
+    DWORD owner = 0;
+    HWND window;
+
+    if (!foreground) {
+        foreground = (foreground_fn) api("user32.dll", "GetForegroundWindow");
+        window_process = (window_process_fn) api("user32.dll", "GetWindowThreadProcessId");
+        process_id = (process_id_fn) api("kernel32.dll", "GetCurrentProcessId");
+    }
+    if (!foreground || !window_process || !process_id)
+        return FALSE;
+    window = foreground();
+    return window && window_process(window, &owner) && owner == process_id();
+}
 
 static struct device* device_of(void* self, BOOL make)
 {
@@ -93,8 +123,9 @@ static int button_of(const struct device* d, DWORD offset)
     return -1;
 }
 
-/* The device as it is now, as data: written into `to` (room for `room`), how many. */
-static DWORD resync_data(struct device* d, object_data* to, DWORD room)
+/* The device as it is now, as data: written into `to` (room for `room`), how many. The buttons
+   no longer down are let go; with `axes`, a joystick's axes and hats come too. */
+static DWORD resync_data(struct device* d, object_data* to, DWORD room, BOOL axes)
 {
     BYTE state[272];                    /* DIJOYSTATE2, the largest */
     DWORD n = 0, offset;
@@ -114,7 +145,7 @@ static DWORD resync_data(struct device* d, object_data* to, DWORD room)
         n++;
         d->held[b] = 0;
     }
-    if (d->kind == JOYSTICK)            /* the six axes, the two sliders and the four hats */
+    if (axes && d->kind == JOYSTICK)    /* the six axes, the two sliders and the four hats */
         for (offset = 0; offset < JOY_BUTTONS && n < room; offset += 4) {
             to[n].offset = offset;
             to[n].data = *(DWORD*) (state + offset);
@@ -143,6 +174,27 @@ static void trace(struct device* d, HRESULT result, DWORD items)
     d->since = timeGetTime();
 }
 
+static HRESULT WINAPI acquire(void* self);
+
+/* A read that found its device lost or not acquired, the game's window in front: acquired again. */
+static BOOL acquired_again(struct device* d, HRESULT result)
+{
+    if (result != DIERR_INPUTLOST && result != DIERR_NOTACQUIRED)
+        return FALSE;
+    d->resync = TRUE;
+    return game_in_front() && acquire(d->self) >= 0;
+}
+
+static HRESULT WINAPI get_state(void* self, DWORD size, void* state)
+{
+    struct device* d = device_of(self, FALSE);
+    HRESULT result = g_get_state(self, size, state);
+
+    if (d && acquired_again(d, result))
+        result = g_get_state(self, size, state);
+    return result;
+}
+
 static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data, DWORD* count, DWORD flags)
 {
     struct device* d = device_of(self, FALSE);
@@ -152,11 +204,14 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
 
     if (!d)
         return result;
-    trace(d, result, result >= 0 && count ? *count : 0);
-    if (result == DIERR_INPUTLOST || result == DIERR_NOTACQUIRED) {
-        d->resync = TRUE;
-        return result;
+    if (acquired_again(d, result)) {
+        if (count)
+            *count = room;
+        result = g_get_data(self, object_size, data, count, flags);
     }
+    trace(d, result, result >= 0 && count ? *count : 0);
+    if (result < 0)
+        return result;
     if (result < 0 || !data || !count || object_size != sizeof(object_data) || (flags & 1))  /* DIGDD_PEEK */
         return result;
     for (i = 0; i < *count; i++) {
@@ -165,9 +220,10 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
         if (b >= 0)
             d->held[b] = (data[i].data & 0x80) != 0;
     }
-    if (d->resync && room > *count) {
+    if (room > *count && (d->resync || d->kind == KEYBOARD || d->kind == JOYSTICK)) {
         object_data now[BUTTONS_MOST + 12];
-        DWORD n = resync_data(d, now, room - *count < BUTTONS_MOST + 12 ? room - *count : BUTTONS_MOST + 12);
+        DWORD n = resync_data(d, now, room - *count < BUTTONS_MOST + 12 ? room - *count : BUTTONS_MOST + 12,
+                              d->resync);
 
         /* The state first, then what was read after it. */
         for (i = *count; i-- > 0;)
@@ -175,8 +231,9 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
         for (i = 0; i < n; i++)
             data[i] = now[i];
         *count += n;
+        if (d->resync)
+            d->resyncs++;
         d->resync = FALSE;
-        d->resyncs++;
     }
     return result;
 }
@@ -205,12 +262,12 @@ static HRESULT WINAPI set_format(void* self, const data_format* format)
     return g_set_format(self, format);
 }
 
-/* The devices' vtable (DirectInput's one for all of them): its Acquire, GetDeviceData and
-   SetDataFormat ours, once. */
+/* The devices' vtable (DirectInput's one for all of them): its Acquire, GetDeviceState,
+   GetDeviceData and SetDataFormat ours, once. */
 static void device_watch(void* device)
 {
     void** vtable = *(void***) device;
-    void* mine[3] = { (void*) acquire, (void*) get_data, (void*) set_format };
+    void* mine[4] = { (void*) acquire, (void*) get_data, (void*) set_format, (void*) get_state };
 
     if (g_get_data)
         return;
@@ -220,7 +277,8 @@ static void device_watch(void* device)
     g_set_format = (format_fn) vtable[11];
     if (!write_protected(&vtable[7], &mine[0], sizeof mine[0])
         || !write_protected(&vtable[10], &mine[1], sizeof mine[1])
-        || !write_protected(&vtable[11], &mine[2], sizeof mine[2]))
+        || !write_protected(&vtable[11], &mine[2], sizeof mine[2])
+        || !write_protected(&vtable[9], &mine[3], sizeof mine[3]))
         log_line("input: could not watch DirectInput's devices");
 }
 
