@@ -7,8 +7,12 @@
     In a berm or across a slope, the bike leant and a shock stretched, one tyre is often a little
     further off, and the bike could not turn at all: it ran straight on until it fell or found
     flat ground. In the dev build, with [reborn] physics, the bike steers with either wheel down,
-    as Unleashed's does, the other tyre counted near for the game's test alone; then MCM2:Reborn's
-    sideways grip (code/dev/physics.c).
+    as Unleashed's does, the other tyre counted near for the game's test alone.
+
+    MCM2:Reborn's sideways grip (code/dev/physics.c) goes first: the turn bends the path now and
+    the bike's heading only later in the step, so after it the turn itself looked like a slide,
+    and the grip undid part of every turn and bled its speed (the weight thrown on the fork, it
+    bottomed, and the bike tipped over the front with the rear wheel up).
 */
 
 #include "runtime.h"
@@ -52,12 +56,12 @@ void __fastcall bike_steer(BYTE* self, void* edx_unused, float* ground, int unus
     BYTE* lifted = lifted_tyre(self);
     float depth = lifted ? tyre_depth(lifted) : 0;
 
+    reborn_grip(self);
     if (lifted)
         tyre_depth(lifted) = 0;
     game_orig_vf_72_406BD0(self, edx_unused, ground, unused);
     if (lifted)
         tyre_depth(lifted) = depth;
-    reborn_grip(self);
     physics_record(self);
 #else
     game_orig_vf_72_406BD0(self, edx_unused, ground, unused);
