@@ -47,6 +47,15 @@
                           drawn smoothly between them, as the game moved them at 30 frames a
                           second (0 the game's one a frame, which shook them over 60; bikeai.c)
 
+        [gamepad]         the GAMEPAD page's: XInput pads (pad.c)
+        xinput=1          the first XInput pad read
+        response=15       its stick's steering curve, in tenths: 10 straight, 15, 20, 30 the
+                          game's own cube (which the game gives its joysticks)
+        deadzone=15       percent of a stick's travel, round its middle
+        lean_stick=0      0 the left stick leans, 1 the right
+        directinput_pads_analog=1  a DirectInput pad (a DualSense) steers by its axes
+        accelerate=8 ...  each action's pad control, by enum pad_control (0 none)
+
         [online]
         presence=1        counted as playing while the game runs, for the launcher's count of
                           the players online (Epic's lobbies, eosplay.c); 0 not
@@ -217,6 +226,42 @@ void gridfix_install(void);
 
 /* The physics step's per-step constants taken by the step's length (steptime.c). */
 void steptime_install(void);
+
+/*
+    Game pads through XInput ([gamepad], the GAMEPAD page; pad.c): the first connected steers
+    with its left stick and leans with the left or right; each action of the game's may have one
+    of its controls. Its stick's response also stands for the game's DirectInput joysticks.
+*/
+enum pad_control {
+    PAD_NONE, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LT, PAD_RT, PAD_BACK, PAD_START,
+    PAD_LS, PAD_RS, PAD_UP, PAD_DOWN, PAD_LEFT, PAD_RIGHT,
+    PAD_LEFT_UP, PAD_LEFT_DOWN, PAD_LEFT_LEFT, PAD_LEFT_RIGHT,
+    PAD_RIGHT_UP, PAD_RIGHT_DOWN, PAD_RIGHT_LEFT, PAD_RIGHT_RIGHT,
+    PAD_CONTROLS
+};
+
+#define PAD_ACTIONS 14                  /* the game's: steer left, right, lean forward, back, ... */
+
+typedef struct pad_options {
+    int on;                             /* XInput pads read */
+    int response;                       /* a stick's curve in tenths: 10, 15, 20, or 30 the game's */
+    int deadzone;                       /* percent of a stick's travel, round its middle */
+    int lean_stick;                     /* 0 the left stick leans, 1 the right */
+    int analog_di;                      /* DirectInput game pads (a DualSense) steer by their axes */
+    int bind[PAD_ACTIONS];              /* each action's control (pad_control); 0..3 are the sticks */
+} pad_options;
+
+extern pad_options g_pad;
+
+/* The pad's steering and lean, -1..1 as the game's keys make them (-1 left, -1 forward): FALSE
+   with no pad. */
+BOOL  pad_sticks(float* steer, float* lean);
+/* The game's action `action` held on the pad. */
+BOOL  pad_held(int action);
+BOOL  pad_start_down(void);
+/* A stick's steering through the chosen response. */
+float pad_curve(float v);
+void  dev_pad_save(void);
 
 /* Room for more riders in a race (riders.c); the most a single race may have. */
 void riders_install(void);

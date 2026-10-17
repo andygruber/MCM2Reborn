@@ -18,6 +18,10 @@
     acquires again on DIERR_INPUTLOST alone, and the game's own Unacquire leaves it at
     DIERR_NOTACQUIRED (scratchpad input/input.md, "Focus / alt-tab"). So a read that finds its
     device not acquired while the game's window is the one in front acquires it and reads again.
+
+    For the game pads ([gamepad], pad.c): a DirectInput pad of the "gamepad" kind (a DualSense)
+    is told to the game as an ordinary joystick, which it steers by its axes, not by a keyboard's
+    ramp; and an XInput pad's START is the keyboard's Escape, tapped.
 */
 
 #include "dev.h"
@@ -59,6 +63,7 @@ typedef HRESULT (WINAPI* acquire_fn)(void*);
 typedef HRESULT (WINAPI* state_fn)(void*, DWORD, void*);
 typedef HRESULT (WINAPI* data_fn)(void*, DWORD, object_data*, DWORD*, DWORD);
 typedef HRESULT (WINAPI* format_fn)(void*, const data_format*);
+typedef HRESULT (WINAPI* info_fn)(void*, BYTE* instance);
 typedef HWND    (WINAPI* foreground_fn)(void);
 typedef DWORD   (WINAPI* window_process_fn)(HWND, DWORD*);
 typedef DWORD   (WINAPI* process_id_fn)(void);
@@ -72,6 +77,14 @@ static acquire_fn          g_acquire;
 static state_fn            g_get_state;
 static data_fn             g_get_data;
 static format_fn           g_set_format;
+static info_fn             g_get_info;
+static BOOL                g_start_was;
+
+#define DEVICE_TYPE         36          /* DIDEVICEINSTANCE: dwDevType, its type then its subtype */
+#define TYPE_JOYSTICK       4           /* DIDEVTYPE_JOYSTICK */
+#define SUBTYPE_TRADITIONAL 2
+#define SUBTYPE_GAMEPAD     4
+#define KEY_ESCAPE          0x01        /* DIK_ESCAPE */
 
 /* The window in front is one of the game's. */
 static BOOL game_in_front(void)
@@ -235,6 +248,18 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
             d->resyncs++;
         d->resync = FALSE;
     }
+    if (d->kind == KEYBOARD && pad_start_down() != g_start_was) {
+        g_start_was = !g_start_was;
+        if (g_start_was && room >= *count + 2) {
+            for (i = 0; i < 2; i++) {
+                data[*count].offset = KEY_ESCAPE;
+                data[*count].data = i ? 0 : 0x80;
+                data[*count].time = timeGetTime();
+                data[*count].sequence = 0;
+                (*count)++;
+            }
+        }
+    }
     return result;
 }
 
@@ -262,12 +287,25 @@ static HRESULT WINAPI set_format(void* self, const data_format* format)
     return g_set_format(self, format);
 }
 
+static HRESULT WINAPI get_info(void* self, BYTE* instance)
+{
+    HRESULT result = g_get_info(self, instance);
+
+    if (result >= 0 && instance && g_pad.analog_di && instance[DEVICE_TYPE] == TYPE_JOYSTICK
+        && instance[DEVICE_TYPE + 1] == SUBTYPE_GAMEPAD) {
+        instance[DEVICE_TYPE + 1] = SUBTYPE_TRADITIONAL;
+        log_line("input: a game pad steers by its axes, as a joystick");
+    }
+    return result;
+}
+
 /* The devices' vtable (DirectInput's one for all of them): its Acquire, GetDeviceState,
-   GetDeviceData and SetDataFormat ours, once. */
+   GetDeviceData, SetDataFormat and GetDeviceInfo ours, once. */
 static void device_watch(void* device)
 {
     void** vtable = *(void***) device;
-    void* mine[4] = { (void*) acquire, (void*) get_data, (void*) set_format, (void*) get_state };
+    void* mine[5] = { (void*) acquire, (void*) get_data, (void*) set_format, (void*) get_state,
+                      (void*) get_info };
 
     if (g_get_data)
         return;
@@ -275,10 +313,12 @@ static void device_watch(void* device)
     g_get_state = (state_fn) vtable[9];
     g_get_data = (data_fn) vtable[10];
     g_set_format = (format_fn) vtable[11];
+    g_get_info = (info_fn) vtable[15];
     if (!write_protected(&vtable[7], &mine[0], sizeof mine[0])
         || !write_protected(&vtable[10], &mine[1], sizeof mine[1])
         || !write_protected(&vtable[11], &mine[2], sizeof mine[2])
-        || !write_protected(&vtable[9], &mine[3], sizeof mine[3]))
+        || !write_protected(&vtable[9], &mine[3], sizeof mine[3])
+        || !write_protected(&vtable[15], &mine[4], sizeof mine[4]))
         log_line("input: could not watch DirectInput's devices");
 }
 

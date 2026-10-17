@@ -42,6 +42,12 @@ reborn_options g_reborn = { 1, 1, 1, 30 };
 
 typedef UINT (WINAPI* read_int_fn)(LPCSTR section, LPCSTR key, INT fallback, LPCSTR file);
 
+/* The game's actions given pad controls, by their keys in [gamepad]: actions 4 to 13. */
+static const char* const pad_keys[PAD_ACTIONS] = {
+    NULL, NULL, NULL, NULL, "accelerate", "brake", "stunts_1_8", "stunts_9_16", "kahuna_dumpster",
+    "taunt", "thrill_cam", "reverse_cam", "clutch", "back_up",
+};
+
 static BOOL read_switch(read_int_fn read, const char* section, const char* key)
 {
     return read(section, key, 0, SETTINGS_FILE) != 0;
@@ -146,6 +152,21 @@ void dev_install(void)
         g_reborn.physics = (int) read("reborn", "physics", g_reborn.physics, SETTINGS_FILE);
         g_reborn.riders = (int) read("reborn", "riders", g_reborn.riders, SETTINGS_FILE);
     }
+    if (read) {
+        int a;
+
+        g_pad.on = (int) read("gamepad", "xinput", g_pad.on, SETTINGS_FILE);
+        g_pad.response = (int) read("gamepad", "response", g_pad.response, SETTINGS_FILE);
+        g_pad.deadzone = (int) read("gamepad", "deadzone", g_pad.deadzone, SETTINGS_FILE);
+        g_pad.lean_stick = (int) read("gamepad", "lean_stick", g_pad.lean_stick, SETTINGS_FILE);
+        g_pad.analog_di = (int) read("gamepad", "directinput_pads_analog", g_pad.analog_di, SETTINGS_FILE);
+        for (a = 0; a < PAD_ACTIONS; a++)
+            if (pad_keys[a]) {
+                int control = (int) read("gamepad", pad_keys[a], g_pad.bind[a], SETTINGS_FILE);
+
+                g_pad.bind[a] = control >= 0 && control < PAD_CONTROLS ? control : PAD_NONE;
+            }
+    }
     eos_install();
     inputfix_install();
     gridfix_install();
@@ -183,6 +204,20 @@ void dev_reborn_save(void)
     write_number("reborn", "cameras", g_reborn.cameras);
     write_number("reborn", "physics", g_reborn.physics);
     write_number("reborn", "riders", g_reborn.riders);
+}
+
+void dev_pad_save(void)
+{
+    int a;
+
+    write_number("gamepad", "xinput", g_pad.on);
+    write_number("gamepad", "response", g_pad.response);
+    write_number("gamepad", "deadzone", g_pad.deadzone);
+    write_number("gamepad", "lean_stick", g_pad.lean_stick);
+    write_number("gamepad", "directinput_pads_analog", g_pad.analog_di);
+    for (a = 0; a < PAD_ACTIONS; a++)
+        if (pad_keys[a])
+            write_number("gamepad", pad_keys[a], g_pad.bind[a]);
 }
 
 void dev_fixes_save(void)

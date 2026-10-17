@@ -389,7 +389,7 @@ static const binding graphics_bindings[] = {
 
 int __fastcall option_set_text(BYTE* self, void* edx_unused, int index, const char* text);
 
-#define CHOICES_MOST 16
+#define CHOICES_MOST 24          /* the most a row has (the pad's controls) */
 
 static const int aa_values[] = { 0, 2, 4, 8 };
 static const int filtering_values[] = { 0, 1, 2, 3, 4 };
@@ -406,6 +406,12 @@ static const int corner_values[] = { 0, 1 };
 static const int lean_values[] = { 0, 100, 200, 300, 352, 400, 500, 600 };
 static const int ai_rate_values[] = { 0, 30 };
 static const int riders_values[] = { 11, 16, 20, 24, 30 };
+static const int response_values[] = { 10, 15, 20, 30 };
+static const int deadzone_values[] = { 5, 10, 15, 20, 25, 30 };
+static const int stick_values[] = { 0, 1 };
+static const int pad_values[] = { PAD_NONE, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LT, PAD_RT, PAD_BACK,
+                                  PAD_LS, PAD_RS, PAD_UP, PAD_DOWN, PAD_LEFT, PAD_RIGHT, PAD_RIGHT_UP,
+                                  PAD_RIGHT_DOWN, PAD_RIGHT_LEFT, PAD_RIGHT_RIGHT };
 
 #define ROW(name, values, setting) { name, values, (int) (sizeof values / sizeof values[0]), setting }
 
@@ -433,11 +439,33 @@ static const struct reborn_row {
     ROW("MultPhysStyle", style_values, &g_reborn.physics),
     ROW("MultAiRate", ai_rate_values, &dev_settings.fix_ai_rate),
     ROW("MultRiders", riders_values, &g_reborn.riders),
+    /* the GAMEPAD page's */
+    ROW("MultPadOn", on_off_values, &g_pad.on),
+    ROW("MultPadResponse", response_values, &g_pad.response),
+    ROW("MultPadDeadzone", deadzone_values, &g_pad.deadzone),
+    ROW("MultPadLean", stick_values, &g_pad.lean_stick),
+    ROW("MultPadDirect", on_off_values, &g_pad.analog_di),
+    ROW("MultPad4", pad_values, &g_pad.bind[4]),
+    ROW("MultPad5", pad_values, &g_pad.bind[5]),
+    ROW("MultPad6", pad_values, &g_pad.bind[6]),
+    ROW("MultPad7", pad_values, &g_pad.bind[7]),
+    ROW("MultPad8", pad_values, &g_pad.bind[8]),
+    ROW("MultPad9", pad_values, &g_pad.bind[9]),
+    ROW("MultPad10", pad_values, &g_pad.bind[10]),
+    ROW("MultPad11", pad_values, &g_pad.bind[11]),
+    ROW("MultPad12", pad_values, &g_pad.bind[12]),
+    ROW("MultPad13", pad_values, &g_pad.bind[13]),
 };
 #define REBORN_ROWS ((int) (sizeof reborn_rows / sizeof reborn_rows[0]))
 
 static const char* const filtering_words[] = { "GAME'S OWN", "TRILINEAR", "ANISOTROPIC 4X", "ANISOTROPIC 8X",
                                                "ANISOTROPIC 16X" };
+static const char* const pad_words[PAD_CONTROLS] = {
+    "NONE", "A", "B", "X", "Y", "LEFT BUMPER", "RIGHT BUMPER", "LEFT TRIGGER", "RIGHT TRIGGER", "BACK", "START",
+    "LEFT STICK PRESS", "RIGHT STICK PRESS", "D-PAD UP", "D-PAD DOWN", "D-PAD LEFT", "D-PAD RIGHT",
+    "LEFT STICK UP", "LEFT STICK DOWN", "LEFT STICK LEFT", "LEFT STICK RIGHT",
+    "RIGHT STICK UP", "RIGHT STICK DOWN", "RIGHT STICK LEFT", "RIGHT STICK RIGHT",
+};
 
 /* A value as its row shows it. */
 static void row_words(const struct reborn_row* row, int value, char* words)
@@ -470,6 +498,14 @@ static void row_words(const struct reborn_row* row, int value, char* words)
         wsprintfA(words, value == 11 ? "%d (THE GAME'S)" : "%d", value);
     else if (row->values == ai_rate_values)
         wsprintfA(words, value ? "%d A SECOND" : "THE GAME'S", value);
+    else if (row->values == response_values)
+        lstrcpyA(words, value == 10 ? "STRAIGHT" : value == 15 ? "SMOOTH" : value == 20 ? "SOFT" : "THE GAME'S (CUBED)");
+    else if (row->values == deadzone_values)
+        wsprintfA(words, "%d%%", value);
+    else if (row->values == stick_values)
+        lstrcpyA(words, value ? "RIGHT STICK" : "LEFT STICK");
+    else if (row->values == pad_values)
+        lstrcpyA(words, value >= 0 && value < PAD_CONTROLS ? pad_words[value] : "NONE");
     else
         wsprintfA(words, "%d.%d", value / 10, value % 10);
 }
@@ -516,6 +552,7 @@ static void reborn_rows_keep(BYTE* self)
     dev_camera_save();
     dev_reborn_save();
     dev_fixes_save();
+    dev_pad_save();
 }
 
 /* OptReborn.dtm: a page of the options screen, made from the game settings page's vtable. */
@@ -543,7 +580,8 @@ static void __fastcall reborn_page_sync(BYTE* self, void* edx_unused, DWORD out)
 #define PAGE_SLOTS       32
 
 static void* g_reborn_vtable[PAGE_SLOTS + 1];  /* the object locator before the slots, as MSVC's */
-static BYTE* g_reborn_page;                    /* the options screen's REBORN page, while open */
+static BYTE* g_reborn_page;                    /* the options screen's own page open (REBORN, GAMEPAD) */
+static int   g_reborn_page_shown = -1;          /* which */
 
 static void* reborn_page_vtable(void)
 {
@@ -1426,14 +1464,21 @@ static BYTE** options_pages(BYTE* self)
 }
 
 #ifdef OPENMCM2_DEV
-#define REBORN_TAB   "Reborn"
 #define REBORN_PAGE  6              /* after the game's six, its own: the screen has room for six */
+
+/* MCM2:Reborn's own pages, by their tabs: each a page of rows (reborn_rows, found by name). */
+static const struct { const char* tab; const char* file; } own_pages[] = {
+    { "Reborn", "OptReborn.dtm" },
+    { "Gamepad", "OptPad.dtm" },
+};
+#define OWN_PAGES ((int) (sizeof own_pages / sizeof own_pages[0]))
 
 static void reborn_page_close(void)
 {
     if (g_reborn_page) {
         object_destroy(g_reborn_page);
         g_reborn_page = NULL;
+        g_reborn_page_shown = -1;
     }
 }
 #endif
@@ -1454,10 +1499,11 @@ void __fastcall options_show_page(BYTE* self, void* edx_unused, int page)
         }
     }
 #ifdef OPENMCM2_DEV
-    if (page != REBORN_PAGE) {
+    if (page != g_reborn_page_shown)
         reborn_page_close();
-    } else if (!g_reborn_page) {
-        g_reborn_page = dialog_new(0x7F58, __LINE__, "OptReborn.dtm", reborn_page_vtable());
+    if (page >= REBORN_PAGE && page < REBORN_PAGE + OWN_PAGES && !g_reborn_page) {
+        g_reborn_page = dialog_new(0x7F58, __LINE__, own_pages[page - REBORN_PAGE].file, reborn_page_vtable());
+        g_reborn_page_shown = page;
         gui_manager_open(session_gui, NULL, g_reborn_page, 0, 1, (DWORD) &area, self, 0, 0, 1);
     }
 #endif
@@ -1552,9 +1598,11 @@ static void options_click(BYTE* self, ui_event* event)
         }
     }
 #ifdef OPENMCM2_DEV
-    if (named(event, REBORN_TAB)) {
-        options_show_page(self, NULL, REBORN_PAGE);
-        return;
+    for (i = 0; i < OWN_PAGES; i++) {
+        if (named(event, own_pages[i].tab)) {
+            options_show_page(self, NULL, REBORN_PAGE + i);
+            return;
+        }
     }
 #endif
     if (named(event, BUT_RESTORE)) {

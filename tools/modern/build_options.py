@@ -26,7 +26,7 @@ ROW_H, PITCH = 76, 88
 
 # The tabs in order: the control, its words (optionprocs.c's pages are by name).
 TABS = [("GameSettings", "GAME"), ("Graphics", "GRAPHICS"), ("Sound", "SOUND"), ("Controls", "CONTROLS"),
-        ("Messages", "MESSAGES"), ("Garage", "GARAGE"), ("Reborn", "REBORN")]
+        ("Messages", "MESSAGES"), ("Garage", "GARAGE"), ("Reborn", "REBORN"), ("Gamepad", "GAMEPAD")]
 
 
 def columns(count, area=PLACE, gap=40):
@@ -148,7 +148,7 @@ def build_base(data):
     screen, board = full_screen(data, "OPTBASE", "OPTIONS", "SETTINGS")
     areas = tab_areas()
     for k, ((name, words), area) in enumerate(zip(TABS, areas)):
-        # REBORN is a tab of the screen's own, in the same group as the game's (AttachId 101).
+        # REBORN and GAMEPAD are tabs of the screen's own, in the same group as the game's (AttachId 101).
         added = {} if name in dict(screen.sections) else {"AttachId": "101", "SoundPush": '"CLICK04"'}
         radio(screen, name, tab_states(board, area, words), area, (0, 0), chosen=k == 0, FitToAnimOn="0", **added)
     screen.button("Advanced", areas[-1], button_states(board, areas[-1], "ADVANCED", size=26))
@@ -215,20 +215,42 @@ REBORN_COLUMNS = (
 )
 
 
-def build_reborn(data):
-    """Made from the game settings page, its controls put away: the page has none of the game's."""
-    screen, board = page(data, "OptReborn")
-    screen.layout = "OptReborn.dtm"
+# The GAMEPAD page: the XInput pad's settings and each action's control (optionprocs.c, reborn_rows;
+# code/dev/pad.c). Actions 0 to 3, steering and lean, are the sticks.
+PAD_COLUMNS = (
+    ("STICKS", (("MultPadOn", "XINPUT PADS"), ("MultPadResponse", "STEERING RESPONSE"),
+                ("MultPadDeadzone", "STICK DEAD ZONE"), ("MultPadLean", "LEAN WITH"),
+                ("MultPadDirect", "OTHER PADS' STICKS"))),
+    ("RIDING", (("MultPad4", "ACCELERATE"), ("MultPad5", "BRAKE"), ("MultPad12", "CLUTCH"),
+                ("MultPad13", "BACK UP"), ("MultPad6", "STUNTS 1-8"), ("MultPad7", "STUNTS 9-16"))),
+    ("MORE", (("MultPad8", "KAHUNA DUMPSTER"), ("MultPad9", "TAUNTING"), ("MultPad10", "THRILL CAM"),
+              ("MultPad11", "REVERSE CAM"))),
+)
+
+
+def rows_page(data, stem, columns_rows, note):
+    """A page of rows, made from the game settings page, its controls put away."""
+    screen, board = page(data, stem)
+    screen.layout = stem + ".dtm"
     for name in screen.unplaced():
         screen.hide(name)
-    for area, (title, rows) in zip(columns(3), REBORN_COLUMNS):
+    for area, (title, rows) in zip(columns(3), columns_rows):
         top = panel(board, area, title)
         for k, (name, label) in enumerate(rows):
             screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
             words(screen, board, name, rows_area(area, top, k), label, size=24, split=0.5)
-    sub(board, "EACH ROW: CLICK TO CHANGE. REBORN OR CLASSIC: MCM2:REBORN'S OR THE GAME'S OWN.",
-        PLACE[0] + 36, PLACE[3] - 30, 22, (120, 122, 128), bold=True)
+    sub(board, note, PLACE[0] + 36, PLACE[3] - 30, 22, (120, 122, 128), bold=True)
     return finish_page(screen, board)
+
+
+def build_reborn(data):
+    return rows_page(data, "OptReborn", REBORN_COLUMNS,
+                     "EACH ROW: CLICK TO CHANGE. REBORN OR CLASSIC: MCM2:REBORN'S OR THE GAME'S OWN.")
+
+
+def build_pad(data):
+    return rows_page(data, "OptPad", PAD_COLUMNS,
+                     "THE LEFT STICK STEERS, START PAUSES. EACH ROW: CLICK TO CHANGE.")
 
 
 def build_sound(data):
@@ -398,7 +420,7 @@ def main(ui, out, previews):
     base = build_base(read("OPTBASE"))
     pages = [build_game(read("OPTGAME")), build_graphics(read("OPTGRAPH")), build_sound(read("OPTSOUND")),
              build_controls(read("OPTCONT")), build_messages(read("OPTMESS")), build_garage(read("OPTGAR")),
-             build_reborn(read("OPTGAME"))]
+             build_reborn(read("OPTGAME")), build_pad(read("OPTGAME"))]
     advanced = build_advanced(read("OPTADVG"))
     out.mkdir(parents=True, exist_ok=True)
     previews.mkdir(parents=True, exist_ok=True)
