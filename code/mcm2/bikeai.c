@@ -16,6 +16,13 @@
     the rider's animation (KrustyBike slot 102), which the step ends with, runs once a frame by
     the frame's time instead, as a remote bike's does (0x00494610): run by the steps, the rider
     moved at their rate alone and shook on the smooth bike.
+
+    The rider's pose also follows the step's steering and lean commands (+0x504, +0x508), which
+    the computer's control moves by a step's worth each step and turns about often (measured,
+    [trace] ai: steering flicking 0.12 either side, lean between 0.12 and 0.37 step by step).
+    The bike's motion does not use them, so the frame shows them smoothed over 0.15 s, the time
+    the game's own lean filter has at 30 steps a second (scratchpad physics/ai.md), and the
+    step's own are put back for the next step.
 */
 
 #include "runtime.h"
@@ -71,7 +78,13 @@ typedef struct ai_bike {
     float after[OBJECTS][PLACE_SIZE];
     float drawn[OBJECTS][PLACE_SIZE];   /* the places written for this frame */
     BOOL  blended;
+    float commands[2];                  /* steering and lean: the step's, and those shown */
+    float shown[2];
+    BOOL  smoothed;
 } ai_bike;
+
+#define COMMANDS        0x504           /* steering, then lean */
+#define COMMANDS_TIME   0.15f
 
 static ai_bike g_ai_bikes[BIKES_MOST];
 
@@ -245,6 +258,20 @@ static void ai_record(BYTE* bike, const ai_bike* ai, float dt, int steps)
     WriteFile(file, line, n, &done, NULL);
 }
 
+/* The step's commands kept; those shown move toward them by the frame's time. */
+static void commands_smooth(BYTE* bike, ai_bike* ai, float dt)
+{
+    float keep = exp_minus(dt / COMMANDS_TIME);
+    int k;
+
+    for (k = 0; k < 2; k++) {
+        ai->commands[k] = FIELD(bike, COMMANDS + k * 4, float);
+        ai->shown[k] = ai->smoothed ? ai->commands[k] + (ai->shown[k] - ai->commands[k]) * keep : ai->commands[k];
+        FIELD(bike, COMMANDS + k * 4, float) = ai->shown[k];
+    }
+    ai->smoothed = TRUE;
+}
+
 PORT(0x00414000)
 void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
 {
@@ -262,6 +289,11 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
                 && place_same(place_of(ai->objects[k]), ai->drawn[k]))
                 place_set(ai->objects[k], ai->after[k]);
         ai->blended = FALSE;
+        if (ai->smoothed && FIELD(self, COMMANDS, float) == ai->shown[0]
+            && FIELD(self, COMMANDS + 4, float) == ai->shown[1]) {
+            FIELD(self, COMMANDS, float) = ai->commands[0];
+            FIELD(self, COMMANDS + 4, float) = ai->commands[1];
+        }
 
         ai->owed += dt;
         while (ai->owed >= step && steps < STEPS_MOST) {
@@ -275,6 +307,7 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
         }
         if (steps == STEPS_MOST)
             ai->owed = 0;
+        commands_smooth(self, ai, dt);
         if (g_animate_later) {
             g_animate_later = FALSE;
             VIRTUAL(self, ANIMATE, animate_fn)(self, NULL, dt);
