@@ -270,7 +270,7 @@ def full_backdrop(size, side, title):
     glass(img, (side + a(2), a(2), w - 2 * side - a(4), h - a(4)), a(4), PANEL)
     if title:
         side_title(img, side, title)
-    footer = "OPENMCM2  ·  DEVELOPMENT BUILD"
+    footer = "MCM2:REBORN  ·  VERSION 0.1"
     f = art.font(13, style="SemiBold Condensed")
     text(img, footer, w - art.s(28), h - art.s(26), f, SOFT, right=True, spacing=0.6)
     return img

@@ -13,6 +13,10 @@ SYMBOLS = r"C:\Windows\Fonts\seguisym.ttf"
 W, H = 2560, 1440
 LEFT, RIGHT = 96, 2464
 TOP, BOTTOM = 64, 1376
+# The game's name and version, wherever the screens (and the launcher) show them.
+TITLE = "MCM2:REBORN"
+VERSION = "0.1"
+
 GUTTER = 40
 SLANT = 0.21                        # how far cut edges lean: about 12 degrees
 
@@ -329,7 +333,7 @@ def page_title(img, kicker, title, size=92):
 
 
 def build_mark(img):
-    sub(img, "OPENMCM2  \u00b7  DEVELOPMENT BUILD", RIGHT, TOP + 18, 22, DIM, anchor="rs")
+    sub(img, "%s  \u00b7  VERSION %s" % (TITLE, VERSION), RIGHT, TOP + 18, 22, DIM, anchor="rs")
 
 
 STEPS = [("01", "EVENT"), ("02", "BIKE & RIDER"), ("03", "RACE INFO")]

@@ -54,6 +54,9 @@
 /* The game's name in the modern menus, the window's title and wherever else it is shown. */
 #define GAME_TITLE "MCM2:Reborn"
 
+/* Its version, as the menus (tools/modern/reborn_kit.py, VERSION) and the launcher show it. */
+#define GAME_VERSION "0.1"
+
 typedef struct dev_switches {
     BOOL trace_screens;
     BOOL trace_events;

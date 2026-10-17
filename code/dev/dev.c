@@ -80,6 +80,7 @@ void dev_install(void)
         dev_settings.fix_last_pick = read_switch(read, "fixes", "last_pick");
         dev_settings.fix_ai_rate = (int) read("fixes", "ai_rate", 60, SETTINGS_FILE);
     }
+    log_line("%s %s", GAME_TITLE, GAME_VERSION);
     log_line("dev build: trace screens %d, events %d, files %d, display %d; "
              "menus widescreen %d, fill sides %d, modern %d, live %d; fixes: last pick %d, ai rate %d",
              dev_settings.trace_screens, dev_settings.trace_events, dev_settings.trace_files,

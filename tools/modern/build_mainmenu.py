@@ -12,7 +12,6 @@ at their new places, and packs it all as an RS2 archive the game reads from ui\m
 The fonts come from the game's ui\modern\fonts, which the dev build loads too.
 """
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
@@ -27,8 +26,7 @@ from modern_ui import shown, tga16                                              
 
 FOLDER = "02_Modern\\"
 HERE = Path(__file__).parent
-VERSION = "0.1"
-TITLE = "MCM2:REBORN"
+VERSION, TITLE = kit.VERSION, kit.TITLE
 
 # The rows, top to bottom: control, title, what it holds.
 ROWS = [("ButProCircuit", "PRO CIRCUIT", "YOUR CAREER · SPONSORS · PRIZE MONEY"),
@@ -60,16 +58,6 @@ USER = ("MenuUserAnimation", (1904, 390, RIGHT, 1030), "RIDER PROFILES",
 UNUSED = ("MenuSingleAnimation", ["ButBaja", "ButStuntQuarry", "ButEnduro", "ButNationals", "ButSupercross"])
 
 STATES = ("Up", "Lit", "Down", "Grey")
-
-
-def build_version():
-    """The version line's build: VERSION and the dev tree's commit."""
-    try:
-        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
-                                text=True, cwd=HERE, check=True).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return VERSION
-    return "%s  %s" % (VERSION, commit)
 
 
 # ---- RS2 ----
@@ -131,8 +119,8 @@ def background():
     shape(canvas, [(LEFT, TOP + 282), (LEFT + 640, TOP + 282), (LEFT + 634, TOP + 290), (LEFT - 2, TOP + 290)],
           ORANGE)
 
-    sub(canvas, "%s  ·  OPEN-SOURCE  ·  DEVELOPMENT BUILD %s  ·  NOT AFFILIATED WITH OR ENDORSED "
-        "BY THE ORIGINAL CREATORS" % (TITLE, build_version()), LEFT, BOTTOM - 4, 20, DIM)
+    sub(canvas, "%s  ·  OPEN-SOURCE  ·  VERSION %s  ·  NOT AFFILIATED WITH OR ENDORSED "
+        "BY THE ORIGINAL CREATORS" % (TITLE, VERSION), LEFT, BOTTOM - 4, 20, DIM)
     keys(canvas, [("ENTER", "SELECT"), ("ESC", "BACK"), ("↑ ↓", "MOVE")], BOTTOM - 18,
          RIGHT - (keys(clear((W, H)), [("ENTER", "SELECT"), ("ESC", "BACK"), ("↑ ↓", "MOVE")], 0, 0)
                   - 52))
