@@ -1,11 +1,17 @@
 /*
-    mcm2-eos.exe - MCM2:Reborn's Epic Online Services helper: mcm2-eos <pipe name> <rider's name>
+    mcm2-eos.exe - MCM2:Reborn's Epic Online Services helper: mcm2-eos <pipe name> <rider's name>,
+    mcm2-eos --presence <the game's process id>, or mcm2-eos --count
 
     The game is 32-bit and Epic's SDK is 64-bit only, so the game starts this and talks to it
     over the pipe it names (protocol.h). It signs in with a device id (no Epic account), makes,
     finds and joins lobbies, and carries the game's packets to the lobby's members over P2P:
     small ones as they are (the game resends what is lost), larger ones in pieces on a
     reliable channel, put back together here. It quits when the pipe closes.
+
+    Two more ways to run it, with no pipe: --presence, which the game starts, keeps a lobby of one
+    in a bucket of its own while the game runs, for the players online to be counted; --count,
+    which the launcher runs, prints how many there are (EOS_LOBBY_MAX_SEARCH_RESULTS at most)
+    and quits.
 
     Settings come from eos.ini beside it: product, sandbox, deployment, client_id, client_secret.
 */
@@ -40,11 +46,15 @@
 #define CHANNEL_HELLO   2                   /* a peer's player name, reliable */
 #define PIECE_DATA      1100                /* under EOS_P2P_MAX_PACKET_SIZE, with a header */
 #define PEERS_MOST      EOS_RIDERS_MOST
+#define PRESENCE_BUCKET "mcm2reborn:playing"  /* a lobby of one for each game running */
+#define COUNT_WAIT_MS   15000
 
 static FILE* log_file;
 static HANDLE pipe = INVALID_HANDLE_VALUE;
 static CRITICAL_SECTION asks_lock;
 static BOOL quitting;
+static enum { PIPED, PRESENCE, COUNT } mode;
+static HANDLE game_process;               /* --presence: the game, whose end is ours */
 
 static EOS_HPlatform platform;
 static EOS_HConnect connect_api;
@@ -117,6 +127,12 @@ static void tell_failure(const char* why)
 
     strncpy(failed.why, why, sizeof failed.why - 1);
     say("failed: %s", why);
+    if (mode != PIPED) {
+        if (mode == COUNT)
+            printf("-1\n");
+        quitting = TRUE;
+        return;
+    }
     tell(TELL_FAILED, &failed, sizeof failed, NULL, 0);
 }
 
@@ -297,6 +313,8 @@ static void EOS_CALL on_created_user(const EOS_Connect_CreateUserCallbackInfo* i
 }
 
 static void EOS_CALL on_incoming(const EOS_P2P_OnIncomingConnectionRequestInfo* info);
+static void presence_start(void);
+static void count_start(void);
 
 static void EOS_CALL on_login(const EOS_Connect_LoginCallbackInfo* info)
 {
@@ -311,6 +329,14 @@ static void EOS_CALL on_login(const EOS_Connect_LoginCallbackInfo* info)
         return;
     }
     self = info->LocalUserId;
+    if (mode == PRESENCE) {
+        presence_start();
+        return;
+    }
+    if (mode == COUNT) {
+        count_start();
+        return;
+    }
     {
         EOS_P2P_AddNotifyPeerConnectionRequestOptions incoming = {
             EOS_P2P_ADDNOTIFYPEERCONNECTIONREQUEST_API_LATEST, self, &socket_id };
@@ -805,6 +831,69 @@ static void leave(void)
     peer_count = 0;
 }
 
+/* ---- Without a pipe: the game's presence, the launcher's count ---- */
+
+static void EOS_CALL on_present(const EOS_Lobby_CreateLobbyCallbackInfo* info)
+{
+    if (info->ResultCode != EOS_Success) {
+        tell_failure(EOS_EResult_ToString(info->ResultCode));
+        return;
+    }
+    strncpy(lobby_id, info->LobbyId, sizeof lobby_id - 1);
+    say("present in lobby %s", lobby_id);
+}
+
+static void presence_start(void)
+{
+    EOS_Lobby_CreateLobbyOptions create = { 0 };
+
+    create.ApiVersion = EOS_LOBBY_CREATELOBBY_API_LATEST;
+    create.LocalUserId = self;
+    create.MaxLobbyMembers = 1;
+    create.PermissionLevel = EOS_LPL_PUBLICADVERTISED;
+    create.bPresenceEnabled = EOS_FALSE;
+    create.bAllowInvites = EOS_FALSE;
+    create.BucketId = PRESENCE_BUCKET;
+    create.bDisableHostMigration = EOS_TRUE;
+    create.bEnableJoinById = EOS_FALSE;
+    EOS_Lobby_CreateLobby(lobby_api, &create, NULL, on_present);
+}
+
+static void EOS_CALL on_counted(const EOS_LobbySearch_FindCallbackInfo* info)
+{
+    EOS_LobbySearch_GetSearchResultCountOptions count_options = { EOS_LOBBYSEARCH_GETSEARCHRESULTCOUNT_API_LATEST };
+    uint32_t count = 0;
+
+    if (info->ResultCode == EOS_Success)
+        count = EOS_LobbySearch_GetSearchResultCount(search, &count_options);
+    else if (info->ResultCode != EOS_NotFound) {
+        tell_failure(EOS_EResult_ToString(info->ResultCode));
+        return;
+    }
+    say("counted %u playing", count);
+    printf("%u\n", count);
+    fflush(stdout);
+    quitting = TRUE;
+}
+
+static void count_start(void)
+{
+    EOS_Lobby_CreateLobbySearchOptions create = { EOS_LOBBY_CREATELOBBYSEARCH_API_LATEST,
+                                                  EOS_LOBBY_MAX_SEARCH_RESULTS };
+    EOS_Lobby_AttributeData bucket = { EOS_LOBBY_ATTRIBUTEDATA_API_LATEST, EOS_LOBBY_SEARCH_BUCKET_ID };
+    EOS_LobbySearch_SetParameterOptions parameter = { EOS_LOBBYSEARCH_SETPARAMETER_API_LATEST, &bucket, EOS_CO_EQUAL };
+    EOS_LobbySearch_FindOptions options = { EOS_LOBBYSEARCH_FIND_API_LATEST, self };
+
+    if (EOS_Lobby_CreateLobbySearch(lobby_api, &create, &search) != EOS_Success) {
+        tell_failure("could not search for lobbies");
+        return;
+    }
+    bucket.Value.AsUtf8 = PRESENCE_BUCKET;
+    bucket.ValueType = EOS_AT_STRING;
+    EOS_LobbySearch_SetParameter(search, &parameter);
+    EOS_LobbySearch_Find(search, &options, NULL, on_counted);
+}
+
 /* ---- The game's asks ---- */
 
 static void answer(struct ask* ask)
@@ -882,26 +971,43 @@ int main(int argc, char** argv)
     char* slash;
     EOS_InitializeOptions init = { 0 };
     EOS_Platform_Options options = { 0 };
+    DWORD started = GetTickCount();
 
-    if (argc < 3)
+    if (argc >= 2 && !strcmp(argv[1], "--count"))
+        mode = COUNT;
+    else if (argc >= 3 && !strcmp(argv[1], "--presence"))
+        mode = PRESENCE;
+    else if (argc < 3)
         return 2;
     GetModuleFileNameA(NULL, folder, sizeof folder);
     slash = strrchr(folder, '\\');
     if (slash)
         slash[1] = 0;
-    snprintf(path, sizeof path, "%smcm2-eos.log", folder);
+    snprintf(path, sizeof path, "%s%s", folder,
+             mode == PIPED ? "mcm2-eos.log" : mode == PRESENCE ? "mcm2-eos-presence.log" : "mcm2-eos-count.log");
     log_file = fopen(path, "w");
-    strncpy(self_name, argv[2], sizeof self_name - 1);
+    strncpy(self_name, mode == PIPED ? argv[2] : "Rider", sizeof self_name - 1);
 
     snprintf(path, sizeof path, "%seos.ini", folder);
     if (!read_settings(path, product, sandbox, deployment, client, secret)) {
         say("eos.ini is missing settings");
+        if (mode == COUNT)
+            printf("-1\n");
         return 3;
     }
-    pipe = CreateFileA(argv[1], GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
-    if (pipe == INVALID_HANDLE_VALUE) {
-        say("the pipe %s would not open (%lu)", argv[1], GetLastError());
-        return 4;
+    if (mode == PRESENCE) {
+        game_process = OpenProcess(SYNCHRONIZE, FALSE, (DWORD) strtoul(argv[2], NULL, 10));
+        if (!game_process) {
+            say("no game with process id %s", argv[2]);
+            return 4;
+        }
+    } else if (mode == PIPED) {
+        pipe = CreateFileA(argv[1], GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED,
+                           NULL);
+        if (pipe == INVALID_HANDLE_VALUE) {
+            say("the pipe %s would not open (%lu)", argv[1], GetLastError());
+            return 4;
+        }
     }
     InitializeCriticalSection(&asks_lock);
 
@@ -942,10 +1048,19 @@ int main(int argc, char** argv)
         EOS_Lobby_AddNotifyLobbyMemberStatusReceived(lobby_api, &status, NULL, on_member_status);
         EOS_Connect_CreateDeviceId(connect_api, &device, NULL, on_device_id);
     }
-    CloseHandle(CreateThread(NULL, 0, pipe_reader, NULL, 0, NULL));
+    if (mode == PIPED)
+        CloseHandle(CreateThread(NULL, 0, pipe_reader, NULL, 0, NULL));
 
     while (!quitting) {
         struct ask* ask;
+
+        if (mode == PRESENCE && WaitForSingleObject(game_process, 0) == WAIT_OBJECT_0)
+            break;
+        if (mode == COUNT && GetTickCount() - started > COUNT_WAIT_MS) {
+            say("no count in time");
+            printf("-1\n");
+            break;
+        }
 
         while ((ask = next_ask()) != NULL) {
             if (self || ask->kind == ASK_LEAVE)
@@ -958,7 +1073,10 @@ int main(int argc, char** argv)
         Sleep(2);
     }
     leave();
-    EOS_Platform_Tick(platform);
+    for (started = GetTickCount(); GetTickCount() - started < 500;) {
+        EOS_Platform_Tick(platform);            /* the leaving sent before the platform goes */
+        Sleep(10);
+    }
     EOS_Platform_Release(platform);
     EOS_Shutdown();
     say("done");

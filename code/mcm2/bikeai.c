@@ -12,7 +12,10 @@
     is drawn between its last two steps, by the time left over. It is drawn from two objects in
     the scene, each placed by the step as a remote bike's are (0x00494610): the bike's own
     (+0x3BC) and its rider's (+0x5C4, then +0x1A0). Each one's place (the matrix at +0xB8, which
-    what hangs from it follows) is blended for the frame and put back before the next step.
+    what hangs from it follows) is blended for the frame and put back before the next step. And
+    the rider's animation (KrustyBike slot 102), which the step ends with, runs once a frame by
+    the frame's time instead, as a remote bike's does (0x00494610): run by the steps, the rider
+    moved at their rate alone and shook on the smooth bike.
 */
 
 #include "runtime.h"
@@ -36,6 +39,27 @@ void __fastcall game_orig_FUN_00414000(BYTE* self, void* edx_unused, float dt);
 #define JUMP_MOST   20.0f               /* feet in one step: further is a reset, not drawn between */
 
 void __fastcall game_FUN_00500690(BYTE* object);    /* its place changed: what hangs from it follows */
+
+#define ANIMATE         0x198           /* KrustyBike slot 102: the rider's animation, by a time */
+#define ANIMATE_CALL    0x00414FFB      /* the step's call of it: call [edx + 198h] */
+
+typedef void (__fastcall* animate_fn)(BYTE* bike, void* edx_unused, float dt);
+
+static const BYTE animate_call_was[] = { 0xFF, 0x92, 0x98, 0x01, 0x00, 0x00 };
+static BOOL g_animate_moved;            /* the step's call goes through step_animate */
+static BOOL g_animate_later;            /* the steps leave the rider's animation to the frame */
+
+/* At ANIMATE_CALL: ecx the bike, edx its vtable, the time pushed. Called by the steps, nothing. */
+static __declspec(naked) void step_animate(void)
+{
+    __asm {
+        cmp g_animate_later, 0
+        jne later
+        jmp dword ptr [edx + ANIMATE]
+    later:
+        ret 4
+    }
+}
 
 typedef struct ai_bike {
     BYTE* bike;
@@ -169,6 +193,8 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
         ai_bike* ai = ai_bike_of(self);
         int steps = 0, k;
 
+        g_animate_later = g_animate_moved;
+
         /* The true places back for the step, unless something else has moved them since. */
         for (k = 0; ai->blended && k < OBJECTS; k++)
             if (ai->objects[k] && ai->objects[k] == object_of(self, k)
@@ -188,6 +214,10 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
         }
         if (steps == STEPS_MOST)
             ai->owed = 0;
+        if (g_animate_later) {
+            g_animate_later = FALSE;
+            VIRTUAL(self, ANIMATE, animate_fn)(self, NULL, dt);
+        }
 
         /* Drawn between its last two steps; not across a reset, nor before it has stepped. */
         for (k = 0; k < OBJECTS; k++) {
@@ -206,3 +236,18 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
 #endif
     game_orig_FUN_00414000(self, edx_unused, dt);
 }
+
+#ifdef OPENMCM2_DEV
+/* The step's call of the rider's animation goes through step_animate, if it is the game's. */
+void ai_install(void)
+{
+    BYTE call[6] = { 0xE8, 0, 0, 0, 0, 0x90 };
+    DWORD to = (DWORD) step_animate - (ANIMATE_CALL + 5);
+    BOOL known = !memcmp((const void*) ANIMATE_CALL, animate_call_was, sizeof animate_call_was);
+
+    __movsb(call + 1, (const BYTE*) &to, 4);
+    if (known)
+        g_animate_moved = write_protected((void*) ANIMATE_CALL, call, sizeof call);
+    log_line("dev build: the computer riders' animation %s", known ? "once a frame" : "left in their steps");
+}
+#endif

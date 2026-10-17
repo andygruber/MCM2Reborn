@@ -106,6 +106,7 @@ void dev_install(void)
         dev_settings.menus_widescreen |= dev_settings.menus_modern;
         dev_settings.fix_last_pick = read_switch(read, "fixes", "last_pick");
         dev_settings.fix_ai_rate = (int) read("fixes", "ai_rate", 30, SETTINGS_FILE);
+        dev_settings.online_presence = read("online", "presence", 1, SETTINGS_FILE) != 0;
     }
     log_line("%s %s", GAME_TITLE, GAME_VERSION);
     log_line("dev build: trace screens %d, events %d, files %d, display %d; "
@@ -146,6 +147,7 @@ void dev_install(void)
     eos_install();
     inputfix_install();
     gridfix_install();
+    ai_install();
     steptime_install();
     riders_install();
 }

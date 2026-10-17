@@ -45,6 +45,10 @@
                           smoothly between them (0 the game's one a frame, which shook them
                           over 60; bikeai.c). 30 moves them as the game did at 30 frames a second
 
+        [online]
+        presence=1        counted as playing while the game runs, for the launcher's count of
+                          the players online (Epic's lobbies, eosplay.c); 0 not
+
     A change to the game goes in the ported function it changes, between #ifdef OPENMCM2_DEV and
     #endif, reading its switch from dev_settings; the code outside stays the faithful port.
 */
@@ -73,6 +77,7 @@ typedef struct dev_switches {
     BOOL menus_live;
     BOOL fix_last_pick;
     int  fix_ai_rate;
+    BOOL online_presence;
 } dev_switches;
 
 extern dev_switches dev_settings;
@@ -200,6 +205,9 @@ void hud_overlays_drawn(void);
 /* DirectInput's devices watched, so that what was held when the window lost the focus is let go
    when it comes back (inputfix.c). */
 void inputfix_install(void);
+
+/* The computer riders' animation run once a frame, not in their fixed steps (bikeai.c). */
+void ai_install(void);
 
 /* The terrain grid's cells kept inside it (gridfix.c). */
 void gridfix_install(void);

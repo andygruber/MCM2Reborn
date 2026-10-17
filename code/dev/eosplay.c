@@ -981,6 +981,31 @@ static HRESULT WINAPI co_create(const GUID* clsid, void* outer, DWORD context, c
 
 /* ---- Switching ---- */
 
+/*
+    The game counted as playing, for the launcher's count of the players online: the helper keeps
+    a lobby of one in Epic's lobbies for as long as this process runs ([online] presence).
+*/
+static void presence_start(void)
+{
+    create_process_fn create_process = (create_process_fn) api("kernel32.dll", "CreateProcessA");
+    process_id_fn process_id = (process_id_fn) api("kernel32.dll", "GetCurrentProcessId");
+    STARTUPINFOA startup = { sizeof startup };
+    PROCESS_INFORMATION process;
+    char command[64];
+
+    if (!create_process || !process_id)
+        return;
+    wsprintfA(command, "%s --presence %lu", HELPER, process_id());
+    if (!create_process(NULL, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &startup,
+                        &process)) {
+        log_line("eos: " HELPER " would not start for the count of players (%lu)", GetLastError());
+        return;
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    log_line("eos: counted as playing");
+}
+
 void eos_install(void)
 {
     co_create_fn mine = co_create;
@@ -993,6 +1018,8 @@ void eos_install(void)
     eos.co_create = _imp__CoCreateInstance;
     if (!write_protected(&_imp__CoCreateInstance, &mine, sizeof mine))
         log_line("eos: could not take over CoCreateInstance; online play is off");
+    if (dev_settings.online_presence)
+        presence_start();
 }
 
 BOOL eos_lobby(const GUID* instance, online_lobby* lobby)
