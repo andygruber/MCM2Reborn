@@ -1376,7 +1376,11 @@ int __fastcall race_start_tick(BYTE* self, void* edx_unused, float seconds)
         }
         if (FIELD(game_main, 0x8, BYTE*))
             for (i = 0; i < FIELD(game_main, 0x2158, int); i++)
+#ifdef OPENMCM2_DEV
+                player_clear_c8(entrants() + i * 0xF8);
+#else
                 player_clear_c8(game_main + 0x215C + i * 0xF8);
+#endif
         race_starting = 1;
         dialog_add_timer(self, NULL, 0, 100, NULL);
     }

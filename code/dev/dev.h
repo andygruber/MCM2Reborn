@@ -41,8 +41,9 @@
 
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider
-        ai_rate=60        the computer riders' steps a second, whatever the frame rate (0 the
-                          game's one a frame, which shook them over 60; bikeai.c)
+        ai_rate=30        the computer riders' steps a second, whatever the frame rate, drawn
+                          smoothly between them (0 the game's one a frame, which shook them
+                          over 60; bikeai.c). 30 moves them as the game did at 30 frames a second
 
     A change to the game goes in the ported function it changes, between #ifdef OPENMCM2_DEV and
     #endif, reading its switch from dev_settings; the code outside stays the faithful port.
@@ -209,3 +210,6 @@ void steptime_install(void);
 /* Room for more riders in a race (riders.c); the most a single race may have. */
 void riders_install(void);
 int  riders_most(void);
+
+/* A multiplayer race's riders, 0xF8 bytes each (game_main + 0x215C in the game; riders.c). */
+BYTE* entrants(void);

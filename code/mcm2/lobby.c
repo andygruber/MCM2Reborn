@@ -10,6 +10,10 @@
 
 #include "gui.h"
 
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
+
 #define NAME(address) ((const char*) (address))
 
 #define race_settings (game_main + 0x2D70)
@@ -388,8 +392,14 @@ int __fastcall zone_send_results(BYTE* self)
                 FIELD(rider, 0x44, int) = (int) FIELD(entry, 0x2C, float);
         }
         for (j = 0; j < FIELD(game_main, 0x2158, int); j++) {
-            if (FIELD(entry, 0x00, int) == FIELD(game_main, 0x2230 + j * 0xF8, int)) {
-                FIELD(self, ZONE_BIKE, int) = FIELD(game_main, 0x2220 + j * 0xF8, int);
+#ifdef OPENMCM2_DEV
+            BYTE* entrant = entrants() + j * 0xF8;
+#else
+            BYTE* entrant = game_main + 0x215C + j * 0xF8;
+#endif
+
+            if (FIELD(entry, 0x00, int) == FIELD(entrant, 0xD4, int)) {
+                FIELD(self, ZONE_BIKE, int) = FIELD(entrant, 0xC4, int);
                 break;
             }
         }

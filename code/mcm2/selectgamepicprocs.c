@@ -46,7 +46,11 @@
 #define lobby_slot      FIELD(game_main, 0x214C, int)
 
 /* The race's riders. */
+#ifdef OPENMCM2_DEV
+#define entrant(n)          (entrants() + (n) * 0xF8)
+#else
 #define entrant(n)          (game_main + 0x215C + (n) * 0xF8)
+#endif
 #define ENTRANT_MAKER       0x00    /* char[0x40] each */
 #define ENTRANT_BIKE        0x40
 #define ENTRANT_LOOK        0x80
