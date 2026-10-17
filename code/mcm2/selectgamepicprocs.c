@@ -11,6 +11,7 @@
 
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
+#include <mmsystem.h>
 #endif
 #include "dirlist.h"
 
@@ -1398,6 +1399,10 @@ static void skin_note(int kind, const char* look, int from);
 static void downloads_tick(BYTE* self);
 static void track_note(void);
 static void downloads_forget(void);
+static BOOL ping_take(DWORD type, const BYTE* data, int from);
+static void pings_tick(void);
+static void player_ping_show(BYTE* self, int i);
+static void ready_count_show(BYTE* self);
 #endif
 
 /* Message 2: a player's readiness, looks, bike and the time it was sent. */
@@ -1581,7 +1586,7 @@ int __fastcall mp_screen_receive(BYTE* self, void* edx_unused, DWORD type, BYTE*
 {
     (void) edx_unused;
 #ifdef OPENMCM2_DEV
-    if (from && share_take(type, data, from))
+    if (from && (share_take(type, data, from) || ping_take(type, data, from)))
         return 1;
     if (from && (type == MSG_SETTINGS || type == MSG_SETUP || type == MSG_SETUP_PART) && g_lobby_host != from) {
         g_lobby_host = from;            /* another lobby: what was asked about there is asked again */
@@ -1853,6 +1858,7 @@ static void mp_screen_tick(BYTE* self)
 
 #ifdef OPENMCM2_DEV
     downloads_tick(self);
+    pings_tick();
 #endif
 
     for (i = 0; i < PLAYER_SLOTS; i++)
@@ -1875,7 +1881,13 @@ static void mp_screen_tick(BYTE* self)
     for (i = 0; i < mp_rows(self); i++) {
         game_FUN_0053a11f(text, NAME_PLAYER, i + 2);
         control_set_text(dialog_find_control(self, NULL, text, 0), NULL, player_name(i));
+#ifdef OPENMCM2_DEV
+        player_ping_show(self, i);
+#endif
     }
+#ifdef OPENMCM2_DEV
+    ready_count_show(self);
+#endif
     for (i = 0; i < mp_rows(self); i++) {
         BYTE* button;
 
@@ -2430,6 +2442,97 @@ static void downloads_tick(BYTE* self)
     } else if (skins_unasked()) {
         prompt_open(self, SHARE_RIDER);
     }
+}
+/*
+    Each rider's ping in its row: every two seconds a player's time goes to the lobby, and each
+    sends it straight back to that player alone (types under 0x80 go to one player). The game's
+    own "ping" in the riders' status is the gap between two computers' clocks, which says nothing.
+*/
+#define MSG_PING        0x63
+#define MSG_PONG        0x64
+#define PING_EVERY_MS   2000
+
+typedef struct ping_message {
+    DWORD header;
+    DWORD sent;
+} ping_message;
+
+static struct {
+    int player, ms;
+} g_pings[PLAYER_SLOTS];
+
+static BOOL ping_take(DWORD type, const BYTE* data, int from)
+{
+    ping_message message = *(const ping_message*) data;
+    int i, ms;
+
+    if (type == MSG_PING) {
+        game_FUN_004b0f20(game_net, NULL, MSG_PONG, &message, sizeof message, net_me, from);
+        return TRUE;
+    }
+    if (type != MSG_PONG)
+        return FALSE;
+    ms = (int) (timeGetTime() - message.sent);
+    if (ms < 0 || ms > 10000)
+        return TRUE;
+    for (i = 0; i < PLAYER_SLOTS && g_pings[i].player && g_pings[i].player != from; i++)
+        ;
+    if (i == PLAYER_SLOTS)
+        return TRUE;
+    g_pings[i].ms = g_pings[i].player ? (g_pings[i].ms * 3 + ms) / 4 : ms;
+    g_pings[i].player = from;
+    return TRUE;
+}
+
+static int ping_of(int player)
+{
+    int i;
+
+    for (i = 0; i < PLAYER_SLOTS && g_pings[i].player; i++)
+        if (g_pings[i].player == player)
+            return g_pings[i].ms;
+    return -1;
+}
+
+static void pings_tick(void)
+{
+    static DWORD last;
+    ping_message message = { 0 };
+
+    if (timeGetTime() - last < PING_EVERY_MS)
+        return;
+    last = timeGetTime();
+    message.sent = last;
+    game_FUN_004b0f20(game_net, NULL, MSG_PING, &message, sizeof message, net_me, 0);
+}
+
+/* A rider's ping beside its name (TxtPing2 on), once one has come back. */
+static void player_ping_show(BYTE* self, int i)
+{
+    BYTE* control;
+    char name[16], text[16] = "";
+    int ms = ping_of(player_id(i));
+
+    wsprintfA(name, "TxtPing%d", i + 2);
+    control = dialog_find_control(self, NULL, name, 0);
+    if (player_name(i)[0] && ms >= 0)
+        wsprintfA(text, "%d MS", ms);
+    if (control)
+        control_set_text(control, NULL, text);
+}
+
+/* RIDERS' count of the riders ready, the player's own among them. */
+static void ready_count_show(BYTE* self)
+{
+    BYTE* count = dialog_find_control(self, NULL, "TxtReadyCount", 0);
+    char text[48];
+    int i, ready = mp_user_ready != 0;
+
+    for (i = 0; i < mp_player_count; i++)
+        ready += mp_ready[i] != 0;
+    wsprintfA(text, "%d/%d READY", ready, mp_player_count + 1);
+    if (count)
+        control_set_text(count, NULL, text);
 }
 #endif
 

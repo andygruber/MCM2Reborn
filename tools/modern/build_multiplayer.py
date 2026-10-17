@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import reborn_kit as kit
+from build_online import text
 from reborn_kit import EDGE, GREY, LEFT, ORANGE, PAPER, RIGHT, box, heading, sub
 from reborn_layout import (LABEL, Screen, arrow_states, button_states, colorref, font, segment_states, under,
                            xywh)
@@ -66,6 +67,8 @@ def riders_and_chat(screen, board):
     for 8: those past them are made like its last."""
     kit.panel(board, RIDERS, 230)
     heading(board, "RIDERS", RIDERS[0] + 36, RIDERS[1] + 56, 28, ORANGE)
+    text(screen, "TxtReadyCount", (RIDERS[2] - 420, RIDERS[1] + 22, RIDERS[2] - 36, RIDERS[1] + 66), 24, GREY,
+         "RIGHT")
     x0, x1 = RIDERS[0] + 24, RIDERS[2] - 24
     column_w = (x1 - x0 - 16) / 2
     for k in range(LOBBY):
@@ -86,6 +89,9 @@ def riders_and_chat(screen, board):
                 "AnimNorm": screen.picture("M%s" % name, under(board, area))}
         keys.update(font(20, PAPER))
         screen.set(name, **keys)
+        if k:
+            text(screen, "TxtPing%d" % (k + 1), (area[2] - 76, top, area[2] - 10, top + LOBBY_ROW_H), 16, GREY,
+                 "RIGHT", bold=False)
 
     kit.panel(board, CHAT, 230)
     heading(board, "CHAT", CHAT[0] + 36, CHAT[1] + 56, 28, ORANGE)
