@@ -246,6 +246,9 @@ extern gl_api gl;
 BOOL gl_start(HWND window);
 void gl_present(void);
 
+/* When gl_present last showed a frame (timeGetTime): how the dev build tells a stuck game. */
+extern volatile DWORD g_frame_shown;
+
 /*
     The player's graphics settings (in the dev build, its Options > Graphics). Without vsync the
     frames are still held to the display's refresh rate: the game's physics come apart uncapped.

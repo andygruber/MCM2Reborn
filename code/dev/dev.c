@@ -186,6 +186,7 @@ void dev_install(void)
                 g_pad.bind[a] = control >= 0 && control < PAD_CONTROLS ? control : PAD_NONE;
             }
     }
+    escape_install();
     eos_install();
     inputfix_install();
     gridfix_install();

@@ -1281,25 +1281,98 @@ void __fastcall mp_buttons_update(BYTE* self)
 #define MSG_CHAT    0x85
 #define MSG_NOTICE  0x92
 #define MSG_KICK    0x8E
-#define CHAT_SIZE   0x4E
+#ifdef OPENMCM2_DEV
+/*
+    The dev build's chat takes 150 characters a message (the original's 60), and a line too long
+    for ListChat goes on over as many rows as it needs: ListChat is 600 pixels of 24-pixel
+    Helvetica (tools/modern/build_multiplayer.py), 11.5 pixels a character measured, so a row
+    holds 52; 46 leaves room for capitals.
+*/
+#define CHAT_TYPED      150
+#define CHAT_TEXT       (CHAT_TYPED + 1)
+#define CHAT_ROW_CHARS  46
+#define CHAT_LINE_SIZE  0x200
+#else
+#define CHAT_TEXT       0x4A
+#define CHAT_LINE_SIZE  0x60
+#endif
+#define CHAT_SIZE   (4 + CHAT_TEXT)
 
 typedef struct chat_message {
     DWORD header;
-    char  text[0x4A];
+    char  text[CHAT_TEXT];
 } chat_message;
+
+#ifdef OPENMCM2_DEV
+/* A chat line into ListChat in rows of CHAT_ROW_CHARS, broken at a space where there is one;
+   each row after the first indented, in the colour (~N) the line had reached. */
+static void chat_rows_add(BYTE* list, const char* line)
+{
+    char colour = 0;
+    BOOL first = TRUE;
+
+    while (*line) {
+        char row[0x100];
+        int n = 0, shown = 0, i, k, space = -1, space_n = 0;
+
+        if (!first) {
+            if (colour) {
+                row[n++] = '~';
+                row[n++] = colour;
+            }
+            row[n++] = ' ';
+            row[n++] = ' ';
+            shown = 2;
+        }
+        for (i = 0; line[i] && shown < CHAT_ROW_CHARS && n < (int) sizeof row - 3; i++) {
+            if (line[i] == '~' && line[i + 1]) {    /* a colour, which takes no room */
+                row[n++] = line[i++];
+                row[n++] = line[i];
+                continue;
+            }
+            if (line[i] == ' ') {
+                space = i;
+                space_n = n;
+            }
+            row[n++] = line[i];
+            shown++;
+        }
+        if (line[i] && space > 0) {
+            i = space + 1;
+            n = space_n;
+        }
+        row[n] = 0;
+        for (k = 0; k < i; k++)
+            if (line[k] == '~' && line[k + 1])
+                colour = line[++k];
+        if (FIELD(list, LIST_COUNT, int) >= 100)
+            list_remove(list, NULL, 0);
+        list_add_text(list, NULL, row, 0, 0);
+        line += i;
+        first = FALSE;
+    }
+}
+#endif
 
 /*
     A line in ListChat: `player`'s (-1 for the game's notices, string 0x14BA), coloured by who
-    said it unless the game's 0x538 is set; past 100 lines the first goes. Kept from the
-    original: the line has 0x60 bytes, which a long name and text can overflow.
+    said it unless the game's 0x538 is set; past 100 lines the first goes. The original's line
+    has 0x60 bytes, which a long name and text can overflow (the dev build's, 0x200, cannot).
 */
 PORT(0x004F8610)
 void __fastcall chat_show(BYTE* self, void* edx_unused, int player, const char* text)
 {
     BYTE* list = dialog_find_control(self, NULL, LIST_CHAT, 3);
-    char line[0x60];
+    char line[CHAT_LINE_SIZE];
     char name[0x80];
+#ifdef OPENMCM2_DEV
+    char said[CHAT_TEXT];
+
+    text_copy_most(said, text, CHAT_TEXT - 1);  /* however long a message came */
+    text = said;
+#else
     short shown;
+#endif
 
     (void) edx_unused;
     if (!list)
@@ -1330,11 +1403,16 @@ void __fastcall chat_show(BYTE* self, void* edx_unused, int player, const char* 
         game_FUN_0053a11f(line, FIELD(game_main, 0x538, DWORD) ? CHAT_LINE : CHAT_NOTICE, game,
                           text);
     }
+#ifdef OPENMCM2_DEV
+    chat_rows_add(list, line);
+    list_scroll(list, NULL, FIELD(list, LIST_COUNT, int) - 1, TRUE);
+#else
     shown = (short) FIELD(list, LIST_COUNT, int);
     if (shown >= 100)
         list_remove(list, NULL, 0);
     list_add_text(list, NULL, line, 0, 0);
     list_scroll(list, NULL, shown, TRUE);
+#endif
 }
 
 /* EditChat's text, when there is some, to everyone and to the user's own chat. */
@@ -1743,7 +1821,11 @@ static void mp_screen_open(BYTE* self)
     list_set_224(control, NULL, 0);
     control_set_align(control, NULL, 0x11);
     control = dialog_find_control(self, NULL, EDIT_CHAT, 0);
+#ifdef OPENMCM2_DEV
+    edit_set_capacity(control, NULL, CHAT_TYPED);
+#else
     edit_set_capacity(control, NULL, 0x3C);
+#endif
     control_set_align(control, NULL, 0x11);
     edit_set_caret_colour(control, NULL, 0xFFFFFF);
     if (session_showing == 0x866 && !net_from_lobby)

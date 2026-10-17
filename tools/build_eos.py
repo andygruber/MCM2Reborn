@@ -34,11 +34,17 @@ def main():
         sys.exit("no EOS SDK in %s (set MCM2_EOS_SDK)" % SDK)
     os.makedirs(OUT, exist_ok=True)
     env = msvc_environment()
-    cl = shutil.which("cl", path=env.get("Path") or env.get("PATH"))
+    path = env.get("Path") or env.get("PATH")
+    cl, rc = shutil.which("cl", path=path), shutil.which("rc", path=path)
+    resources = os.path.join(OUT, "helper.res")       # its file details and manifest (helper.rc)
+    res = subprocess.run([rc, "/nologo", "/fo", resources, os.path.join(SRC, "helper.rc")],
+                         env=env, cwd=SRC, capture_output=True, text=True)
+    if res.returncode:
+        sys.exit(res.stdout + res.stderr)
     res = subprocess.run([cl, "/nologo", "/O2", "/W4", "/WX", "/std:c11", "/D_CRT_SECURE_NO_WARNINGS",
                           "/I" + os.path.join(SDK, "Include"), os.path.join(SRC, "helper.c"),
                           "/Fo" + OUT + "\\", "/Fe" + os.path.join(OUT, "mcm2-eos.exe"),
-                          "/link", os.path.join(SDK, "Lib", "EOSSDK-Win64-Shipping.lib")],
+                          "/link", resources, os.path.join(SDK, "Lib", "EOSSDK-Win64-Shipping.lib")],
                          env=env, cwd=OUT, capture_output=True, text=True)
     sys.stdout.write(res.stdout + res.stderr)
     if res.returncode:

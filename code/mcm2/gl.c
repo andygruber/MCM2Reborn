@@ -4,6 +4,8 @@
 
 #include "gl.h"
 
+#include <mmsystem.h>
+
 gl_api gl = { 0 };     /* initialised, or it becomes a common symbol the section move cannot see */
 
 typedef HGLRC (WINAPI *create_context_fn)(HDC);
@@ -147,8 +149,11 @@ static void frame_hold(void)
     next += period;
 }
 
+volatile DWORD g_frame_shown = 0;
+
 void gl_present(void)
 {
+    g_frame_shown = timeGetTime();
     if (!g_render.vsync || !g_interval || g_render.frame_limit > 0)
         frame_hold();
     g_swap(g_dc);
