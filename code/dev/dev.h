@@ -41,9 +41,9 @@
 
         [fixes]           the original's bugs, mended
         last_pick=1       the computer riders' random picks can land on the last bike or rider
-        ai_rate=30        the computer riders' steps a second, whatever the frame rate, drawn
-                          smoothly between them (0 the game's one a frame, which shook them
-                          over 60; bikeai.c). 30 moves them as the game did at 30 frames a second
+        ai_rate=30        the computer riders take 30 steps a second, whatever the frame rate,
+                          drawn smoothly between them, as the game moved them at 30 frames a
+                          second (0 the game's one a frame, which shook them over 60; bikeai.c)
 
         [online]
         presence=1        counted as playing while the game runs, for the launcher's count of

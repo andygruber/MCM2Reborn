@@ -404,7 +404,7 @@ static const int tilt_values[] = { 0, 25, 50, 75, 100 };
 static const int pitch_values[] = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150 };
 static const int corner_values[] = { 0, 1 };
 static const int lean_values[] = { 0, 100, 200, 300, 352, 400, 500, 600 };
-static const int ai_rate_values[] = { 0, 30, 60 };
+static const int ai_rate_values[] = { 0, 30 };
 static const int riders_values[] = { 11, 16, 20, 24, 30 };
 
 #define ROW(name, values, setting) { name, values, (int) (sizeof values / sizeof values[0]), setting }
