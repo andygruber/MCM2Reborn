@@ -100,32 +100,6 @@ float exp_minus(float x)
     return sum;
 }
 
-/* ln x for x > 0: x = m 2^e, m in 1..2, and ln m = 2 atanh((m - 1) / (m + 1)) by its series. */
-static float natural_log(float x)
-{
-    union { float f; unsigned u; } bits;
-    float t, t2, sum;
-    int e;
-
-    bits.f = x;
-    e = (int) ((bits.u >> 23) & 0xFF) - 127;
-    bits.u = (bits.u & 0x7FFFFF) | 0x3F800000;
-    t = (bits.f - 1) / (bits.f + 1);
-    t2 = t * t;
-    sum = t * (1 + t2 * (1.0f / 3 + t2 * (1.0f / 5 + t2 * (1.0f / 7 + t2 * (1.0f / 9)))));
-    return 2 * sum + e * 0.69314718f;
-}
-
-float power(float x, float y)
-{
-    float l;
-
-    if (x <= 0)
-        return 0;
-    l = y * natural_log(x);
-    return l <= 0 ? exp_minus(-l) : 1 / exp_minus(l);
-}
-
 void spring(float* value, float* speed, float target, float omega, float dt)
 {
     float off = *value - target;
