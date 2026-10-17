@@ -4494,6 +4494,10 @@ static void menu_click(BYTE* self, ui_event* event)
         return;
     if (menu_reborn(self) && multi_clicked(self, event))
         return;
+    if (clicked(event, "ButLeaders") && leaders_layout()) {         /* the multiplayer panel's */
+        screen_open(self, 0x7F68, __LINE__, LEADERS_LAYOUT, leaders_vtable(), 0x911);
+        return;
+    }
     /*
         The modern menus start single player (and Pro Circuit) from the menu itself, where the
         original reached them only through panels whose opening closed multiplayer's. Its

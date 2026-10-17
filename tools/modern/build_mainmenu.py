@@ -33,7 +33,7 @@ ROWS = [("ButProCircuit", "PRO CIRCUIT", "YOUR CAREER · SPONSORS · PRIZE MONEY
         ("MenuSingle", "SINGLE PLAYER", "SUPERCROSS · NATIONALS · BAJA · ENDURO · STUNT QUARRY"),
         ("MenuMulti", "MULTIPLAYER", "LOCAL NETWORK · INTERNET"),
         ("MenuReplay", "REPLAYS", "WATCH YOUR SAVED RACES"),
-        ("MenuHighScore", "HIGH SCORES", "BEST LAPS · BEST SCORES · PRO CIRCUIT"),
+        ("MenuHighScore", "LEADERBOARDS", "BEST LAPS BY TRACK · EVENT · BIKE CLASS"),
         ("MenuOptions", "OPTIONS", "CONTROLS · AUDIO · GRAPHICS")]
 ROW_X, ROW_TOP, ROW_W, ROW_H, ROW_SIZE = LEFT - 24, 430, 1120, 128, 58
 SMALL = [("MenuHelp", "HELP"), ("MenuCredits", "CREDITS"), ("Menuexit", "EXIT")]
@@ -44,13 +44,16 @@ NAME = (1936, 1124, RIGHT - 32, 1196)               # the rider's name in it, th
 # The panels the menu still opens: control, its place, its title, and its buttons.
 # LAN is TCP/IP over the local network; Internet is a control of the look's own, opening the
 # online screen (dlgprocs.c). The other connections go: no one has IPX, a cable or a modem now.
-MULTI = ("MenuMultiAnimation", (1240, 556, 2000, 556 + 88 + 2 * 74 + 24), "MULTIPLAYER",
-         [("ButTCP", "LAN"), ("ButInternet", "INTERNET")])
+MULTI = ("MenuMultiAnimation", (1240, 556, 2000, 556 + 88 + 3 * 74 + 24), "MULTIPLAYER",
+         [("ButTCP", "LAN"), ("ButInternet", "INTERNET"), ("ButLeaders", "LEADERBOARDS")])
 GONE = ["ButIPX", "ButZone", "ButCable", "ButModem"]
 # Set as LAN's are: shown, after it in the tab order, its sounds.
 ADDED = {"ButInternet": {"Type": "BUTTON", "Anchor": "MenuMultiAnimation", "RelAnchor": "1",
                          "TabIndex": "21", "Show": "-1'True", "SoundPush": '"Beep"',
-                         "SoundFocus": '"Beep09"'}}
+                         "SoundFocus": '"Beep09"'},
+         "ButLeaders": {"Type": "BUTTON", "Anchor": "MenuMultiAnimation", "RelAnchor": "1",
+                        "TabIndex": "22", "Show": "-1'True", "SoundPush": '"Beep"',
+                        "SoundFocus": '"Beep09"'}}
 USER = ("MenuUserAnimation", (1904, 390, RIGHT, 1030), "RIDER PROFILES",
         [("ButNewProfile", "NEW"), ("ButLoadProfile", "LOAD"), ("ButRemoveProfile", "REMOVE"),
          ("ButCancelProfile", "CLOSE")])
