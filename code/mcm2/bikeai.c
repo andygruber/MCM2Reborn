@@ -24,6 +24,8 @@
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
 #include "../dev/maths.h"
+
+#include <mmsystem.h>
 #endif
 
 void __fastcall game_orig_FUN_00414000(BYTE* self, void* edx_unused, float dt);
@@ -184,6 +186,65 @@ static float distance_squared(const float* a, const float* b)
 }
 #endif
 
+/*
+    [trace] ai=1: the first computer rider, each frame, to ai-record.csv: the frame's time, its
+    steps and the time left over; each scene object's place as drawn (position, up) and the
+    bike's own position; its steering and lean commands; each wheel's place (+0xD8). Lengths
+    in hundredths, directions in thousandths.
+*/
+static void ai_record(BYTE* bike, const ai_bike* ai, float dt, int steps)
+{
+    static HANDLE file = INVALID_HANDLE_VALUE;
+    static BOOL tried;
+    char line[640];
+    DWORD done;
+    int n, k;
+
+    if (!dev_settings.trace_ai || ai != &g_ai_bikes[0])
+        return;
+    if (file == INVALID_HANDLE_VALUE) {
+        static const char header[] =
+            "ms,dt,steps,owed,blended,bike x,bike y,bike z,bike up x,bike up y,bike up z,"
+            "rider x,rider y,rider z,rider up x,rider up y,rider up z,pos x,pos y,pos z,steer,lean,"
+            "front x,front y,front z,rear x,rear y,rear z\r\n";
+
+        if (tried)
+            return;
+        tried = TRUE;
+        file = CreateFileA("ai-record.csv", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+        if (file == INVALID_HANDLE_VALUE)
+            return;
+        WriteFile(file, header, sizeof header - 1, &done, NULL);
+    }
+    n = wsprintfA(line, "%lu,%d,%d,%d,%d", timeGetTime(), (int) (dt * 100000), steps, (int) (ai->owed * 100000),
+                  ai->blended);
+    for (k = 0; k < OBJECTS; k++) {
+        const float* place = ai->objects[k] ? place_of(ai->objects[k]) : NULL;
+
+        if (place)
+            n += wsprintfA(line + n, ",%d,%d,%d,%d,%d,%d", (int) (place[12] * 100), (int) (place[13] * 100),
+                           (int) (place[14] * 100), (int) (place[4] * 1000), (int) (place[5] * 1000),
+                           (int) (place[6] * 1000));
+        else
+            n += wsprintfA(line + n, ",,,,,,");
+    }
+    n += wsprintfA(line + n, ",%d,%d,%d,%d,%d", (int) (FIELD(bike, 0x0C, float) * 100),
+                   (int) (FIELD(bike, 0x10, float) * 100), (int) (FIELD(bike, 0x14, float) * 100),
+                   (int) (FIELD(bike, 0x504, float) * 1000), (int) (FIELD(bike, 0x508, float) * 1000));
+    for (k = 0; k < 2; k++) {
+        BYTE* wheel = FIELD(bike, k ? 0x5F4 : 0x5F0, BYTE*);
+
+        if (wheel)
+            n += wsprintfA(line + n, ",%d,%d,%d", (int) (FIELD(wheel, 0xD8, float) * 100),
+                           (int) (FIELD(wheel, 0xDC, float) * 100), (int) (FIELD(wheel, 0xE0, float) * 100));
+        else
+            n += wsprintfA(line + n, ",,,");
+    }
+    n += wsprintfA(line + n, "\r\n");
+    WriteFile(file, line, n, &done, NULL);
+}
+
 PORT(0x00414000)
 void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
 {
@@ -231,6 +292,7 @@ void __fastcall ai_bike_step(BYTE* self, void* edx_unused, float dt)
             place_set(object, ai->drawn[k]);
             ai->blended = TRUE;
         }
+        ai_record(self, ai, dt, steps);
         return;
     }
 #endif

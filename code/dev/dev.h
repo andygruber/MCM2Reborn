@@ -13,6 +13,8 @@
         camera=1          the rider camera's readings, twice a second
         input=1           each input device's reads, once a second (inputfix.c)
         physics=1         each bike's physics step, to physics-record.csv (physics.c)
+        ai=1              the first computer rider each frame, to ai-record.csv: its steps, the
+                          places drawn and stepped, its commands and wheels (bikeai.c)
         display=1         every display mode set and every surface made that is not a
                           texture, with the address of the game code that asked
 
@@ -71,6 +73,7 @@ typedef struct dev_switches {
     BOOL trace_camera;
     BOOL trace_input;
     BOOL trace_physics;
+    BOOL trace_ai;
     BOOL menus_widescreen;
     BOOL menus_fill_sides;
     BOOL menus_modern;
