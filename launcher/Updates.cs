@@ -157,7 +157,7 @@ namespace Mcm2Reborn.Launcher
         // A package's files into `folder`, the settings kept; the launcher's own beside it as .new.
         public static bool Unpack(string zip, string folder, Action<string, float> progress)
         {
-            string self = Path.GetFileName(typeof(Updates).Assembly.Location);
+            string self = Install.LauncherName;
             bool launcher = false;
             string root = Path.GetFullPath(folder) + Path.DirectorySeparatorChar;
             using (ZipArchive archive = ZipFile.OpenRead(zip))
@@ -195,8 +195,7 @@ namespace Mcm2Reborn.Launcher
         // The launcher a package brought: in place of this one (Windows lets a running exe be renamed).
         public static bool SwapLauncher(string folder)
         {
-            string self = typeof(Updates).Assembly.Location;
-            string placed = Path.Combine(folder, Path.GetFileName(self));
+            string placed = Path.Combine(folder, Install.LauncherName);
             string next = placed + ".new";
             if (!File.Exists(next))
                 return false;

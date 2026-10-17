@@ -27,6 +27,8 @@ namespace Mcm2Reborn.Launcher
     static class Install
     {
         public const string KeyPath = @"Software\MCM2Reborn";
+        // The launcher's name in an install, whatever the one run was saved as (GitHub makes its spaces dots).
+        public const string LauncherName = "MCM2Reborn Launcher.exe";
         const string GameKey = @"Microsoft\Microsoft Games\Motocross Madness 2";
 
         // What a copy of the game has: its exe, and the folders its menus and races read.
@@ -270,7 +272,7 @@ namespace Mcm2Reborn.Launcher
         public static string PlaceLauncher(string folder)
         {
             string self = typeof(Install).Assembly.Location;
-            string placed = Path.Combine(folder, Path.GetFileName(self));
+            string placed = Path.Combine(folder, LauncherName);
             if (!string.Equals(Path.GetFullPath(self), Path.GetFullPath(placed), StringComparison.OrdinalIgnoreCase))
                 File.Copy(self, placed, true);
             Shortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),

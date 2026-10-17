@@ -228,7 +228,7 @@ namespace Mcm2Reborn.Launcher
                     progress = -1;
                     if (ended == "restart" && folder != null && Updates.SwapLauncher(folder))
                     {
-                        Process.Start(Path.Combine(folder, Path.GetFileName(Application.ExecutablePath)));
+                        Process.Start(Path.Combine(folder, Install.LauncherName));
                         Close();
                         return;
                     }
@@ -287,11 +287,11 @@ namespace Mcm2Reborn.Launcher
                     Updates.Apply(newest, to, (file, done) => report(file, 0.6f + 0.4f * done));
                 }
                 // The launcher in its install: a newer one the package brought is that one.
-                string next = Path.Combine(to, Path.GetFileName(Application.ExecutablePath) + ".new");
+                string next = Path.Combine(to, Install.LauncherName + ".new");
                 Install.PlaceLauncher(to);
                 if (File.Exists(next))
                 {
-                    string placed = Path.Combine(to, Path.GetFileName(Application.ExecutablePath));
+                    string placed = Path.Combine(to, Install.LauncherName);
                     File.Copy(next, placed, true);
                     File.Delete(next);
                 }
