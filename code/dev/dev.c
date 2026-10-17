@@ -227,6 +227,18 @@ void dev_reborn_save(void)
     write_number("reborn", "gear", g_reborn.gear);
 }
 
+BOOL dev_under_wine(void)
+{
+    static int wine = -1;
+
+    if (wine < 0) {
+        wine = api("ntdll.dll", "wine_get_version") != NULL;
+        if (wine)
+            log_line("dev build: running under Wine or Proton");
+    }
+    return wine;
+}
+
 const char* dev_first_rider(void)
 {
     typedef DWORD (WINAPI* read_text_fn)(LPCSTR, LPCSTR, LPCSTR, LPSTR, DWORD, LPCSTR);

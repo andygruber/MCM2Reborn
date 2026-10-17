@@ -1177,14 +1177,21 @@ static BYTE* movie_add(BYTE* self, int line)
     return movie;
 }
 
-/* IntroVid.dtm: ui\Intro.avi, unless skipped; the menus once it closes. */
+/*
+    IntroVid.dtm: ui\Intro.avi, unless skipped; the menus once it closes. Under Wine or Proton
+    the dev build skips it: their DirectShow cannot play its 2000 codec and shows a test card.
+*/
 PORT(0x004540D0)
 void __fastcall intro_video_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
     (void) edx_unused;
     if (event->type == EVENT_OPEN) {
         gui_manager_show_cursors(session_gui, NULL, FALSE);
+#ifdef OPENMCM2_DEV
+        if (!wait_skipped && !dev_under_wine()) {
+#else
         if (!wait_skipped) {
+#endif
             FIELD(self, 0x7F5C, BYTE*) = movie_add(self, 0xFEF);
             dialog_add(self, NULL, FIELD(self, 0x7F5C, BYTE*), 0, 1);
             if (movie_open(FIELD(self, 0x7F5C, BYTE*), NULL, NAME(0x0056FF80), TRUE, MOVIE_ENDED,
@@ -1198,7 +1205,8 @@ void __fastcall intro_video_handle(BYTE* self, void* edx_unused, ui_event* event
     }
 }
 
-/* The credits: ui\Credits.avi behind the Back button; the menus once it closes. */
+/* The credits: ui\Credits.avi behind the Back button; the menus once it closes (at once under
+   Wine or Proton in the dev build, as the intro). */
 PORT(0x00453F80)
 void __fastcall credits_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
@@ -1207,6 +1215,12 @@ void __fastcall credits_handle(BYTE* self, void* edx_unused, ui_event* event)
         if (clicked(event, NAME(0x0056F8CC)))                                 /* "Back" */
             dialog_end(self, NULL, 0);
     } else if (event->type == EVENT_OPEN) {
+#ifdef OPENMCM2_DEV
+        if (dev_under_wine()) {
+            dialog_end(self, NULL, 0);
+            return;
+        }
+#endif
         FIELD(self, 0x7F58, BYTE*) = movie_add(self, 0xFAD);
         dialog_add(self, NULL, FIELD(self, 0x7F58, BYTE*), 0, 1);
         object_unlink(FIELD(self, 0x7F58, BYTE*));

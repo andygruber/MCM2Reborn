@@ -77,7 +77,7 @@
 #define GAME_TITLE "MCM2:Reborn"
 
 /* Its version, as the menus (tools/modern/reborn_kit.py, VERSION) and the launcher show it. */
-#define GAME_VERSION "0.3.3"
+#define GAME_VERSION "0.3.4"
 
 typedef struct dev_switches {
     BOOL trace_screens;
@@ -279,6 +279,8 @@ float pad_smooth(float v);
 void  dev_pad_save(void);
 /* Alt+F4 and Alt+Tab out of the game whatever it is doing (escape.c). */
 void  escape_install(void);
+/* Whether the game runs under Wine or Proton (ntdll exports wine_get_version). */
+BOOL  dev_under_wine(void);
 /* The rider named in the launcher at its install ([launcher] rider), for the game's first profile,
    or NULL; and that it has been made, so it is not made again. */
 const char* dev_first_rider(void);
