@@ -7,7 +7,7 @@ is a player's own: the profiles in UI\\PROFILE (its EMPTYFIL kept, as the game s
 settings the game keeps in mcm2_profile.json, and its error log. The player names a first rider
 in the launcher instead.
 
-Publishing it is an asset of the same name on a GitHub release of xshxdex98/OpenMCM2; this only
+Publishing it is an asset of the same name on a GitHub release of xshxdex98/MCM2Reborn; this only
 builds it.
 """
 import os

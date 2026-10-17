@@ -10,7 +10,7 @@ The package is MCM2:Reborn's own files, laid out as in the game's folder - never
   MCM2Reborn Launcher.exe   the launcher (tools/build_launcher.py)
   reborn-version.txt        the version, as dev.h's GAME_VERSION
 
-Publishing it is a GitHub release of xshxdex98/OpenMCM2 tagged v<version> with the zip as its asset;
+Publishing it is a GitHub release of xshxdex98/MCM2Reborn tagged v<version> with the zip as its asset;
 this only builds it.
 """
 import os

@@ -1,103 +1,92 @@
-# OpenMCM2
+# MCM2:Reborn
 
-A native rebuild of **Motocross Madness 2** (Rainbow Studios, 2000). The retail executable is
-disassembled, reassembled and relinked by our own toolchain, with code of our own linked in beside
-it, so there is a running game from the first day and any function can be replaced by C and
-checked against the real one.
+**Motocross Madness 2** (Rainbow Studios, 2000), rebuilt to run and play well on today's PCs. It has
+modern menus, a new race HUD, an OpenGL renderer, online play for 30 riders, lap leaderboards and
+proper gamepad support. Every change can be switched back to the original's behaviour in Options.
 
-It already runs on its own OpenGL renderer, with no dgVoodoo and no injected hook, and keeps its
-settings in the game folder.
+## Installing
 
-No public MCM2 decompilation exists.
+1. Download **MCM2Reborn-Launcher.exe** from the [latest release](https://github.com/xshxdex98/MCM2Reborn/releases/latest).
+2. Run it. It looks for a copy of the game on your PC: a retail install, a portable copy, or the
+   CD. If you don't have one, pick **DOWNLOAD MOTOCROSS MADNESS 2** and it fetches the game.
+3. Type your rider's name and press **INSTALL**. MCM2:Reborn goes in its own folder, with desktop
+   and Start menu shortcuts.
+4. A short setup sets the picture quality, vsync, your controller and the look. Then press **PLAY**.
 
-## Layout
+The launcher keeps MCM2:Reborn up to date by itself and shows how many riders are online. Your
+settings are kept across updates.
+
+The base game is bundled with the blessing of Rainbow Studios and THQ Nordic.
+
+## What's new
+
+**Racing**
+- Up to 30 riders on the gate, in single races and online.
+- The bike's physics behave the same at any frame rate, and computer riders move smoothly.
+- The Pro Circuit's rider gear is in every event.
+- Add as many of your own skins as you like: every `.tga` in `RIDERS\` and `BIKES\` is its own choice.
+
+**Online**
+- Lobbies through Epic Online Services, up to 30 riders each, found from the game's Internet screen.
+- If you're missing the host's track or another rider's skins, the lobby offers to download them.
+- Each rider's ping and a ready count show in the lobby. If the host's game drops, the session ends cleanly.
+
+**Leaderboards**
+- A board for every track, event (Baja, Nationals, Supercross, Enduro) and bike class.
+- Your best lap from the second lap on counts, with one entry per rider. It changes only when you beat it.
+- Open them from the main menu or the multiplayer panel. Laps are kept on your PC, and on a
+  leaderboard server when one is set (`tools/leaderboard_server.py`).
+
+**Picture**
+- Modern menus and HUD, widescreen at your desktop's resolution.
+- Anti-aliasing, texture filtering, vsync and a frame-rate limit.
+- Edge smoothing (FXAA), sharpening, colour vibrance, brightness and bloom.
+
+**Controls**
+- XInput gamepads steer by their sticks, with response, sensitivity, smoothing and dead-zone settings.
+- Every action can be bound to any button or trigger: click it, then press the button.
+- Alt-tabbing no longer flips the camera or locks the controls.
+
+## Settings
+
+Everything is in the game's **Options**, under REBORN and GAMEPAD. The same settings are kept in
+`MCM2Reborn.ini` beside the game. The launcher's **SETUP** button changes
+the main ones in one go.
+
+## Building it
+
+MCM2:Reborn is built from the retail executable. The game is disassembled, reassembled and
+relinked by its own toolchain, and new code is linked in beside it. So the game runs from the
+first build, and any function can be replaced by C and checked against the original.
+
+```sh
+sh tools/ghidra/reimport.sh    # build the Ghidra database from Mcm2.exe (once)
+sh tools/ghidra/cycle.sh       # export -> port -> assemble -> compile -> link -> verify
+sh tools/deploy_dev.sh         # copy the build into a game folder
+py tools/build_launcher.py     # the launcher
+py tools/release.py            # the release package, build/release/
+py tools/base_package.py       # the base game's package, from a clean copy
+```
+
+- **Unchanged sections:** the rebuilt game's `.text`, `.rdata` and `.data` match retail byte for
+  byte, so every pointer in its data stays right.
+- **Our code:** it lives in a section of its own after the game's. The link refuses any build in
+  which one of the game's sections moved or grew.
+- **Ports:** a function marked `PORT(address)` replaces the game's own. `tools/verify.py` accepts no
+  difference from retail other than the calls redirected to it.
+- **Rendering:** the game gets DirectDraw 7 and Direct3D 7 objects written on OpenGL, so it needs no
+  wrapper.
+- **The dev build:** MCM2:Reborn's own features are built under `OPENMCM2_DEV`.
+
+The Ghidra workspace lives at `C:\mcm2ghidra\`, outside OneDrive and with no spaces in its path.
+OneDrive corrupts Ghidra's project files, and `analyzeHeadless.bat` splits its arguments on spaces.
 
 | | |
 |---|---|
-| `code/mcm2/` | the code linked into the game: start-up, settings, the OpenGL renderer and ported functions |
-| `docs/` | measured facts and findings. Start with [`binary.md`](docs/binary.md). |
-| `tools/` | the build: compile, link, resources, and the checks against retail |
-| `tools/ghidra/` | the Ghidra scripts, including the exporter, and the two build scripts |
-| `build/` | build output (not in the repository) |
-| `C:\mcm2ghidra\` | the Ghidra workspace - **outside OneDrive and space-free, deliberately** |
-
-OneDrive corrupts Ghidra project files, and `analyzeHeadless.bat` re-splits its arguments on spaces,
-so the Ghidra database cannot live next to this tree. The scripts in `tools/ghidra` are the master
-copies and are copied into the workspace each time they run. `tools/ghidra/reimport.sh` rebuilds
-the database from the binary and is the only supported way to get one.
-
-## Why the OpenMM2 harness carries over unchanged
-
-The approach is only sound if the binary has the shape it assumes, so that was checked before
-anything was built. It does, in every respect that matters:
-
-| | MM2 | MCM2 |
-|---|---|---|
-| format | PE32, i386 | PE32, i386 |
-| linker | MSVC | MSVC **6.0** |
-| image base | `0x400000` | `0x400000` |
-| `RELOCS_STRIPPED` | set | **set** |
-| base-relocation table | absent | **absent** |
-| sections | `.text` `.rdata` `.data` `.rsrc` | same four |
-| separate `.idata` | no | no |
-
-The absent relocation table is the important one. It means the image can only ever load at
-`0x400000`, so the link must pin it there - and nothing in the file says which four-byte words in
-`.data` are pointers rather than integers or floats that merely look like addresses. That single
-fact is what shapes the whole exporter, and it is identical here.
-
-`.text` is 1,391,230 bytes against MM2's ~1.76 MB, so "smaller game" holds, but only by about a
-fifth - not an order of magnitude.
-
-Full measurements, including the 15 DLLs and 244 imports and the three that have no modern import
-library, are in [`docs/binary.md`](docs/binary.md).
-
-## Where it stands
-
-**The rebuilt game is retail, byte for byte.** `.text`, `.rdata` and `.data` all match the original
-exactly, so every pointer in the game's data is right without being found and fixed. Two things made
-that possible: the image links with no import libraries, so retail's own import table is used, and
-each section ends at its real size ([`docs/harness.md`](docs/harness.md)).
-
-**Our code lives beside it.** `tools/compile.py` builds `code/mcm2` with no CRT and moves every
-section into one of our own, `.open`, after the game's; `tools/link.py` binds its Win32 calls to the
-game's import slots and refuses the build if any of the game's sections moved or grew.
-
-**It runs on OpenGL.** `code/mcm2` gives the game DirectDraw 7 and Direct3D 7 objects of its own,
-written on OpenGL, with the version-1 interfaces DirectShow needs for the videos. The intro, the
-menus and races all render through it. Render targets are framebuffers at the game's resolution,
-scaled to the window keeping their aspect.
-
-**Settings are self-contained.** `mcm2_profile.json` beside the game is loaded into the registry at
-start-up and saved back on exit, as the portable copy's launcher does.
-
-| | |
-|---|--:|
-| functions recovered | 5,658 (from Ghidra's 4,170) |
-| `.text` covered by functions | 98.54% |
-| classes named from RTTI | 253 |
-| sections differing from retail | **0** |
-
-**Functions are being ported to C.** A function marked `PORT(address)` replaces the game's, and
-`tools/verify.py` accepts no difference from retail other than the calls redirected to it
-([`docs/harness.md`](docs/harness.md#porting-a-function-to-c)). The menus come first, then the
-physics.
-
-## Running it
-
-```sh
-sh tools/ghidra/reimport.sh    # rebuild the Ghidra database from the binary
-sh tools/ghidra/cycle.sh       # export -> port -> assemble -> compile -> link -> verify
-```
-
-Copy `build/OpenMCM2.exe` into the game folder and run it there. `OpenMCM2.exe -ddraw` uses the
-original DirectDraw instead of the renderer, and logs every call it makes, for comparison.
-
-`reimport.sh` imports, analyses, censuses, runs the function recovery and censuses again, printing
-the numbers at each step. The recovery pass is part of the import on purpose: a database without it
-is a different database, and every later measurement would silently depend on which one was loaded.
-RTTI recovery is separate because it takes about ten minutes and changes no listings.
-
-`cycle.sh` runs the build steps together, deliberately. Doing them separately has twice let a stale
-executable be measured as if it were fresh, and that failure is silent - the stale build is
-internally consistent, so every check passes.
+| `code/mcm2/` | what is linked into the game: start-up, the renderer, the menus' code and the ported functions |
+| `code/dev/` | MCM2:Reborn's features: HUD, gamepads, leaderboards, cameras, online, settings |
+| `code/eos/` | the Epic Online Services helper (64-bit, beside the game) |
+| `launcher/` | the launcher (C#, .NET Framework 4.8) |
+| `tools/` | the build, the release packages, and the checks against retail |
+| `tools/modern/` | the modern menus' layouts and art |
+| `docs/` | measured facts about the game: start with [`binary.md`](docs/binary.md) and [`harness.md`](docs/harness.md) |

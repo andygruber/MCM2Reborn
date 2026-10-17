@@ -1,4 +1,4 @@
-// MCM2:Reborn's releases, from GitHub (xshxdex98/OpenMCM2): the changelog the launcher shows, and
+// MCM2:Reborn's releases, from GitHub (xshxdex98/MCM2Reborn): the changelog the launcher shows, and
 // the newest's package, which it puts over the install when it is newer than the one there.
 //
 // A release's package is its asset MCM2Reborn-<version>.zip: MCM2:Reborn's own files laid out as
@@ -25,7 +25,7 @@ namespace Mcm2Reborn.Launcher
 
     static class Updates
     {
-        const string Releases = "https://api.github.com/repos/xshxdex98/OpenMCM2/releases?per_page=30";
+        const string Releases = "https://api.github.com/repos/xshxdex98/MCM2Reborn/releases?per_page=30";
         public const string VersionFile = "reborn-version.txt";
         public const string BaseName = "MCM2-base.zip";
 
