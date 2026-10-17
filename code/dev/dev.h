@@ -193,6 +193,9 @@ void eos_chat(const char* name, const char* text);
 /* Seconds since the lobbies were last found, or -1 before they ever were. */
 int  eos_found_ago(void);
 
+/* The game's race overlays had their draw pass this frame: the race is on the screen (hud.c). */
+void hud_overlays_drawn(void);
+
 /* DirectInput's devices watched, so that what was held when the window lost the focus is let go
    when it comes back (inputfix.c). */
 void inputfix_install(void);

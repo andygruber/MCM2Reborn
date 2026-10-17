@@ -2,7 +2,9 @@
     OpenMCM2 - the race HUD's overlays (QuarryStuntEvent makes them): the gauges, the race
     statistics and the overview radar, their draw passes (vtable slot 14). In the dev build with
     the modern menus, MCM2:Reborn's own HUD (code/dev/hud.c) is drawn in their place and they draw
-    nothing; otherwise each is the game's own.
+    nothing; otherwise each is the game's own. Their passes also tell the HUD the race is on the
+    screen (hud_overlays_drawn): the race loads with its bikes already made, under the loading
+    screen, and the HUD waits for the race's first frame, as the game's overlays do.
 */
 
 #include "runtime.h"
@@ -18,6 +20,7 @@ int __fastcall game_orig_vf_14_521370(BYTE* self);     /* RadarOverlay */
 static BOOL reborn_hud(void)
 {
 #ifdef OPENMCM2_DEV
+    hud_overlays_drawn();
     return dev_settings.menus_modern && g_reborn.hud;
 #else
     return FALSE;

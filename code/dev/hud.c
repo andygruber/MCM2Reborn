@@ -9,7 +9,10 @@
     multisampled copy of the window, for smooth edges, and its words come from a picture of the
     menus' fonts that GDI draws once for each size.
 
-    What it shows comes from hud_read (huddata.c); while that says no race is on, it draws nothing.
+    What it shows comes from hud_read (huddata.c); while that says no race is on, it draws nothing,
+    and nor before the race is on the screen: it comes up with the first frame the game's own
+    overlays were to be drawn in (overlays.c), not under the loading screen, and stays up until
+    the race is over.
 */
 
 #include "dev.h"
@@ -34,6 +37,7 @@ static const colour GLASS  = { 16 / 255.f, 17 / 255.f, 20 / 255.f, 0.78f };
 static const colour TRACK  = { 190 / 255.f, 186 / 255.f, 178 / 255.f, 1 };
 static const colour SHADOW = { 0, 0, 0, 0.63f };
 
+static BOOL  g_race_shown;              /* the game's overlays have had a pass in this race */
 static float g_scale;                   /* window pixels to a mockup pixel */
 static float g_width;                   /* the window's, in mockup pixels */
 
@@ -670,13 +674,24 @@ static void state_2d(int w, int h)
     gl.EnableClientState(GL_VERTEX_ARRAY);
 }
 
+void hud_overlays_drawn(void)
+{
+    g_race_shown = TRUE;
+}
+
 void hud_draw(int w, int h)
 {
     static hud_view v;
     static float last_scale;
     BOOL smooth;
 
-    if (h <= 0 || !dev_settings.menus_modern || !g_reborn.hud || !hud_read(&v))
+    if (h <= 0 || !dev_settings.menus_modern || !g_reborn.hud)
+        return;
+    if (!hud_read(&v)) {
+        g_race_shown = FALSE;
+        return;
+    }
+    if (!g_race_shown)
         return;
     g_scale = h / BASE_H;
     g_width = w / g_scale;
