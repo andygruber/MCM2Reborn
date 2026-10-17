@@ -323,7 +323,7 @@ static void sites_write(const site* sites, int count)
     int i;
 
     for (i = 0; i < count; i++) {
-        BYTE now[8];
+        BYTE now[sizeof sites[0].now];
         DWORD target = (DWORD) sites[i].target;
 
         __movsb(now, sites[i].now, sites[i].length);
