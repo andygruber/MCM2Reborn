@@ -641,11 +641,11 @@ namespace Mcm2Reborn.Launcher
                     Theme.Words(g, releasesFailed != null ? "THE CHANGELOG COULD NOT BE READ. NO INTERNET?" : "READING THE CHANGELOG...",
                                 notes, Theme.Grey, new RectangleF(changelogArea.X, y, changelogArea.Width, S(40)), wrap: true);
                 }
-                else if (releases.Count == 0)
+                else if (!releases.Any(r => r.PackageUrl != null))
                 {
                     Theme.Words(g, "NO RELEASES YET.", notes, Theme.Grey, new RectangleF(changelogArea.X, y, changelogArea.Width, S(24)));
                 }
-                foreach (Release release in releases ?? new List<Release>())
+                foreach (Release release in (releases ?? new List<Release>()).Where(r => r.PackageUrl != null))  /* not the base game's */
                 {
                     Theme.Words(g, release.Name.ToUpperInvariant(), name, Theme.Paper, new RectangleF(changelogArea.X, y, changelogArea.Width, S(24)));
                     y += S(24);
