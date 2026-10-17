@@ -82,6 +82,17 @@ namespace Mcm2Reborn.Launcher
             return chosen;
         }
 
+        // The first rider's name for the game to make its first profile with ([launcher] rider, read by
+        // the dev build at its "new rider" screen), when the install has no profile yet.
+        public static void NameFirstRider(string folder, string name)
+        {
+            string ini = IniOf(folder), profiles = Path.Combine(folder, @"UI\PROFILE");
+            if (ini == null || name.Length == 0
+                || (Directory.Exists(profiles) && Directory.GetDirectories(profiles).Length > 0))
+                return;
+            WritePrivateProfileString("launcher", "rider", name, ini);
+        }
+
         public static void Save(string folder, int[] chosen)
         {
             string ini = IniOf(folder);

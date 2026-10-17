@@ -2,7 +2,8 @@
 // the newest's package, which it puts over the install when it is newer than the one there.
 //
 // A release's package is its asset MCM2Reborn-<version>.zip: MCM2:Reborn's own files laid out as
-// in the game's folder, and the launcher. Settings files already there are kept.
+// in the game's folder, and the launcher. Settings files already there are kept. The base game, for
+// a player without a copy of their own, is the asset MCM2-base.zip on whichever release has it.
 
 using System;
 using System.Collections.Generic;
@@ -17,7 +18,7 @@ namespace Mcm2Reborn.Launcher
 {
     sealed class Release
     {
-        public string Tag, Name, Notes, PackageUrl;
+        public string Tag, Name, Notes, PackageUrl, BaseUrl;
         public DateTime Published;
         public Version Version;
     }
@@ -26,6 +27,7 @@ namespace Mcm2Reborn.Launcher
     {
         const string Releases = "https://api.github.com/repos/xshxdex98/OpenMCM2/releases?per_page=30";
         public const string VersionFile = "reborn-version.txt";
+        public const string BaseName = "MCM2-base.zip";
 
         // Kept when a package has them too: the player's own settings.
         static readonly string[] Keep = { "MCM2Reborn.ini", "OpenMCM2-Dev.ini" };
@@ -74,6 +76,8 @@ namespace Mcm2Reborn.Launcher
                         if (name.StartsWith("MCM2Reborn-", StringComparison.OrdinalIgnoreCase)
                             && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                             release.PackageUrl = file.Get<string>("browser_download_url");
+                        else if (name.Equals(BaseName, StringComparison.OrdinalIgnoreCase))
+                            release.BaseUrl = file.Get<string>("browser_download_url");
                     }
                 releases.Add(release);
             }
@@ -104,24 +108,51 @@ namespace Mcm2Reborn.Launcher
         public static bool Apply(Release release, string folder, Action<string, float> progress)
         {
             string zip = Path.Combine(Path.GetTempPath(), "MCM2Reborn-" + release.Tag + ".zip");
-            using (WebClient client = Client())
-            {
-                var done = new System.Threading.ManualResetEvent(false);
-                Exception failed = null;
-                client.DownloadProgressChanged += (s, e) =>
-                    progress("DOWNLOADING " + release.Tag, e.TotalBytesToReceive > 0
-                             ? 0.8f * e.BytesReceived / e.TotalBytesToReceive : 0);
-                client.DownloadFileCompleted += (s, e) => { failed = e.Error; done.Set(); };
-                client.DownloadFileAsync(new Uri(release.PackageUrl), zip);
-                done.WaitOne();
-                if (failed != null)
-                    throw failed;
-            }
+            Download(release.PackageUrl, zip, "DOWNLOADING " + release.Tag, progress);
             bool launcher = Unpack(zip, folder, progress);
             File.Delete(zip);
             File.WriteAllText(Path.Combine(folder, VersionFile), release.Tag);
             return launcher;
         }
+
+        // `url` saved as `zip`, the first 0.8 of the progress.
+        static void Download(string url, string zip, string what, Action<string, float> progress)
+        {
+            using (WebClient client = Client())
+            {
+                var done = new System.Threading.ManualResetEvent(false);
+                Exception failed = null;
+                client.DownloadProgressChanged += (s, e) =>
+                    progress(what, e.TotalBytesToReceive > 0 ? 0.8f * e.BytesReceived / e.TotalBytesToReceive : 0);
+                client.DownloadFileCompleted += (s, e) => { failed = e.Error; done.Set(); };
+                client.DownloadFileAsync(new Uri(url), zip);
+                done.WaitOne();
+                if (failed != null)
+                    throw failed;
+            }
+        }
+
+        // The base game into `folder`: MCM2-base.zip beside the launcher, else from the releases.
+        public static void InstallBase(List<Release> releases, string folder, Action<string, float> progress)
+        {
+            string here = Path.Combine(Path.GetDirectoryName(typeof(Updates).Assembly.Location), BaseName);
+            string url = releases?.FirstOrDefault(r => r.BaseUrl != null)?.BaseUrl;
+            if (File.Exists(here))
+            {
+                Unpack(here, folder, progress);
+                return;
+            }
+            if (url == null)
+                throw new InvalidOperationException("the game's download is not on the releases yet");
+            string zip = Path.Combine(Path.GetTempPath(), BaseName);
+            Download(url, zip, "DOWNLOADING THE GAME", progress);
+            Unpack(zip, folder, progress);
+            File.Delete(zip);
+        }
+
+        public static bool BaseOffered(List<Release> releases) =>
+            File.Exists(Path.Combine(Path.GetDirectoryName(typeof(Updates).Assembly.Location), BaseName))
+            || releases?.Any(r => r.BaseUrl != null) == true;
 
         // A package's files into `folder`, the settings kept; the launcher's own beside it as .new.
         public static bool Unpack(string zip, string folder, Action<string, float> progress)

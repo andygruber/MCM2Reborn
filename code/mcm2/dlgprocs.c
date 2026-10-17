@@ -3125,9 +3125,32 @@ static void ok_enable(BYTE* self, BOOL enabled)
     VIRTUAL(ok, 0xC4, method_1)(ok, NULL, enabled);
 }
 
+#ifdef OPENMCM2_DEV
+/* A rider named in the launcher, if its name is one a profile may have (as the edit box allows). */
+static BOOL first_rider_named(void)
+{
+    const char* name = dev_first_rider();
+    int i, k;
+
+    if (!name || dir_list_has(game_files, NULL, name))
+        return FALSE;
+    for (i = 0; name[i]; i++) {
+        BOOL letter = (name[i] >= 'a' && name[i] <= 'z') || (name[i] >= 'A' && name[i] <= 'Z')
+                      || (name[i] >= '0' && name[i] <= '9');
+
+        for (k = 0; !letter && PROFILE_CHARACTERS[k]; k++)
+            letter = name[i] == PROFILE_CHARACTERS[k];
+        if (!letter)
+            return FALSE;
+    }
+    return TRUE;
+}
+#endif
+
 /*
     A new profile's name, typed (OK only once there is one), or in a network game (screen
-    0xBBB) the player's own. A yes (31) from the prompt it raises saves it as the profile.
+    0xBBB) the player's own. A yes (31) from the prompt it raises saves it as the profile. In the
+    dev build the first one, at screen 0xBBA, may come from the launcher.
 */
 PORT(0x00452E00)
 void __fastcall profile_name_handle(BYTE* self, void* edx_unused, ui_event* event)
@@ -3160,6 +3183,15 @@ void __fastcall profile_name_handle(BYTE* self, void* edx_unused, ui_event* even
             FIELD(edit, 0x5C, int) = 12;            /* the box becomes a label */
             profile_create(event);
             dialog_end(self, NULL, 0);
+#ifdef OPENMCM2_DEV
+        } else if (screen == 0xBBA && first_rider_named()) {
+            /* The first profile, named in the launcher at its install: made as the network's is. */
+            edit_set_text(edit, NULL, dev_first_rider());
+            FIELD(edit, 0x5C, int) = 12;
+            dev_first_rider_done();
+            profile_create(event);
+            dialog_end(self, NULL, 0);
+#endif
         } else {
             gui_user_queue_capture(FIELD(self, 0x34, gui_user*), NULL, edit, NULL, FALSE);
         }

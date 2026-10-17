@@ -48,6 +48,7 @@ namespace Mcm2Reborn.Launcher
         float changelogScroll, changelogHeight;
         RectangleF changelogArea;
         int[] setupChosen;                          // the setup page's choices while it is open, else null
+        readonly TextBox riderName;                 // the first rider's name, on the install page
 
         readonly List<Hit> hits = new List<Hit>();
         Hit hover;
@@ -71,6 +72,15 @@ namespace Mcm2Reborn.Launcher
             {
             }
             countTimer.Tick += (s, e) => CountPlayers();
+
+            // The profile's name as the game allows it: 15 of letters, digits and _-()$#@.
+            riderName = new TextBox {
+                MaxLength = 15, BorderStyle = BorderStyle.FixedSingle, BackColor = Theme.Panel,
+                ForeColor = Theme.Paper, Font = Theme.Text(18, true), Visible = false,
+            };
+            riderName.KeyPress += (s, e) => e.Handled = !char.IsControl(e.KeyChar)
+                && !(e.KeyChar < 128 && (char.IsLetterOrDigit(e.KeyChar) || "_-()$#@".IndexOf(e.KeyChar) >= 0));
+            Controls.Add(riderName);
         }
 
         static int S(float design) => (int) Math.Round(design * Theme.Scale);
@@ -123,8 +133,10 @@ namespace Mcm2Reborn.Launcher
                 List<GameCopy> found = Install.Find();
                 Ui(() => {
                     copies = found;
+                    copies.Add(new GameCopy { Download = true, Kind = "DOWNLOAD",
+                                              Folder = "MOTOCROSS MADNESS 2, DOWNLOADED WITH MCM2:REBORN" });
                     chosen = 0;
-                    status = copies.Count > 0 ? "" : "NO COPY OF THE GAME FOUND: BROWSE TO ITS FOLDER";
+                    status = "";
                     statusColour = Theme.Grey;
                 });
             });
@@ -236,9 +248,18 @@ namespace Mcm2Reborn.Launcher
             if (copies.Count == 0 || busy)
                 return;
             GameCopy copy = copies[chosen];
-            string to = intoGameFolder ? copy.Folder : destination;
-            if (copy.DataFolder == null && !Install.IsGame(copy.Folder))
+            string to = intoGameFolder && !copy.Download ? copy.Folder : destination;
+            string rider = riderName.Text.Trim();
+            if (!copy.Download && copy.DataFolder == null && !Install.IsGame(copy.Folder))
                 return;
+            if (copy.Download && !Updates.BaseOffered(releases))
+            {
+                status = releasesFailed != null ? "NO INTERNET: THE GAME COULD NOT BE DOWNLOADED"
+                                                 : "THE GAME'S DOWNLOAD IS NOT UP YET: PICK A COPY YOU HAVE";
+                statusColour = Theme.Red;
+                Invalidate();
+                return;
+            }
             Release newest = Newest;
             string local = Updates.LocalPackage();
             if (local == null && newest == null)
@@ -249,8 +270,12 @@ namespace Mcm2Reborn.Launcher
                 Invalidate();
                 return;
             }
+            List<Release> known = releases;
             Work("INSTALLING", report => {
-                Install.CopyGame(copy, to, (file, done) => report("COPYING THE GAME  ·  " + file, done * 0.6f));
+                if (copy.Download)
+                    Updates.InstallBase(known, to, (file, done) => report("THE GAME  ·  " + file, done * 0.6f));
+                else
+                    Install.CopyGame(copy, to, (file, done) => report("COPYING THE GAME  ·  " + file, done * 0.6f));
                 if (local != null)
                 {
                     Updates.Unpack(local, to, (file, done) => report(file, 0.6f + 0.4f * done));
@@ -271,6 +296,7 @@ namespace Mcm2Reborn.Launcher
                     File.Delete(next);
                 }
                 Install.Installed = to;
+                Setup.NameFirstRider(to, rider);
                 Ui(() => folder = to);
                 return "INSTALLED. READY TO RIDE";
             });
@@ -345,6 +371,7 @@ namespace Mcm2Reborn.Launcher
             hits.Clear();
             DrawBackground(g);
             DrawTop(g);
+            riderName.Visible = folder == null;
             if (folder == null)
                 DrawInstall(g);
             else if (setupChosen != null)
@@ -439,29 +466,38 @@ namespace Mcm2Reborn.Launcher
             using (Font big = Theme.Heading(46))
                 Theme.Words(g, "INSTALL", big, Theme.Paper, R(36, 118, 620, 64));
             using (Font text = Theme.Text(14))
-                Theme.Words(g, "MCM2:REBORN IS MADE FROM YOUR OWN COPY OF THE GAME. PICK IT:", text, Theme.Grey,
-                            R(36, 180, 640, 22));
-            float y = 208;
-            for (int i = 0; i < Math.Min(copies.Count, 3); i++, y += 50)
+                Theme.Words(g, "THE GAME MCM2:REBORN IS MADE FROM. PICK ONE:", text, Theme.Grey, R(36, 180, 500, 22));
+            SmallButton(g, R(540, 172, 136, 32), "BROWSE...", Browse, !busy);
+            float y = 210;
+            // Two copies found at most, and the download, always last.
+            var shown = copies.Where(c => !c.Download).Take(2).Concat(copies.Where(c => c.Download)).ToList();
+            foreach (GameCopy copy in shown)
             {
-                int which = i;
-                CopyRow(g, R(36, y, 640, 44), copies[i], which == chosen, () => chosen = which);
+                int which = copies.IndexOf(copy);
+                CopyRow(g, R(36, y, 640, 42), copy, which == chosen, () => chosen = which);
+                y += 46;
             }
-            SmallButton(g, R(36, y, 200, 40), "BROWSE...", Browse, !busy);
-            y += 56;
+
+            bool download = copies.Count > 0 && copies[chosen].Download;
+            using (Font text = Theme.Text(14))
+                Theme.Words(g, "WHERE IT GOES:", text, Theme.Grey, R(36, y + 4, 640, 22));
+            y += 28;
+            Choice(g, R(36, y, 640, 38), "A NEW FOLDER  ·  " + destination.ToUpperInvariant(), !intoGameFolder || download,
+                   () => intoGameFolder = false);
+            SmallButton(g, R(560, y + 4, 110, 30), "CHANGE", ChooseDestination, !busy);
+            y += 40;
+            if (!download)
+                Choice(g, R(36, y, 640, 38), "INTO THE GAME'S OWN FOLDER (FOR A COPY YOU KEEP FOR IT)", intoGameFolder,
+                       () => intoGameFolder = true);
+            y += 48;
 
             using (Font text = Theme.Text(14))
-                Theme.Words(g, "WHERE IT GOES:", text, Theme.Grey, R(36, y, 640, 22));
-            y += 26;
-            Choice(g, R(36, y, 640, 40), "A NEW FOLDER  ·  " + destination.ToUpperInvariant(), !intoGameFolder,
-                   () => intoGameFolder = false);
-            SmallButton(g, R(560, y + 4, 110, 32), "CHANGE", ChooseDestination, !busy);
-            y += 46;
-            Choice(g, R(36, y, 640, 40), "INTO THE GAME'S OWN FOLDER (FOR A COPY YOU KEEP FOR IT)", intoGameFolder,
-                   () => intoGameFolder = true);
-            y += 56;
-            BigButton(g, R(36, y, 300, 62), "INSTALL  ›", InstallNow, !busy && copies.Count > 0);
-            DrawStatus(g, y + 76);
+                Theme.Words(g, "YOUR RIDER'S NAME (YOUR FIRST PROFILE):", text, Theme.Grey, R(36, y, 640, 22));
+            Rectangle box = Rectangle.Round(R(36, y + 26, 300, 36));
+            if (riderName.Bounds != box)
+                riderName.Bounds = box;
+            BigButton(g, R(366, y + 18, 300, 54), "INSTALL  ›", InstallNow, !busy && copies.Count > 0);
+            DrawStatus(g, y + 82);
         }
 
         void DrawSetup(Graphics g)

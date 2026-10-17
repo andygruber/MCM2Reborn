@@ -277,6 +277,10 @@ float pad_curve(float v);
 /* An analog stick's steering, each frame, eased toward the stick over g_pad.smoothing ms. */
 float pad_smooth(float v);
 void  dev_pad_save(void);
+/* The rider named in the launcher at its install ([launcher] rider), for the game's first profile,
+   or NULL; and that it has been made, so it is not made again. */
+const char* dev_first_rider(void);
+void  dev_first_rider_done(void);
 /* Whether the modern menus are on and UI\modern has `file` (a screen's own layout). */
 BOOL  dev_modern_has(const char* file);
 

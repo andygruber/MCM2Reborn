@@ -226,6 +226,27 @@ void dev_reborn_save(void)
     write_number("reborn", "gear", g_reborn.gear);
 }
 
+const char* dev_first_rider(void)
+{
+    typedef DWORD (WINAPI* read_text_fn)(LPCSTR, LPCSTR, LPCSTR, LPSTR, DWORD, LPCSTR);
+    read_text_fn read_text = (read_text_fn) api("kernel32.dll", "GetPrivateProfileStringA");
+    static char name[16];
+
+    name[0] = 0;
+    if (read_text)
+        read_text("launcher", "rider", "", name, sizeof name, SETTINGS_FILE);
+    return name[0] ? name : NULL;
+}
+
+void dev_first_rider_done(void)
+{
+    typedef BOOL (WINAPI* write_text_fn)(LPCSTR, LPCSTR, LPCSTR, LPCSTR);
+    write_text_fn write_text = (write_text_fn) api("kernel32.dll", "WritePrivateProfileStringA");
+
+    if (write_text)
+        write_text("launcher", "rider", NULL, SETTINGS_FILE);
+}
+
 BOOL dev_modern_has(const char* file)
 {
     typedef DWORD (WINAPI* attributes_fn)(LPCSTR);

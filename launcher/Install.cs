@@ -19,6 +19,7 @@ namespace Mcm2Reborn.Launcher
         public string Folder;
         public string Kind;         // how it was found: "RETAIL INSTALL", "COPY", "CHOSEN"
         public string DataFolder;   // where its track and bike data are, if not in Folder (the CD)
+        public bool Download;       // not a copy here: the game downloaded (Updates.InstallBase)
         public bool Complete => DataFolder == null;
         public override string ToString() => Folder;
     }
