@@ -38,7 +38,7 @@ static const char* settings_file(void)
 
 dev_switches dev_settings = { 0 };     /* initialised, or it is a common symbol and lands in .data */
 camera_options g_camera_options = { 140, 0, 70, 0, 352 };
-reborn_options g_reborn = { 1, 1, 1, 30 };
+reborn_options g_reborn = { 1, 1, 1, 30, 1 };
 
 typedef UINT (WINAPI* read_int_fn)(LPCSTR section, LPCSTR key, INT fallback, LPCSTR file);
 
@@ -162,6 +162,7 @@ void dev_install(void)
         g_reborn.cameras = (int) read("reborn", "cameras", g_reborn.cameras, SETTINGS_FILE);
         g_reborn.physics = (int) read("reborn", "physics", g_reborn.physics, SETTINGS_FILE);
         g_reborn.riders = (int) read("reborn", "riders", g_reborn.riders, SETTINGS_FILE);
+        g_reborn.gear = (int) read("reborn", "gear", g_reborn.gear, SETTINGS_FILE);
     }
     if (read) {
         int a;
@@ -215,6 +216,7 @@ void dev_reborn_save(void)
     write_number("reborn", "cameras", g_reborn.cameras);
     write_number("reborn", "physics", g_reborn.physics);
     write_number("reborn", "riders", g_reborn.riders);
+    write_number("reborn", "gear", g_reborn.gear);
 }
 
 BOOL dev_modern_has(const char* file)

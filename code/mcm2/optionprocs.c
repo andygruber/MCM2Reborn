@@ -437,6 +437,7 @@ static const struct reborn_row {
     ROW("MultPhysStyle", style_values, &g_reborn.physics),
     ROW("MultAiRate", ai_rate_values, &dev_settings.fix_ai_rate),
     ROW("MultRiders", riders_values, &g_reborn.riders),
+    ROW("MultGear", style_values, &g_reborn.gear),
     /* the GAMEPAD page's */
     ROW("MultPadOn", on_off_values, &g_pad.on),
     ROW("MultPadResponse", response_values, &g_pad.response),

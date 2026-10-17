@@ -211,7 +211,8 @@ REBORN_COLUMNS = (
               ("MultFpTilt", "TILT"), ("MultFpPitch", "PITCH"), ("MultFpCorner", "CORNER ANTICIPATION"),
               ("MultFpLean", "LEAN HEADING SCALE"))),
     ("PLAY", (("MultPhysStyle", "PHYSICS"), ("MultRiders", "RIDERS ON THE GATE"),
-              ("MultAiRate", "COMPUTER RIDERS' STEPS"), ("MultFrameLimit", "FRAME RATE LIMIT"))),
+              ("MultAiRate", "COMPUTER RIDERS' STEPS"), ("MultGear", "ALL RIDER GEAR"),
+              ("MultFrameLimit", "FRAME RATE LIMIT"))),
 )
 
 

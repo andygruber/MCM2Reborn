@@ -2945,9 +2945,8 @@ void __fastcall mp_choices_fill(BYTE* self)
     list_clear(list);
     for (i = 0; i < FIELD(game_session, 0x5C, int); i++) {
         BYTE* rider = FIELD(game_session, 0x58, BYTE*) + i * RIDER_SIZE;
-        int kind = FIELD(rider, 0xC4, int);
 
-        if (kind == 2 || kind == 3 || FIELD(rider, 0xC0, DWORD)) {
+        if (rider_offered(rider)) {
             list_add_text(list, NULL, (const char*) rider, i, 0);
             rider = FIELD(game_session, 0x58, BYTE*) + i * RIDER_SIZE;
             if (!game__strcmp((const char*) rider + 0x40, (const char*) game_main + 0x1F6C))

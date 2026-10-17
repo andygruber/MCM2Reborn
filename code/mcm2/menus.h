@@ -9,6 +9,9 @@
 #pragma once
 
 #include "gui.h"
+#ifdef OPENMCM2_DEV
+#include "../dev/dev.h"
+#endif
 
 /* The controls and lists the helpers use, ported in ui.c. */
 BYTE* __fastcall dialog_find_control(BYTE* self, void* edx_unused, const char* name, int type);
@@ -185,6 +188,20 @@ static __inline BOOL x87_equal(double a, double b)
 static __inline BOOL clicked(const ui_event* event, const char* button)
 {
     return !game_FUN_0053b6e0(button, (const char*) event->b);
+}
+
+/* A rider look offered in a single race and online: riders.pb's Available 2 and 3, and the player's
+   own; the rest are the Pro Circuit's. With ALL RIDER GEAR (the dev build's) every one: another
+   rider's look is found by its file (session_rider_look), so everyone sees it. */
+static __inline BOOL rider_offered(const BYTE* rider)
+{
+    int kind = FIELD(rider, 0xC4, int);
+
+#ifdef OPENMCM2_DEV
+    if (g_reborn.gear)
+        return TRUE;
+#endif
+    return kind == 2 || kind == 3 || FIELD(rider, 0xC0, DWORD);
 }
 
 /* Makers of kind 2 and 3 are offered, and 10 once the game's 0x1EE8 has its first bit. */

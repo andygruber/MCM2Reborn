@@ -127,13 +127,15 @@ extern camera_options g_camera_options;
     Each of MCM2:Reborn's changes to how the race looks can be turned back to the original's, on
     the Graphics page, kept in [reborn]: 1 Reborn's, 0 the game's own. The HUD (hud.c, and the
     original's overlays drawn again, overlays.c) and the first-person view (camera.c); on the Game
-    page the bike's physics the same at any frame rate (steptime.c).
+    page the bike's physics the same at any frame rate (steptime.c). `gear` 1 offers every rider
+    look outside the Pro Circuit too (menus.h, rider_offered).
 */
 typedef struct reborn_options {
     int hud;
     int cameras;
     int physics;
     int riders;                 /* on the gate in a single race: 11, the game's, to 30 (riders.c) */
+    int gear;
 } reborn_options;
 
 extern reborn_options g_reborn;
