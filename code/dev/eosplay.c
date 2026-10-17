@@ -315,6 +315,11 @@ static void heard(BYTE kind, BYTE* fields, DWORD size)
         }
         break;
     case TELL_GONE:
+        if (!eos.hosting && *(DWORD*) fields == eos.owner) {
+            log_line("eos: the host left");     /* its game shut, or lost: the session is over */
+            lobby_lost();
+            break;
+        }
         for (i = 0; i < eos.peer_count; i++) {
             if (eos.peers[i].id == *(DWORD*) fields) {
                 eos.peers[i] = eos.peers[--eos.peer_count];
