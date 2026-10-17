@@ -4282,6 +4282,9 @@ static const struct { int cc; const char* name; } leader_classes[] = {
     { 600, "600 4-STROKE" },
 };
 
+#define KINDS_COUNT     ((int) (sizeof leader_kinds / sizeof *leader_kinds))
+#define CLASSES_COUNT   ((int) (sizeof leader_classes / sizeof *leader_classes))
+
 static void* g_leaders_vtable[LEADERS_SLOTS + 1];
 static int   g_leaders_kind = 3, g_leaders_cc = 125;
 static char  g_leaders_track[64];
@@ -4316,6 +4319,49 @@ static void leaders_tab(BYTE* self, const char* name, BOOL chosen)
         control_show(on_button, NULL, chosen, TRUE);
 }
 
+/* The event's tracks, as the game lists them, then any this computer has laps of that it does not
+   (one since taken out of the game, say). */
+static void leaders_tracks_fill(void)
+{
+    char laps[TRACKS_MOST][64];
+    int i, k, n = leaders_tracks(g_leaders_kind, g_leaders_cc, laps, TRACKS_MOST);
+
+    g_leaders_track_count = 0;
+    for (i = 0; i < FIELD(game_session, 0x64, int) && g_leaders_track_count < TRACKS_MOST; i++) {
+        const BYTE* track = FIELD(game_session, 0x60, BYTE*) + i * 0x54;
+
+        if (FIELD(track, 0x4, int) == g_leaders_kind)
+            lstrcpynA(g_leaders_tracks[g_leaders_track_count++], (const char*) track + 0x14, 64);
+    }
+    for (i = 0; i < n && g_leaders_track_count < TRACKS_MOST; i++) {
+        for (k = 0; k < g_leaders_track_count && lstrcmpiA(g_leaders_tracks[k], laps[i]); k++)
+            ;
+        if (k == g_leaders_track_count)
+            lstrcpynA(g_leaders_tracks[g_leaders_track_count++], laps[i], 64);
+    }
+}
+
+/* Opened after a race not yet seen here, the board is that race's: its event, class and track. */
+static void leaders_last_race(void)
+{
+    static char seen[64];
+    const char* track = (const char*) game_main + 0x2DA6;
+    int kind = FIELD(game_main, 0x2D74, int), cc = FIELD(game_main, 0x1550, int), i;
+
+    if (!track[0] || !lstrcmpiA(track, seen))
+        return;
+    lstrcpynA(seen, track, sizeof seen);
+    for (i = 0; i < KINDS_COUNT && leader_kinds[i].kind != kind; i++)
+        ;
+    if (i == KINDS_COUNT)
+        return;
+    g_leaders_kind = kind;
+    for (i = 0; i < CLASSES_COUNT; i++)
+        if (leader_classes[i].cc == cc)
+            g_leaders_cc = cc;
+    lstrcpynA(g_leaders_track, track, sizeof g_leaders_track);
+}
+
 /* The tabs, the track list (unless `tracks_too` is off: its own pick) and the chosen board. */
 static void leaders_refresh(BYTE* self, BOOL tracks_too)
 {
@@ -4327,13 +4373,13 @@ static void leaders_refresh(BYTE* self, BOOL tracks_too)
     BOOL online = FALSE;
     int i, n, chosen = -1;
 
-    for (i = 0; i < (int) (sizeof leader_kinds / sizeof *leader_kinds); i++) {
+    for (i = 0; i < KINDS_COUNT; i++) {
         wsprintfA(name, "BtnKind%d", leader_kinds[i].kind);
         leaders_tab(self, name, leader_kinds[i].kind == g_leaders_kind);
         if (leader_kinds[i].kind == g_leaders_kind)
             kind_name = leader_kinds[i].name;
     }
-    for (i = 0; i < (int) (sizeof leader_classes / sizeof *leader_classes); i++) {
+    for (i = 0; i < CLASSES_COUNT; i++) {
         wsprintfA(name, "BtnClass%d", leader_classes[i].cc);
         leaders_tab(self, name, leader_classes[i].cc == g_leaders_cc);
         if (leader_classes[i].cc == g_leaders_cc)
@@ -4342,7 +4388,7 @@ static void leaders_refresh(BYTE* self, BOOL tracks_too)
 
     /* The tracks with laps for the event and class; the one chosen kept if it is among them. */
     if (tracks_too)
-        g_leaders_track_count = leaders_tracks(g_leaders_kind, g_leaders_cc, g_leaders_tracks, TRACKS_MOST);
+        leaders_tracks_fill();
     for (i = 0; i < g_leaders_track_count; i++)
         if (!lstrcmpiA(g_leaders_tracks[i], g_leaders_track))
             chosen = i;
@@ -4383,7 +4429,7 @@ static void leaders_refresh(BYTE* self, BOOL tracks_too)
         wsprintfA(name, "TxtDate%d", i);
         leaders_write(self, name, i < n ? board[i].date : "");
     }
-    leaders_write(self, "TxtEmpty", n ? "" : chosen < 0 ? "NO LAPS YET FOR THIS EVENT AND CLASS. RIDE ONE!"
+    leaders_write(self, "TxtEmpty", n ? "" : chosen < 0 ? "NO TRACKS FOR THIS EVENT"
                                                         : "NO LAPS ON THIS BOARD YET");
 }
 
@@ -4394,6 +4440,7 @@ static void __fastcall leaders_handle(BYTE* self, void* edx_unused, ui_event* ev
 
     (void) edx_unused;
     if (event->type == EVENT_OPEN) {
+        leaders_last_race();
         leaders_refresh(self, TRUE);
         return;
     }
@@ -4413,7 +4460,7 @@ static void __fastcall leaders_handle(BYTE* self, void* edx_unused, ui_event* ev
         event->e = 1;
         return;
     }
-    for (i = 0; i < (int) (sizeof leader_kinds / sizeof *leader_kinds); i++) {
+    for (i = 0; i < KINDS_COUNT; i++) {
         wsprintfA(name, "BtnKind%d", leader_kinds[i].kind);
         if (clicked(event, name)) {
             g_leaders_kind = leader_kinds[i].kind;
@@ -4421,7 +4468,7 @@ static void __fastcall leaders_handle(BYTE* self, void* edx_unused, ui_event* ev
             return;
         }
     }
-    for (i = 0; i < (int) (sizeof leader_classes / sizeof *leader_classes); i++) {
+    for (i = 0; i < CLASSES_COUNT; i++) {
         wsprintfA(name, "BtnClass%d", leader_classes[i].cc);
         if (clicked(event, name)) {
             g_leaders_cc = leader_classes[i].cc;
