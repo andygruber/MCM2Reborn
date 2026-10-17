@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    MCM2:Reborn's launcher and installer: one small exe on the .NET Framework 4.8 that every
+    Windows 10 and 11 has. tools/build_launcher.py builds it, giving FontsDir: the menus' fonts
+    (the game's ui\modern\fonts), which it carries inside itself.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>MCM2Reborn Launcher</AssemblyName>
+    <RootNamespace>Mcm2Reborn.Launcher</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="Exists('icon.ico')">icon.ico</ApplicationIcon>
+    <Version>0.1</Version>
+    <Product>MCM2:Reborn</Product>
+    <Company>xshxdex98</Company>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(FontsDir)' != ''">
+    <EmbeddedResource Include="$(FontsDir)\*.ttf" LogicalName="font.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
