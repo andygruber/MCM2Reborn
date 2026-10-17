@@ -21,7 +21,9 @@
 
     For the game pads ([gamepad], pad.c): a DirectInput pad of the "gamepad" kind (a DualSense)
     is told to the game as an ordinary joystick, which it steers by its axes, not by a keyboard's
-    ramp; and an XInput pad's START is the keyboard's Escape, tapped.
+    ramp; and an XInput pad's START is the keyboard's Escape, tapped. An XInput pad is also one of
+    DirectInput's joysticks (its device path has "IG_"): while pad.c reads it, that joystick tells
+    the game nothing, or each of its buttons would hold both its own action and the pad's.
 */
 
 #include "dev.h"
@@ -51,6 +53,7 @@ static struct device {
     int   kind;
     DWORD state_size;                   /* GetDeviceState's, by the data format set */
     BOOL  resync;                       /* acquired again: the next data starts from the state */
+    BOOL  xinput;                       /* a joystick that is an XInput pad */
     BYTE  held[BUTTONS_MOST];
     DWORD reads, items, resyncs, since; /* [trace] input=1: this second's */
     HRESULT last;
@@ -64,6 +67,7 @@ typedef HRESULT (WINAPI* state_fn)(void*, DWORD, void*);
 typedef HRESULT (WINAPI* data_fn)(void*, DWORD, object_data*, DWORD*, DWORD);
 typedef HRESULT (WINAPI* format_fn)(void*, const data_format*);
 typedef HRESULT (WINAPI* info_fn)(void*, BYTE* instance);
+typedef HRESULT (WINAPI* property_fn)(void*, const void* property, void* header);
 typedef HWND    (WINAPI* foreground_fn)(void);
 typedef DWORD   (WINAPI* window_process_fn)(HWND, DWORD*);
 typedef DWORD   (WINAPI* process_id_fn)(void);
@@ -78,6 +82,7 @@ static state_fn            g_get_state;
 static data_fn             g_get_data;
 static format_fn           g_set_format;
 static info_fn             g_get_info;
+static property_fn         g_get_property;
 static BOOL                g_start_was;
 
 #define DEVICE_TYPE         36          /* DIDEVICEINSTANCE: dwDevType, its type then its subtype */
@@ -85,6 +90,34 @@ static BOOL                g_start_was;
 #define SUBTYPE_TRADITIONAL 2
 #define SUBTYPE_GAMEPAD     4
 #define KEY_ESCAPE          0x01        /* DIK_ESCAPE */
+#define PROPERTY_PATH       ((const void*) 12)  /* DIPROP_GUIDANDPATH */
+
+typedef struct guid_and_path {          /* DIPROPGUIDANDPATH */
+    DWORD size, header_size, object, how;
+    GUID  class_guid;
+    WCHAR path[MAX_PATH];
+} guid_and_path;
+
+/* A joystick that is an XInput pad: its device path names it so ("IG_"). */
+static BOOL is_xinput(void* self)
+{
+    guid_and_path p = { sizeof p, 16, 0, 0 };
+    int i;
+
+    if (!g_get_property || g_get_property(self, PROPERTY_PATH, &p) < 0)
+        return FALSE;
+    for (i = 0; i + 2 < MAX_PATH && p.path[i]; i++)
+        if ((p.path[i] == 'I' || p.path[i] == 'i') && (p.path[i + 1] == 'G' || p.path[i + 1] == 'g')
+            && p.path[i + 2] == '_')
+            return TRUE;
+    return FALSE;
+}
+
+/* The joystick is the pad pad.c reads now: it tells the game nothing. */
+static BOOL silenced(const struct device* d)
+{
+    return d->xinput && pad_connected();
+}
 
 /* The window in front is one of the game's. */
 static BOOL game_in_front(void)
@@ -205,6 +238,16 @@ static HRESULT WINAPI get_state(void* self, DWORD size, void* state)
 
     if (d && acquired_again(d, result))
         result = g_get_state(self, size, state);
+    if (d && result >= 0 && silenced(d) && state && size >= JOY_BUTTONS) {
+        LONG* axes = (LONG*) state;             /* the axes and sliders in the middle, no hat, nothing down */
+        int k;
+
+        ZeroMemory(state, size);
+        for (k = 0; k < 8; k++)
+            axes[k] = 32767;
+        for (k = 8; k < 12; k++)
+            axes[k] = -1;
+    }
     return result;
 }
 
@@ -227,6 +270,10 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
         return result;
     if (result < 0 || !data || !count || object_size != sizeof(object_data) || (flags & 1))  /* DIGDD_PEEK */
         return result;
+    if (silenced(d)) {
+        *count = 0;
+        return result;
+    }
     for (i = 0; i < *count; i++) {
         int b = button_of(d, data[i].offset);
 
@@ -283,6 +330,9 @@ static HRESULT WINAPI set_format(void* self, const data_format* format)
                 : format->data_size == 16 || format->data_size == 20 ? MOUSE
                 : format->data_size == 80 || format->data_size == 272 ? JOYSTICK : OTHER;
         ZeroMemory(d->held, sizeof d->held);
+        d->xinput = d->kind == JOYSTICK && is_xinput(self);
+        if (d->xinput)
+            log_line("input: joystick %08X is an XInput pad", (DWORD) self);
     }
     return g_set_format(self, format);
 }
@@ -314,6 +364,7 @@ static void device_watch(void* device)
     g_get_data = (data_fn) vtable[10];
     g_set_format = (format_fn) vtable[11];
     g_get_info = (info_fn) vtable[15];
+    g_get_property = (property_fn) vtable[5];
     if (!write_protected(&vtable[7], &mine[0], sizeof mine[0])
         || !write_protected(&vtable[10], &mine[1], sizeof mine[1])
         || !write_protected(&vtable[11], &mine[2], sizeof mine[2])

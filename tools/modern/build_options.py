@@ -221,10 +221,10 @@ PAD_COLUMNS = (
     ("STICKS", (("MultPadOn", "XINPUT PADS"), ("MultPadResponse", "STEERING RESPONSE"),
                 ("MultPadDeadzone", "STICK DEAD ZONE"), ("MultPadLean", "LEAN WITH"),
                 ("MultPadDirect", "OTHER PADS' STICKS"))),
-    ("RIDING", (("MultPad4", "ACCELERATE"), ("MultPad5", "BRAKE"), ("MultPad12", "CLUTCH"),
-                ("MultPad13", "BACK UP"), ("MultPad6", "STUNTS 1-8"), ("MultPad7", "STUNTS 9-16"))),
-    ("MORE", (("MultPad8", "KAHUNA DUMPSTER"), ("MultPad9", "TAUNTING"), ("MultPad10", "THRILL CAM"),
-              ("MultPad11", "REVERSE CAM"))),
+    ("RIDING", (("DdlPad4", "ACCELERATE"), ("DdlPad5", "BRAKE"), ("DdlPad12", "CLUTCH"),
+                ("DdlPad13", "BACK UP"), ("DdlPad6", "STUNTS 1-8"), ("DdlPad7", "STUNTS 9-16"))),
+    ("MORE", (("DdlPad8", "KAHUNA DUMPSTER"), ("DdlPad9", "TAUNTING"), ("DdlPad10", "THRILL CAM"),
+              ("DdlPad11", "REVERSE CAM"))),
 )
 
 
@@ -237,8 +237,12 @@ def rows_page(data, stem, columns_rows, note):
     for area, (title, rows) in zip(columns(3), columns_rows):
         top = panel(board, area, title)
         for k, (name, label) in enumerate(rows):
-            screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
-            words(screen, board, name, rows_area(area, top, k), label, size=24, split=0.5)
+            if name.startswith("Ddl"):              # picked from a list
+                screen.add(name, Type="DROPDOWNLIST", SoundPush='"CLICK04"')
+                drop(screen, board, name, rows_area(area, top, k), label, list_h=420)
+            else:                                   # clicked through
+                screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
+                words(screen, board, name, rows_area(area, top, k), label, size=24, split=0.5)
     sub(board, note, PLACE[0] + 36, PLACE[3] - 30, 22, (120, 122, 128), bold=True)
     return finish_page(screen, board)
 
@@ -250,7 +254,7 @@ def build_reborn(data):
 
 def build_pad(data):
     return rows_page(data, "OptPad", PAD_COLUMNS,
-                     "THE LEFT STICK STEERS, START PAUSES. EACH ROW: CLICK TO CHANGE.")
+                     "THE LEFT STICK STEERS, START PAUSES. CLICK A ROW TO CHANGE IT, OR PICK A CONTROL FROM ITS LIST.")
 
 
 def build_sound(data):

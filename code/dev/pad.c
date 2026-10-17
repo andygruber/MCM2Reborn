@@ -151,6 +151,11 @@ BOOL pad_held(int action)
     return control_down(g_pad.bind[action]);
 }
 
+BOOL pad_connected(void)
+{
+    return pad_read();
+}
+
 BOOL pad_start_down(void)
 {
     return pad_read() && (g_state.buttons & 0x0010) != 0;

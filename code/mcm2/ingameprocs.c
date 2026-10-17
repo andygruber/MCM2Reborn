@@ -239,7 +239,10 @@ void __fastcall race_menu_handle(BYTE* self, void* edx_unused, ui_event* event)
         {
             BYTE* options = find(self, BUTTON_OPTIONS, 1);
 
-            /* Not in a network game: the others ride on while the menu is up. */
+            /* Its words, written as the game writes the others' (they are not in its pictures). Not in
+               a network game: the others ride on while the menu is up. */
+            if (options)
+                control_set_text(options, NULL, "Options");
             if (options && game_net)
                 control_show(options, NULL, FALSE, TRUE);
         }

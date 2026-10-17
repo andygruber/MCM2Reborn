@@ -445,16 +445,17 @@ static const struct reborn_row {
     ROW("MultPadDeadzone", deadzone_values, &g_pad.deadzone),
     ROW("MultPadLean", stick_values, &g_pad.lean_stick),
     ROW("MultPadDirect", on_off_values, &g_pad.analog_di),
-    ROW("MultPad4", pad_values, &g_pad.bind[4]),
-    ROW("MultPad5", pad_values, &g_pad.bind[5]),
-    ROW("MultPad6", pad_values, &g_pad.bind[6]),
-    ROW("MultPad7", pad_values, &g_pad.bind[7]),
-    ROW("MultPad8", pad_values, &g_pad.bind[8]),
-    ROW("MultPad9", pad_values, &g_pad.bind[9]),
-    ROW("MultPad10", pad_values, &g_pad.bind[10]),
-    ROW("MultPad11", pad_values, &g_pad.bind[11]),
-    ROW("MultPad12", pad_values, &g_pad.bind[12]),
-    ROW("MultPad13", pad_values, &g_pad.bind[13]),
+    /* each action's pad control: drop-down lists (DdlPad4..13), picked from */
+    ROW("DdlPad4", pad_values, &g_pad.bind[4]),
+    ROW("DdlPad5", pad_values, &g_pad.bind[5]),
+    ROW("DdlPad6", pad_values, &g_pad.bind[6]),
+    ROW("DdlPad7", pad_values, &g_pad.bind[7]),
+    ROW("DdlPad8", pad_values, &g_pad.bind[8]),
+    ROW("DdlPad9", pad_values, &g_pad.bind[9]),
+    ROW("DdlPad10", pad_values, &g_pad.bind[10]),
+    ROW("DdlPad11", pad_values, &g_pad.bind[11]),
+    ROW("DdlPad12", pad_values, &g_pad.bind[12]),
+    ROW("DdlPad13", pad_values, &g_pad.bind[13]),
 };
 #define REBORN_ROWS ((int) (sizeof reborn_rows / sizeof reborn_rows[0]))
 
@@ -520,6 +521,17 @@ static void reborn_rows_show(BYTE* self)
         char words[CHOICES_MOST][24];
         int chosen = 0;
 
+        if (!control && find(self, row->name, 6)) {     /* a drop-down list: every value, the one set */
+            BYTE* list = combo_list(self, row->name);
+
+            list_clear(list);
+            for (i = 0; i < row->count; i++) {
+                row_words(row, row->values[i], words[0]);
+                list_add_text(list, NULL, words[0], (DWORD) row->values[i], 0);
+            }
+            list_select_data(list, NULL, (DWORD) *row->setting);
+            continue;
+        }
         if (!control)
             continue;
         option_set_count(control, NULL, row->count);
@@ -545,6 +557,8 @@ static void reborn_rows_keep(BYTE* self)
 
         if (i >= 0 && i < reborn_rows[r].count)
             *reborn_rows[r].setting = reborn_rows[r].values[i];
+        else if (!control && find(self, reborn_rows[r].name, 6))
+            *reborn_rows[r].setting = (int) list_data(combo_list(self, reborn_rows[r].name), NULL, -1);
     }
     if (g_render.vsync != was_vsync)
         gl_vsync_apply();
@@ -562,7 +576,7 @@ static void __fastcall reborn_page_handle(BYTE* self, void* edx_unused, ui_event
     if (event->type == EVENT_OPEN) {
         reborn_rows_show(self);
         dialog_notify_controls(self, NULL, 0);
-    } else if (event->type == EVENT_CLICK) {
+    } else if (event->type == EVENT_CLICK || event->type == EVENT_SELECT) {
         reborn_rows_keep(self);
     }
 }

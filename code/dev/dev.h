@@ -259,6 +259,7 @@ BOOL  pad_sticks(float* steer, float* lean);
 /* The game's action `action` held on the pad. */
 BOOL  pad_held(int action);
 BOOL  pad_start_down(void);
+BOOL  pad_connected(void);
 /* A stick's steering through the chosen response. */
 float pad_curve(float v);
 void  dev_pad_save(void);
