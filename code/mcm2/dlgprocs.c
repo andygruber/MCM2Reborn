@@ -2031,6 +2031,10 @@ static BYTE* standing(int index)
     return race_events + 0x50 + index * 0x50;
 }
 
+/* The race's standings as the results show them: the event's, or past 11 riders standings.c's. */
+BYTE* race_standing(int index);
+int   race_standings_count(void);
+
 /* The settings into their copies (Back, Start), or back from them (opening). */
 static void settings_save(void)
 {
@@ -2083,6 +2087,16 @@ void __cdecl race_start_loading(void)
     int kind;
     int i;
 
+#ifdef OPENMCM2_DEV
+    /* More than the game's 10 computers in a single race only: a series and the pro circuit keep
+       standings, points and files made for 11 (riders.c). */
+    if (FIELD(game_main, 0x18, int) == 1) {
+        int most = race_mode == SERIES || FIELD(game_main, 0x3440, int) ? 10 : riders_most() - 1;
+
+        if (FIELD(game_main, 0x2D94, int) > most)
+            FIELD(game_main, 0x2D94, int) = most;
+    }
+#endif
     FIELD(game_session, 0x4AC, DWORD) = 1;
     FIELD(game_session, 0x4A8, DWORD) = 0;
     session_drop_scene(game_session);
@@ -2280,7 +2294,11 @@ void __fastcall sp_event_kind_set(BYTE* self)
     laps = dialog_find_control(self, NULL, SP_LAPS, 3);
     dialog_find_control(self, NULL, SP_RACES, 3);      /* looked up, and not used */
     control_load_text(label, NULL, game_language, 0x929);
+#ifdef OPENMCM2_DEV
+    numbers_fill(opponents, ONE_NUMBER, 0, riders_most() - 1);  /* a series stays at 10 (race_start_loading) */
+#else
     numbers_fill(opponents, ONE_NUMBER, 0, 10);
+#endif
     numbers_fill(laps, ONE_NUMBER, kind == 2 || kind == 3 ? 2 : 1, 20);
     list_select_data(laps, NULL, FIELD(game_main, 0x2D90, DWORD));
     if (!kind) {
@@ -2808,8 +2826,8 @@ static void results_timed(BYTE* self, ui_event* event, BOOL skip_out)
     game_FUN_0053a11f(time, TEXT_AND_ASIDE, heading, aside);
     control_set_text(dialog_find_control(self, NULL, stats_buttons[2], 0), NULL, time);
 
-    for (i = 0; i < FIELD(race_events, 0x4C, int); i++) {
-        BYTE* rider = standing(i);
+    for (i = 0; i < race_standings_count(); i++) {
+        BYTE* rider = race_standing(i);
 
         if (skip_out && FIELD(rider, STANDING_OUT, DWORD))
             continue;
@@ -2837,8 +2855,8 @@ static void results_scored(ui_event* event, BOOL skip_out)
     int i;
 
     stats_load_headings(event, 0x934, 0, 0x937, points_heading());
-    for (i = 0; i < FIELD(race_events, 0x4C, int); i++) {
-        BYTE* rider = standing(i);
+    for (i = 0; i < race_standings_count(); i++) {
+        BYTE* rider = race_standing(i);
 
         if (skip_out && FIELD(rider, STANDING_OUT, DWORD))
             continue;
@@ -2870,8 +2888,8 @@ static void results_tag(ui_event* event)
         game_FUN_00526fc0(game_main, NULL, 0x142B, fourth, sizeof fourth);
         stats_set_headings(event, first, second, third, fourth);
     }
-    for (i = 0; i < FIELD(race_events, 0x4C, int); i++) {
-        BYTE* rider = standing(i);
+    for (i = 0; i < race_standings_count(); i++) {
+        BYTE* rider = race_standing(i);
 
         if (FIELD(rider, STANDING_OUT, DWORD))
             continue;

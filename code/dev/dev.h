@@ -112,6 +112,7 @@ typedef struct reborn_options {
     int hud;
     int cameras;
     int physics;
+    int riders;                 /* on the gate in a single race: 11, the game's, to 30 (riders.c) */
 } reborn_options;
 
 extern reborn_options g_reborn;
@@ -201,3 +202,7 @@ void gridfix_install(void);
 
 /* The physics step's per-step constants taken by the step's length (steptime.c). */
 void steptime_install(void);
+
+/* Room for more riders in a race (riders.c); the most a single race may have. */
+void riders_install(void);
+int  riders_most(void);

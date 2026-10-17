@@ -405,6 +405,7 @@ static const int pitch_values[] = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 
 static const int corner_values[] = { 0, 1 };
 static const int lean_values[] = { 0, 100, 200, 300, 352, 400, 500, 600 };
 static const int ai_rate_values[] = { 0, 30, 60 };
+static const int riders_values[] = { 11, 16, 20, 24, 30 };
 
 #define ROW(name, values, setting) { name, values, (int) (sizeof values / sizeof values[0]), setting }
 
@@ -431,6 +432,7 @@ static const struct reborn_row {
     ROW("MultFpLean", lean_values, &g_camera_options.lean_heading),
     ROW("MultPhysStyle", style_values, &g_reborn.physics),
     ROW("MultAiRate", ai_rate_values, &dev_settings.fix_ai_rate),
+    ROW("MultRiders", riders_values, &g_reborn.riders),
 };
 #define REBORN_ROWS ((int) (sizeof reborn_rows / sizeof reborn_rows[0]))
 
@@ -464,6 +466,8 @@ static void row_words(const struct reborn_row* row, int value, char* words)
         wsprintfA(words, "%d.%02d (%d\xB0 DOWN)", value / 100, value % 100, 15 + value * 20 / 100);
     else if (row->values == corner_values)
         lstrcpyA(words, value ? "LEAN" : "OFF");
+    else if (row->values == riders_values)
+        wsprintfA(words, value == 11 ? "%d (THE GAME'S)" : "%d", value);
     else if (row->values == ai_rate_values)
         wsprintfA(words, value ? "%d A SECOND" : "THE GAME'S", value);
     else

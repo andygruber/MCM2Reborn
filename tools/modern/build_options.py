@@ -210,7 +210,8 @@ REBORN_COLUMNS = (
     ("VIEW", (("MultHudStyle", "HUD"), ("MultCamStyle", "FIRST PERSON"), ("MultFpFov", "FIRST-PERSON FOV"),
               ("MultFpTilt", "TILT"), ("MultFpPitch", "PITCH"), ("MultFpCorner", "CORNER ANTICIPATION"),
               ("MultFpLean", "LEAN HEADING SCALE"))),
-    ("RIDING", (("MultPhysStyle", "PHYSICS"), ("MultAiRate", "COMPUTER RIDERS"))),
+    ("RIDING", (("MultPhysStyle", "PHYSICS"), ("MultRiders", "RIDERS ON THE GATE"),
+                ("MultAiRate", "COMPUTER RIDERS' STEPS"))),
 )
 
 

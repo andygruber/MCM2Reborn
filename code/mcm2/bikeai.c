@@ -18,7 +18,7 @@
 void __fastcall game_orig_FUN_00414000(BYTE* self, void* edx_unused, float dt);
 
 #ifdef OPENMCM2_DEV
-#define BIKES_MOST  16
+#define BIKES_MOST  32                  /* a race's riders, 30 at most (riders.c), with room */
 #define STEPS_MOST  12                  /* a frame of 0.2 s, the most the game gives, at 60 */
 
 /* Each bike's time not yet stepped, by the bike. */
