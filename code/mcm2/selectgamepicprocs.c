@@ -1667,6 +1667,14 @@ static void packet_intervals_load(void)
     } else if (*brief > 0.2f) {
         *brief = 0.2f;
     }
+#ifdef OPENMCM2_DEV
+    /* [online] packets: each bike's state that many times a second on every link (the game sent it
+       5 times a second online, its riders seen jumping), and in full each second. */
+    if (dev_settings.online_rate > 0) {
+        *brief = 1.0f / dev_settings.online_rate;
+        *full = 1.0f;
+    }
+#endif
 }
 
 static void mp_screen_open(BYTE* self)

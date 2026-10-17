@@ -115,6 +115,9 @@ void dev_install(void)
         /* 30 or the game's own, 0: 30 moves them as the game did at 30 frames a second. */
         dev_settings.fix_ai_rate = read("fixes", "ai_rate", 30, SETTINGS_FILE) ? 30 : 0;
         dev_settings.online_presence = read("online", "presence", 1, SETTINGS_FILE) != 0;
+        dev_settings.online_rate = (int) read("online", "packets", 20, SETTINGS_FILE);
+        if (dev_settings.online_rate > 60)
+            dev_settings.online_rate = 60;
     }
     log_line("%s %s", GAME_TITLE, GAME_VERSION);
     log_line("dev build: trace screens %d, events %d, files %d, display %d; "

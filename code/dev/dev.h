@@ -59,6 +59,8 @@
         [online]
         presence=1        counted as playing while the game runs, for the launcher's count of
                           the players online (Epic's lobbies, eosplay.c); 0 not
+        packets=20        each bike's state sent that many times a second in a network race (the
+                          game's 5 online, 15 on a LAN), in full each second; 0 the game's
 
     A change to the game goes in the ported function it changes, between #ifdef OPENMCM2_DEV and
     #endif, reading its switch from dev_settings; the code outside stays the faithful port.
@@ -90,6 +92,7 @@ typedef struct dev_switches {
     BOOL fix_last_pick;
     int  fix_ai_rate;
     BOOL online_presence;
+    int  online_rate;
 } dev_switches;
 
 extern dev_switches dev_settings;
