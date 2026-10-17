@@ -268,6 +268,27 @@ int   pad_pressed(void);
 /* A stick's steering through the chosen response. */
 float pad_curve(float v);
 void  dev_pad_save(void);
+/* Whether the modern menus are on and UI\modern has `file` (a screen's own layout). */
+BOOL  dev_modern_has(const char* file);
+
+/*
+    The lap leaderboards (leaders.c): each rider's best lap from the second on, by track, event
+    kind (race_kind) and bike class (cc), here and on [leaderboard] url's server.
+*/
+typedef struct leader {
+    char name[16];
+    int  ms;
+    char date[11];
+} leader;
+
+extern char g_leaders_url[256];
+
+/* Each frame of a race: a lap finished from the second on kept when it is the rider's best. */
+void leaders_watch(void);
+/* A board, best first, from the server when it answers (*online), else this computer's. */
+int  leaders_board(int kind, int cc, const char* track, leader* board, int most, BOOL* online);
+/* The tracks this computer has laps of, for an event kind and class. */
+int  leaders_tracks(int kind, int cc, char (*tracks)[64], int most);
 
 /* Room for more riders in a race (riders.c); the most a single race may have. */
 void riders_install(void);

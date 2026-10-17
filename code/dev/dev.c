@@ -116,6 +116,13 @@ void dev_install(void)
         dev_settings.fix_ai_rate = read("fixes", "ai_rate", 30, SETTINGS_FILE) ? 30 : 0;
         dev_settings.online_presence = read("online", "presence", 1, SETTINGS_FILE) != 0;
         dev_settings.online_rate = (int) read("online", "packets", 20, SETTINGS_FILE);
+        {
+            typedef DWORD (WINAPI* read_text_fn)(LPCSTR, LPCSTR, LPCSTR, LPSTR, DWORD, LPCSTR);
+            read_text_fn read_text = (read_text_fn) api("kernel32.dll", "GetPrivateProfileStringA");
+
+            if (read_text)
+                read_text("leaderboard", "url", "", g_leaders_url, sizeof g_leaders_url, SETTINGS_FILE);
+        }
         if (dev_settings.online_rate > 60)
             dev_settings.online_rate = 60;
     }
@@ -207,6 +214,16 @@ void dev_reborn_save(void)
     write_number("reborn", "cameras", g_reborn.cameras);
     write_number("reborn", "physics", g_reborn.physics);
     write_number("reborn", "riders", g_reborn.riders);
+}
+
+BOOL dev_modern_has(const char* file)
+{
+    typedef DWORD (WINAPI* attributes_fn)(LPCSTR);
+    attributes_fn attributes = (attributes_fn) api("kernel32.dll", "GetFileAttributesA");
+    char path[MAX_PATH];
+
+    wsprintfA(path, "UI\\modern\\%s", file);
+    return dev_settings.menus_modern && attributes && attributes(path) != INVALID_FILE_ATTRIBUTES;
 }
 
 void dev_pad_save(void)

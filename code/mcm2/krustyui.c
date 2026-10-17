@@ -688,11 +688,7 @@ void __fastcall session_hide_cursors(BYTE* self)
 /* Whether the modern menus have the pause menu's own layout. */
 static BOOL race_menu_layout(void)
 {
-    typedef DWORD (WINAPI* attributes_fn)(LPCSTR);
-    attributes_fn attributes = (attributes_fn) api("kernel32.dll", "GetFileAttributesA");
-
-    return dev_settings.menus_modern && attributes
-           && attributes("UI\\modern\\RaceMenu.dat") != INVALID_FILE_ATTRIBUTES;
+    return dev_modern_has("RaceMenu.dat");
 }
 #endif
 #define PC_CHOOSE   NAME(0x005738EC)    /* "PCC.dtm" */

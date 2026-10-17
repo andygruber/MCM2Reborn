@@ -4260,6 +4260,187 @@ static BOOL multi_clicked(BYTE* self, ui_event* event)
 }
 #endif
 
+#ifdef OPENMCM2_DEV
+/*
+    The lap leaderboards (Leaders.dtm, tools/modern/build_leaders.py; code/dev/leaders.c), in place of
+    the main menu's HIGH SCORES when the modern menus have its layout. A board is a track's, an
+    event's and a bike class's: each class its own, so riders are measured against their own kind.
+    Its riders' best laps from the second lap on, best first. Made on the high scores' vtable, its
+    events this screen's own.
+*/
+#define LEADERS_LAYOUT  "Leaders.dtm"
+#define LEADERS_VTABLE  0x00556834      /* HiScoresDlg's: slot 29 the events */
+#define LEADERS_SLOTS   32
+#define BOARD_ROWS      12
+#define TRACKS_MOST     64
+
+static const struct { int kind; const char* name; } leader_kinds[] = {
+    { 1, "BAJA" }, { 2, "NATIONALS" }, { 3, "SUPERCROSS" }, { 5, "ENDURO" },
+};
+static const struct { int cc; const char* name; } leader_classes[] = {
+    { 125, "125 2-STROKE" }, { 250, "250 2-STROKE" }, { 400, "400 4-STROKE" }, { 500, "500 2-STROKE" },
+    { 600, "600 4-STROKE" },
+};
+
+static void* g_leaders_vtable[LEADERS_SLOTS + 1];
+static int   g_leaders_kind = 3, g_leaders_cc = 125;
+static char  g_leaders_track[64];
+static char  g_leaders_tracks[TRACKS_MOST][64];
+static int   g_leaders_track_count;
+
+static BOOL leaders_layout(void)
+{
+    return dev_modern_has("LEADERS.DAT");
+}
+
+static void leaders_write(BYTE* self, const char* name, const char* words)
+{
+    BYTE* text = dialog_find_control(self, NULL, name, 0);
+
+    if (text)
+        control_set_text(text, NULL, words);
+}
+
+/* A pair of tab buttons, as chosen (NAMEOn) or not (NAME). */
+static void leaders_tab(BYTE* self, const char* name, BOOL chosen)
+{
+    char on[32];
+    BYTE* off_button = dialog_find_control(self, NULL, name, 0);
+    BYTE* on_button;
+
+    wsprintfA(on, "%sOn", name);
+    on_button = dialog_find_control(self, NULL, on, 0);
+    if (off_button)
+        control_show(off_button, NULL, !chosen, TRUE);
+    if (on_button)
+        control_show(on_button, NULL, chosen, TRUE);
+}
+
+/* The tabs, the track list (unless `tracks_too` is off: its own pick) and the chosen board. */
+static void leaders_refresh(BYTE* self, BOOL tracks_too)
+{
+    BYTE* list = tracks_too ? dialog_find_control(self, NULL, "LstTracks", 3) : NULL;
+    char name[32], words[160];
+    leader board[BOARD_ROWS];
+    const char* kind_name = "";
+    const char* class_name = "";
+    BOOL online = FALSE;
+    int i, n, chosen = -1;
+
+    for (i = 0; i < (int) (sizeof leader_kinds / sizeof *leader_kinds); i++) {
+        wsprintfA(name, "BtnKind%d", leader_kinds[i].kind);
+        leaders_tab(self, name, leader_kinds[i].kind == g_leaders_kind);
+        if (leader_kinds[i].kind == g_leaders_kind)
+            kind_name = leader_kinds[i].name;
+    }
+    for (i = 0; i < (int) (sizeof leader_classes / sizeof *leader_classes); i++) {
+        wsprintfA(name, "BtnClass%d", leader_classes[i].cc);
+        leaders_tab(self, name, leader_classes[i].cc == g_leaders_cc);
+        if (leader_classes[i].cc == g_leaders_cc)
+            class_name = leader_classes[i].name;
+    }
+
+    /* The tracks with laps for the event and class; the one chosen kept if it is among them. */
+    if (tracks_too)
+        g_leaders_track_count = leaders_tracks(g_leaders_kind, g_leaders_cc, g_leaders_tracks, TRACKS_MOST);
+    for (i = 0; i < g_leaders_track_count; i++)
+        if (!lstrcmpiA(g_leaders_tracks[i], g_leaders_track))
+            chosen = i;
+    if (list) {
+        list_clear(list);
+        for (i = 0; i < g_leaders_track_count; i++) {
+            capitals(words, g_leaders_tracks[i], sizeof words);
+            list_add_text(list, NULL, words, (DWORD) i, 0);
+        }
+    }
+    if (chosen < 0 && g_leaders_track_count) {
+        chosen = 0;
+        lstrcpynA(g_leaders_track, g_leaders_tracks[0], sizeof g_leaders_track);
+    }
+    if (list && chosen >= 0)
+        list_select_data(list, NULL, (DWORD) chosen);
+
+    n = chosen >= 0 ? leaders_board(g_leaders_kind, g_leaders_cc, g_leaders_track, board, BOARD_ROWS, &online) : 0;
+    capitals(words, chosen >= 0 ? g_leaders_track : "", sizeof words);
+    leaders_write(self, "TxtBoard", words);
+    wsprintfA(words, "%s  \xB7  %s  \xB7  BEST LAPS FROM THE SECOND LAP ON", kind_name, class_name);
+    leaders_write(self, "TxtBoardInfo", words);
+    leaders_write(self, "TxtSource", online ? "ONLINE LEADERBOARD"
+                                    : g_leaders_url[0] ? "SERVER NOT ANSWERING  \xB7  THIS PC" : "THIS PC'S LAPS");
+    for (i = 0; i < BOARD_ROWS; i++) {
+        char cell[24];
+
+        wsprintfA(name, "TxtRank%d", i);
+        wsprintfA(cell, "%d", i + 1);
+        leaders_write(self, name, i < n ? cell : "");
+        wsprintfA(name, "TxtName%d", i);
+        capitals(words, i < n ? board[i].name : "", sizeof words);
+        leaders_write(self, name, words);
+        wsprintfA(name, "TxtTime%d", i);
+        if (i < n)
+            wsprintfA(cell, "%d:%02d.%03d", board[i].ms / 60000, board[i].ms / 1000 % 60, board[i].ms % 1000);
+        leaders_write(self, name, i < n ? cell : "");
+        wsprintfA(name, "TxtDate%d", i);
+        leaders_write(self, name, i < n ? board[i].date : "");
+    }
+    leaders_write(self, "TxtEmpty", n ? "" : chosen < 0 ? "NO LAPS YET FOR THIS EVENT AND CLASS. RIDE ONE!"
+                                                        : "NO LAPS ON THIS BOARD YET");
+}
+
+static void __fastcall leaders_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    char name[32];
+    int i;
+
+    (void) edx_unused;
+    if (event->type == EVENT_OPEN) {
+        leaders_refresh(self, TRUE);
+        return;
+    }
+    if (event->type == EVENT_SELECT && clicked(event, "LstTracks")) {
+        DWORD at = list_data((BYTE*) event->c, NULL, -1);
+
+        if (at < (DWORD) g_leaders_track_count) {
+            lstrcpynA(g_leaders_track, g_leaders_tracks[at], sizeof g_leaders_track);
+            leaders_refresh(self, FALSE);
+        }
+        return;
+    }
+    if (event->type != EVENT_CLICK)
+        return;
+    if (clicked(event, "ButBack")) {
+        screen_open(self, 0x7F80, __LINE__, NAME(0x0057392C), (void*) 0x0055A070, 0x64);   /* mainmenu.dtm */
+        event->e = 1;
+        return;
+    }
+    for (i = 0; i < (int) (sizeof leader_kinds / sizeof *leader_kinds); i++) {
+        wsprintfA(name, "BtnKind%d", leader_kinds[i].kind);
+        if (clicked(event, name)) {
+            g_leaders_kind = leader_kinds[i].kind;
+            leaders_refresh(self, TRUE);
+            return;
+        }
+    }
+    for (i = 0; i < (int) (sizeof leader_classes / sizeof *leader_classes); i++) {
+        wsprintfA(name, "BtnClass%d", leader_classes[i].cc);
+        if (clicked(event, name)) {
+            g_leaders_cc = leader_classes[i].cc;
+            leaders_refresh(self, TRUE);
+            return;
+        }
+    }
+}
+
+static void* leaders_vtable(void)
+{
+    if (!g_leaders_vtable[1]) {
+        __movsd((unsigned long*) g_leaders_vtable, (const unsigned long*) (LEADERS_VTABLE - 4), LEADERS_SLOTS + 1);
+        g_leaders_vtable[1 + 29] = (void*) leaders_handle;
+    }
+    return &g_leaders_vtable[1];
+}
+#endif
+
 static void menu_click(BYTE* self, ui_event* event)
 {
 #ifdef OPENMCM2_DEV
@@ -4372,6 +4553,11 @@ static void menu_click(BYTE* self, ui_event* event)
     } else if (clicked(event, NAME(0x0056F5B0))) {                          /* "MenuReplay" */
         screen_open(self, 0x7F60, 0x1D8, NAME(0x0056F5A4), (void*) 0x005568B8, 0);   /* GRBase */
     } else if (clicked(event, NAME(0x0056F594))) {                          /* "MenuHighScore" */
+#ifdef OPENMCM2_DEV
+        if (leaders_layout())
+            screen_open(self, 0x7F68, __LINE__, LEADERS_LAYOUT, leaders_vtable(), 0x911);
+        else
+#endif
         screen_open(self, 0x7F68, 0x1DD, NAME(0x0056F584), (void*) 0x00556834, 0x911);
     } else if (clicked(event, NAME(0x0056F578))) {                          /* "MenuCredits" */
         screen_open(self, 0x7F5C, 0x1E6, NAME(0x0056DC98), (void*) 0x005567B0, 0);   /* credits */
