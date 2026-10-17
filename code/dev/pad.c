@@ -151,6 +151,21 @@ BOOL pad_held(int action)
     return control_down(g_pad.bind[action]);
 }
 
+/* The first of the controls an action may have that is down: a button, a trigger or the right
+   stick's way; PAD_NONE when none is (or there is no pad). START pauses and the left stick
+   steers, so neither is one. */
+int pad_pressed(void)
+{
+    int control;
+
+    if (!pad_read())
+        return PAD_NONE;
+    for (control = PAD_A; control < PAD_CONTROLS; control++)
+        if (control != PAD_START && (control < PAD_LEFT_UP || control > PAD_LEFT_RIGHT) && control_down(control))
+            return control;
+    return PAD_NONE;
+}
+
 BOOL pad_connected(void)
 {
     return pad_read();

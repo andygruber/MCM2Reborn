@@ -221,10 +221,10 @@ PAD_COLUMNS = (
     ("STICKS", (("MultPadOn", "XINPUT PADS"), ("MultPadResponse", "STEERING RESPONSE"),
                 ("MultPadDeadzone", "STICK DEAD ZONE"), ("MultPadLean", "LEAN WITH"),
                 ("MultPadDirect", "OTHER PADS' STICKS"))),
-    ("RIDING", (("DdlPad4", "ACCELERATE"), ("DdlPad5", "BRAKE"), ("DdlPad12", "CLUTCH"),
-                ("DdlPad13", "BACK UP"), ("DdlPad6", "STUNTS 1-8"), ("DdlPad7", "STUNTS 9-16"))),
-    ("MORE", (("DdlPad8", "KAHUNA DUMPSTER"), ("DdlPad9", "TAUNTING"), ("DdlPad10", "THRILL CAM"),
-              ("DdlPad11", "REVERSE CAM"))),
+    ("RIDING", (("BtnPad4", "ACCELERATE"), ("BtnPad5", "BRAKE"), ("BtnPad12", "CLUTCH"),
+                ("BtnPad13", "BACK UP"), ("BtnPad6", "STUNTS 1-8"), ("BtnPad7", "STUNTS 9-16"))),
+    ("MORE", (("BtnPad8", "KAHUNA DUMPSTER"), ("BtnPad9", "TAUNTING"), ("BtnPad10", "THRILL CAM"),
+              ("BtnPad11", "REVERSE CAM"))),
 )
 
 
@@ -237,9 +237,14 @@ def rows_page(data, stem, columns_rows, note):
     for area, (title, rows) in zip(columns(3), columns_rows):
         top = panel(board, area, title)
         for k, (name, label) in enumerate(rows):
-            if name.startswith("Ddl"):              # picked from a list
-                screen.add(name, Type="DROPDOWNLIST", SoundPush='"CLICK04"')
-                drop(screen, board, name, rows_area(area, top, k), label, list_h=420)
+            if name.startswith("Btn"):              # a pad's control: click, then press it
+                row = rows_area(area, top, k)
+                chip(board, row, label)
+                where = (row[0] + (row[2] - row[0]) * 0.45, row[1] + 8, row[2] - 8, row[3] - 8)
+                screen.add(name, Type="BUTTON", SoundPush='"CLICK04"')
+                keys = {"TextColor": colorref(PAPER)}
+                keys.update(font(20, PAPER, "CENTER"))
+                screen.button(name, where, button_states(board, where, ""), keep_text=True, **keys)
             else:                                   # clicked through
                 screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
                 words(screen, board, name, rows_area(area, top, k), label, size=24, split=0.5)
@@ -254,7 +259,7 @@ def build_reborn(data):
 
 def build_pad(data):
     return rows_page(data, "OptPad", PAD_COLUMNS,
-                     "THE LEFT STICK STEERS, START PAUSES. CLICK A ROW TO CHANGE IT, OR PICK A CONTROL FROM ITS LIST.")
+                     "THE LEFT STICK STEERS, START PAUSES. CLICK AN ACTION, THEN PRESS ITS BUTTON ON THE PAD.")
 
 
 def build_sound(data):

@@ -389,7 +389,7 @@ static const binding graphics_bindings[] = {
 
 int __fastcall option_set_text(BYTE* self, void* edx_unused, int index, const char* text);
 
-#define CHOICES_MOST 24          /* the most a row has (the pad's controls) */
+#define CHOICES_MOST 16
 
 static const int aa_values[] = { 0, 2, 4, 8 };
 static const int filtering_values[] = { 0, 1, 2, 3, 4 };
@@ -409,9 +409,6 @@ static const int riders_values[] = { 11, 16, 20, 24, 30 };
 static const int response_values[] = { 10, 15, 20, 30 };
 static const int deadzone_values[] = { 5, 10, 15, 20, 25, 30 };
 static const int stick_values[] = { 0, 1 };
-static const int pad_values[] = { PAD_NONE, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LT, PAD_RT, PAD_BACK,
-                                  PAD_LS, PAD_RS, PAD_UP, PAD_DOWN, PAD_LEFT, PAD_RIGHT, PAD_RIGHT_UP,
-                                  PAD_RIGHT_DOWN, PAD_RIGHT_LEFT, PAD_RIGHT_RIGHT };
 
 #define ROW(name, values, setting) { name, values, (int) (sizeof values / sizeof values[0]), setting }
 
@@ -445,17 +442,6 @@ static const struct reborn_row {
     ROW("MultPadDeadzone", deadzone_values, &g_pad.deadzone),
     ROW("MultPadLean", stick_values, &g_pad.lean_stick),
     ROW("MultPadDirect", on_off_values, &g_pad.analog_di),
-    /* each action's pad control: drop-down lists (DdlPad4..13), picked from */
-    ROW("DdlPad4", pad_values, &g_pad.bind[4]),
-    ROW("DdlPad5", pad_values, &g_pad.bind[5]),
-    ROW("DdlPad6", pad_values, &g_pad.bind[6]),
-    ROW("DdlPad7", pad_values, &g_pad.bind[7]),
-    ROW("DdlPad8", pad_values, &g_pad.bind[8]),
-    ROW("DdlPad9", pad_values, &g_pad.bind[9]),
-    ROW("DdlPad10", pad_values, &g_pad.bind[10]),
-    ROW("DdlPad11", pad_values, &g_pad.bind[11]),
-    ROW("DdlPad12", pad_values, &g_pad.bind[12]),
-    ROW("DdlPad13", pad_values, &g_pad.bind[13]),
 };
 #define REBORN_ROWS ((int) (sizeof reborn_rows / sizeof reborn_rows[0]))
 
@@ -505,8 +491,7 @@ static void row_words(const struct reborn_row* row, int value, char* words)
         wsprintfA(words, "%d%%", value);
     else if (row->values == stick_values)
         lstrcpyA(words, value ? "RIGHT STICK" : "LEFT STICK");
-    else if (row->values == pad_values)
-        lstrcpyA(words, value >= 0 && value < PAD_CONTROLS ? pad_words[value] : "NONE");
+
     else
         wsprintfA(words, "%d.%d", value / 10, value % 10);
 }
@@ -521,17 +506,6 @@ static void reborn_rows_show(BYTE* self)
         char words[CHOICES_MOST][24];
         int chosen = 0;
 
-        if (!control && find(self, row->name, 6)) {     /* a drop-down list: every value, the one set */
-            BYTE* list = combo_list(self, row->name);
-
-            list_clear(list);
-            for (i = 0; i < row->count; i++) {
-                row_words(row, row->values[i], words[0]);
-                list_add_text(list, NULL, words[0], (DWORD) row->values[i], 0);
-            }
-            list_select_data(list, NULL, (DWORD) *row->setting);
-            continue;
-        }
         if (!control)
             continue;
         option_set_count(control, NULL, row->count);
@@ -557,8 +531,6 @@ static void reborn_rows_keep(BYTE* self)
 
         if (i >= 0 && i < reborn_rows[r].count)
             *reborn_rows[r].setting = reborn_rows[r].values[i];
-        else if (!control && find(self, reborn_rows[r].name, 6))
-            *reborn_rows[r].setting = (int) list_data(combo_list(self, reborn_rows[r].name), NULL, -1);
     }
     if (g_render.vsync != was_vsync)
         gl_vsync_apply();
@@ -569,15 +541,112 @@ static void reborn_rows_keep(BYTE* self)
     dev_pad_save();
 }
 
-/* OptReborn.dtm: a page of the options screen, made from the game settings page's vtable. */
+/*
+    The GAMEPAD page's actions: each a button (BtnPad4..13) showing the pad control it has. A
+    click listens: the next control pressed on the pad (once all were let go) is the action's,
+    taken from any other action that had it, as the controls page takes keys. Five seconds of
+    nothing, or a second click, leaves it as it was.
+*/
+#define BIND_TICK_MS    50
+#define BIND_WAIT_TICKS (5000 / BIND_TICK_MS)
+#define BIND_TIMER      1
+
+static int  g_binding = -1;             /* the action listening, or -1 */
+static int  g_binding_ticks;
+static BOOL g_binding_let_go;           /* every control was up since the click */
+
+static void bind_button_name(int action, char* name)
+{
+    wsprintfA(name, "BtnPad%d", action);
+}
+
+static void pad_binds_show(BYTE* self)
+{
+    char name[16];
+    int a;
+
+    for (a = 4; a < PAD_ACTIONS; a++) {
+        BYTE* button;
+
+        bind_button_name(a, name);
+        button = find(self, name, 1);
+        if (button)
+            control_set_text(button, NULL, a == g_binding ? "PRESS A BUTTON ON THE PAD"
+                                                          : pad_words[g_pad.bind[a]]);
+    }
+}
+
+static void pad_bind_stop(BYTE* self)
+{
+    g_binding = -1;
+    dialog_remove_timer(self, NULL, BIND_TIMER);
+    pad_binds_show(self);
+}
+
+static BOOL pad_bind_click(BYTE* self, const ui_event* event)
+{
+    char name[16];
+    int a;
+
+    for (a = 4; a < PAD_ACTIONS; a++) {
+        bind_button_name(a, name);
+        if (!named(event, name))
+            continue;
+        if (g_binding == a) {
+            pad_bind_stop(self);
+            return TRUE;
+        }
+        g_binding = a;
+        g_binding_ticks = 0;
+        g_binding_let_go = FALSE;
+        dialog_add_timer(self, NULL, BIND_TIMER, BIND_TICK_MS, NULL);
+        pad_binds_show(self);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void pad_bind_tick(BYTE* self)
+{
+    int control, a;
+
+    if (g_binding < 0)
+        return;
+    if (++g_binding_ticks > BIND_WAIT_TICKS) {
+        pad_bind_stop(self);
+        return;
+    }
+    control = pad_pressed();
+    if (!g_binding_let_go) {
+        g_binding_let_go = control == PAD_NONE;
+        return;
+    }
+    if (control == PAD_NONE)
+        return;
+    for (a = 4; a < PAD_ACTIONS; a++)
+        if (g_pad.bind[a] == control)
+            g_pad.bind[a] = PAD_NONE;
+    g_pad.bind[g_binding] = control;
+    dev_pad_save();
+    pad_bind_stop(self);
+}
+
+/* OptReborn.dtm, OptPad.dtm: pages of the options screen, made from the game settings page's vtable. */
 static void __fastcall reborn_page_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
     (void) edx_unused;
     if (event->type == EVENT_OPEN) {
+        g_binding = -1;
         reborn_rows_show(self);
+        pad_binds_show(self);
         dialog_notify_controls(self, NULL, 0);
-    } else if (event->type == EVENT_CLICK || event->type == EVENT_SELECT) {
-        reborn_rows_keep(self);
+    } else if (event->type == EVENT_CLICK) {
+        if (!pad_bind_click(self, event))
+            reborn_rows_keep(self);
+    } else if (event->type == EVENT_TIMER) {
+        pad_bind_tick(self);
+    } else if (event->type == EVENT_CLOSE && g_binding >= 0) {
+        pad_bind_stop(self);
     }
 }
 
