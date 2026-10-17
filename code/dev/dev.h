@@ -78,6 +78,9 @@ void dev_install(void);
 /* The renderer's settings (gl.h, g_render), written to [graphics]. */
 void dev_graphics_save(void);
 
+/* The [fixes] the REBORN page sets (the computer riders' steps a second), written back. */
+void dev_fixes_save(void);
+
 /*
     The first-person view's settings (camera.c), on the Graphics page, kept in [camera] as whole
     numbers: the field of view in degrees across; tilt (how much of the bike's lean the horizon

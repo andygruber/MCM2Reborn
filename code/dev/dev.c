@@ -150,6 +150,11 @@ void dev_reborn_save(void)
     write_number("reborn", "physics", g_reborn.physics);
 }
 
+void dev_fixes_save(void)
+{
+    write_number("fixes", "ai_rate", dev_settings.fix_ai_rate);
+}
+
 void dev_graphics_save(void)
 {
     write_number("graphics", "vsync", g_render.vsync);

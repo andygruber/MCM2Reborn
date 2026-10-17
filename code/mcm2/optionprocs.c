@@ -322,11 +322,6 @@ void __fastcall game_page_handle(BYTE* self, void* edx_unused, ui_event* event)
     }
 }
 
-#ifdef OPENMCM2_DEV
-static void camera_rows_show(BYTE* self);
-static void camera_rows_keep(BYTE* self);
-#endif
-
 /* Slot 31: the chat mode (0 to 2), and the tooltips unless the cursors are locked. */
 PORT(0x004B69E0)
 void __fastcall game_page_sync(BYTE* self, void* edx_unused, DWORD out)
@@ -337,14 +332,8 @@ void __fastcall game_page_sync(BYTE* self, void* edx_unused, DWORD out)
     (void) edx_unused;
     if (!out) {
         option_select(chat, NULL, chat_mode == 1 || chat_mode == 2 ? chat_mode : 0);
-#ifdef OPENMCM2_DEV
-        camera_rows_show(self);             /* the PHYSICS row */
-#endif
         return;
     }
-#ifdef OPENMCM2_DEV
-    camera_rows_keep(self);
-#endif
     mode = option_current_index(chat);
     chat_mode = mode == 1 || mode == 2 ? mode : 0;
     if (!cursors_locked)
@@ -366,101 +355,86 @@ static const binding graphics_bindings[] = {
 
 #ifdef OPENMCM2_DEV
 /*
-    The dev build's own rows on the page (tools/modern/build_options.py): vsync, anti-aliasing and
-    texture filtering, the renderer's (gl.h, g_render). They take effect when the page is left, at
-    once, and are kept in OpenMCM2-Dev.ini.
+    The REBORN page (tools/modern/build_options.py): every one of MCM2:Reborn's settings, each a
+    row of the values it offers, clicked through. The picture: the renderer's anti-aliasing,
+    texture filtering, vsync, its finish (post.c) and frame limit (gl.h, g_render). The view: the
+    HUD and the first-person view, Reborn's or the game's, and the first-person view's settings
+    (dev.h, camera_options). The riding: the physics, Reborn's or the game's (steptime.c), and the
+    computer riders' steps a second (bikeai.c). A row is kept as soon as it is clicked, in
+    OpenMCM2-Dev.ini; a setting from the file between two values shows as the nearest.
 */
 #include "gl.h"
 
 int __fastcall option_set_text(BYTE* self, void* edx_unused, int index, const char* text);
 
-#define CHK_VSYNC       "ChkVSync"
-#define MULT_AA         "MultAntiAlias"
-#define MULT_FILTERING  "MultFiltering"
-
-static const int aa_samples[] = { 0, 2, 4, 8 };
-static const char* aa_words[] = { "OFF", "2X", "4X", "8X" };
-static const char* filtering_words[] = { "GAME'S OWN", "TRILINEAR", "ANISOTROPIC 4X", "ANISOTROPIC 8X",
-                                         "ANISOTROPIC 16X" };
-#define AA_CHOICES        ((int) (sizeof aa_samples / sizeof aa_samples[0]))
-#define FILTERING_CHOICES ((int) (sizeof filtering_words / sizeof filtering_words[0]))
-
-static void choices_set(BYTE* control, const char** words, int count, int chosen)
-{
-    int i;
-
-    if (!control)
-        return;
-    option_set_count(control, NULL, count);
-    for (i = 0; i < count; i++)
-        option_set_text(control, NULL, i, words[i]);
-    option_select(control, NULL, chosen);
-}
-
-static void camera_rows_show(BYTE* self);
-
-static void renderer_rows_show(BYTE* self)
-{
-    BYTE* vsync = find(self, CHK_VSYNC, 2);
-    int aa = 0, i;
-
-    for (i = 0; i < AA_CHOICES; i++)
-        if (aa_samples[i] == g_render.samples)
-            aa = i;
-    if (vsync)
-        option_select(vsync, NULL, g_render.vsync ? 1 : 0);
-    choices_set(find(self, MULT_AA, 2), aa_words, AA_CHOICES, aa);
-    choices_set(find(self, MULT_FILTERING, 2), filtering_words, FILTERING_CHOICES,
-                g_render.filtering >= 0 && g_render.filtering < FILTERING_CHOICES ? g_render.filtering : 0);
-    camera_rows_show(self);
-}
-
-/*
-    The first-person view's rows (dev.h, camera_options), the Reborn or Classic ones on the
-    Graphics page and the Game page's PHYSICS, and the Advanced page's picture finish and frame
-    limit (gl.h, g_render): each a list of the values it offers, clicked through; a setting from
-    the file between two of them shows as the nearest. A page shows and keeps the rows it has.
-*/
 #define CHOICES_MOST 16
 
+static const int aa_values[] = { 0, 2, 4, 8 };
+static const int filtering_values[] = { 0, 1, 2, 3, 4 };
+static const int on_off_values[] = { 0, 1 };
+static const int fxaa_values[] = { 0, 1 };
+static const int percent_values[] = { 0, 25, 50, 75, 100 };
+static const int brightness_values[] = { 80, 90, 100, 110, 120, 130 };
+static const int limit_values[] = { 0, 30, 60, 120, 144, 165, 240 };
+static const int style_values[] = { 1, 0 };
 static const int fov_values[] = { 70, 80, 90, 100, 110, 120, 130, 140, 150 };
 static const int tilt_values[] = { 0, 25, 50, 75, 100 };
 static const int pitch_values[] = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150 };
 static const int corner_values[] = { 0, 1 };
 static const int lean_values[] = { 0, 100, 200, 300, 352, 400, 500, 600 };
+static const int ai_rate_values[] = { 0, 30, 60 };
 
-static const int style_values[] = { 1, 0 };
-static const int fxaa_values[] = { 0, 1 };
-static const int percent_values[] = { 0, 25, 50, 75, 100 };
-static const int brightness_values[] = { 80, 90, 100, 110, 120, 130 };
-static const int limit_values[] = { 0, 30, 60, 120, 144, 165, 240 };
+#define ROW(name, values, setting) { name, values, (int) (sizeof values / sizeof values[0]), setting }
 
-static const struct camera_row {
+static const struct reborn_row {
     const char* name;
     const int*  values;
     int         count;
     int*        setting;
-} camera_rows[] = {
-    { "MultHudStyle", style_values, 2, &g_reborn.hud },
-    { "MultCamStyle", style_values, 2, &g_reborn.cameras },
-    { "MultPhysStyle", style_values, 2, &g_reborn.physics },
-    { "MultFpFov", fov_values, 9, &g_camera_options.fov },
-    { "MultFpTilt", tilt_values, 5, &g_camera_options.tilt },
-    { "MultFpPitch", pitch_values, 16, &g_camera_options.pitch },
-    { "MultFpCorner", corner_values, 2, &g_camera_options.corner },
-    { "MultFpLean", lean_values, 8, &g_camera_options.lean_heading },
-    { "MultFxaa", fxaa_values, 2, &g_render.fxaa },
-    { "MultSharpen", percent_values, 5, &g_render.sharpen },
-    { "MultVibrance", percent_values, 5, &g_render.vibrance },
-    { "MultBrightness", brightness_values, 6, &g_render.brightness },
-    { "MultFrameLimit", limit_values, 7, &g_render.frame_limit },
+} reborn_rows[] = {
+    ROW("MultAntiAlias", aa_values, &g_render.samples),
+    ROW("MultFiltering", filtering_values, &g_render.filtering),
+    ROW("MultVSync", on_off_values, &g_render.vsync),
+    ROW("MultFxaa", fxaa_values, &g_render.fxaa),
+    ROW("MultSharpen", percent_values, &g_render.sharpen),
+    ROW("MultVibrance", percent_values, &g_render.vibrance),
+    ROW("MultBrightness", brightness_values, &g_render.brightness),
+    ROW("MultFrameLimit", limit_values, &g_render.frame_limit),
+    ROW("MultHudStyle", style_values, &g_reborn.hud),
+    ROW("MultCamStyle", style_values, &g_reborn.cameras),
+    ROW("MultFpFov", fov_values, &g_camera_options.fov),
+    ROW("MultFpTilt", tilt_values, &g_camera_options.tilt),
+    ROW("MultFpPitch", pitch_values, &g_camera_options.pitch),
+    ROW("MultFpCorner", corner_values, &g_camera_options.corner),
+    ROW("MultFpLean", lean_values, &g_camera_options.lean_heading),
+    ROW("MultPhysStyle", style_values, &g_reborn.physics),
+    ROW("MultAiRate", ai_rate_values, &dev_settings.fix_ai_rate),
 };
-#define CAMERA_ROWS ((int) (sizeof camera_rows / sizeof camera_rows[0]))
+#define REBORN_ROWS ((int) (sizeof reborn_rows / sizeof reborn_rows[0]))
+
+static const char* const filtering_words[] = { "GAME'S OWN", "TRILINEAR", "ANISOTROPIC 4X", "ANISOTROPIC 8X",
+                                               "ANISOTROPIC 16X" };
 
 /* A value as its row shows it. */
-static void camera_words(const struct camera_row* row, int value, char* words)
+static void row_words(const struct reborn_row* row, int value, char* words)
 {
-    if (row->values == fov_values)
+    if (row->values == aa_values)
+        wsprintfA(words, value ? "%dX" : "OFF", value);
+    else if (row->values == filtering_values)
+        lstrcpyA(words, filtering_words[value]);
+    else if (row->values == on_off_values)
+        lstrcpyA(words, value ? "ON" : "OFF");
+    else if (row->values == fxaa_values)
+        lstrcpyA(words, value ? "FXAA" : "OFF");
+    else if (row->values == percent_values)
+        wsprintfA(words, value ? "%d%%" : "OFF", value);
+    else if (row->values == brightness_values)
+        wsprintfA(words, "%d%%", value);
+    else if (row->values == limit_values)
+        wsprintfA(words, value ? "%d FPS" : "REFRESH RATE", value);
+    else if (row->values == style_values)
+        lstrcpyA(words, value ? "REBORN" : "CLASSIC");
+    else if (row->values == fov_values)
         wsprintfA(words, "%d\xB0", value);
     else if (row->values == tilt_values)
         wsprintfA(words, "%d.%02d", value / 100, value % 100);
@@ -468,82 +442,91 @@ static void camera_words(const struct camera_row* row, int value, char* words)
         wsprintfA(words, "%d.%02d (%d\xB0 DOWN)", value / 100, value % 100, 15 + value * 20 / 100);
     else if (row->values == corner_values)
         lstrcpyA(words, value ? "LEAN" : "OFF");
-    else if (row->values == style_values)
-        lstrcpyA(words, value ? "REBORN" : "CLASSIC");
-    else if (row->values == fxaa_values)
-        lstrcpyA(words, value ? "FXAA" : "OFF");
-    else if (row->values == percent_values && !value)
-        lstrcpyA(words, "OFF");
-    else if (row->values == percent_values || row->values == brightness_values)
-        wsprintfA(words, "%d%%", value);
-    else if (row->values == limit_values && !value)
-        lstrcpyA(words, "REFRESH RATE");
-    else if (row->values == limit_values)
-        wsprintfA(words, "%d FPS", value);
+    else if (row->values == ai_rate_values)
+        wsprintfA(words, value ? "%d A SECOND" : "THE GAME'S", value);
     else
         wsprintfA(words, "%d.%d", value / 10, value % 10);
 }
 
-static void camera_rows_show(BYTE* self)
+static void reborn_rows_show(BYTE* self)
 {
     int r, i;
 
-    for (r = 0; r < CAMERA_ROWS; r++) {
-        const struct camera_row* row = &camera_rows[r];
+    for (r = 0; r < REBORN_ROWS; r++) {
+        const struct reborn_row* row = &reborn_rows[r];
         BYTE* control = find(self, row->name, 2);
         char words[CHOICES_MOST][24];
-        const char* list[CHOICES_MOST];
         int chosen = 0;
 
+        if (!control)
+            continue;
+        option_set_count(control, NULL, row->count);
         for (i = 0; i < row->count; i++) {
-            camera_words(row, row->values[i], words[i]);
-            list[i] = words[i];
+            row_words(row, row->values[i], words[i]);
+            option_set_text(control, NULL, i, words[i]);
             if ((row->values[i] - *row->setting) * (row->values[i] - *row->setting)
                 < (row->values[chosen] - *row->setting) * (row->values[chosen] - *row->setting))
                 chosen = i;
         }
-        choices_set(control, list, row->count, chosen);
+        option_select(control, NULL, chosen);
     }
 }
 
-static void camera_rows_keep(BYTE* self)
+static void reborn_rows_keep(BYTE* self)
 {
+    BOOL was_vsync = g_render.vsync;
     int r;
 
-    for (r = 0; r < CAMERA_ROWS; r++) {
-        BYTE* control = find(self, camera_rows[r].name, 2);
+    for (r = 0; r < REBORN_ROWS; r++) {
+        BYTE* control = find(self, reborn_rows[r].name, 2);
         int i = control ? option_current_index(control) : -1;
 
-        if (i >= 0 && i < camera_rows[r].count)
-            *camera_rows[r].setting = camera_rows[r].values[i];
-    }
-    dev_camera_save();
-    dev_reborn_save();
-    dev_graphics_save();
-}
-
-static void renderer_rows_keep(BYTE* self)
-{
-    BYTE* vsync = find(self, CHK_VSYNC, 2);
-    BYTE* aa = find(self, MULT_AA, 2);
-    BYTE* filtering = find(self, MULT_FILTERING, 2);
-    BOOL was_vsync = g_render.vsync;
-    int i;
-
-    if (vsync)
-        g_render.vsync = option_current_index(vsync) != 0;
-    if (aa) {
-        i = option_current_index(aa);
-        g_render.samples = i >= 0 && i < AA_CHOICES ? aa_samples[i] : 0;
-    }
-    if (filtering) {
-        i = option_current_index(filtering);
-        g_render.filtering = i >= 0 && i < FILTERING_CHOICES ? i : 0;
+        if (i >= 0 && i < reborn_rows[r].count)
+            *reborn_rows[r].setting = reborn_rows[r].values[i];
     }
     if (g_render.vsync != was_vsync)
         gl_vsync_apply();
     dev_graphics_save();
-    camera_rows_keep(self);
+    dev_camera_save();
+    dev_reborn_save();
+    dev_fixes_save();
+}
+
+/* OptReborn.dtm: a page of the options screen, made from the game settings page's vtable. */
+static void __fastcall reborn_page_handle(BYTE* self, void* edx_unused, ui_event* event)
+{
+    (void) edx_unused;
+    if (event->type == EVENT_OPEN) {
+        reborn_rows_show(self);
+        dialog_notify_controls(self, NULL, 0);
+    } else if (event->type == EVENT_CLICK) {
+        reborn_rows_keep(self);
+    }
+}
+
+static void __fastcall reborn_page_sync(BYTE* self, void* edx_unused, DWORD out)
+{
+    (void) edx_unused;
+    if (out)
+        reborn_rows_keep(self);
+    else
+        reborn_rows_show(self);
+}
+
+#define PAGE_VTABLE      0x0055ABB0     /* OptGameSettingsDlg: slot 29 the events, 31 the settings */
+#define PAGE_SLOTS       32
+
+static void* g_reborn_vtable[PAGE_SLOTS + 1];  /* the object locator before the slots, as MSVC's */
+static BYTE* g_reborn_page;                    /* the options screen's REBORN page, while open */
+
+static void* reborn_page_vtable(void)
+{
+    if (!g_reborn_vtable[1]) {
+        __movsd((unsigned long*) g_reborn_vtable, (const unsigned long*) (PAGE_VTABLE - 4), PAGE_SLOTS + 1);
+        g_reborn_vtable[1 + 29] = (void*) reborn_page_handle;
+        g_reborn_vtable[1 + 31] = (void*) reborn_page_sync;
+    }
+    return &g_reborn_vtable[1];
 }
 #endif
 
@@ -574,9 +557,6 @@ static void graphics_page_open(BYTE* self)
     }
     list_select_data(list, NULL, video_mode_chosen);
     dialog_notify_controls(self, NULL, 0);
-#ifdef OPENMCM2_DEV
-    renderer_rows_show(self);
-#endif
 }
 
 /* OptGraph.dtm (vtable 0x0055AB2C): the terrain slider sets all four terrain details at once. */
@@ -617,12 +597,6 @@ void __fastcall graphics_page_sync(BYTE* self, void* edx_unused, DWORD out)
         video_mode_chosen = list_data(combo_list(self, RESOLUTION_DDL), NULL, -1);
     else
         list_select_data(combo_list(self, RESOLUTION_DDL), NULL, video_mode_chosen);
-#ifdef OPENMCM2_DEV
-    if (out)
-        renderer_rows_keep(self);
-    else
-        renderer_rows_show(self);
-#endif
 }
 
 /* ---- Advanced graphics ---- */
@@ -719,14 +693,8 @@ void __fastcall advanced_graphics_handle(BYTE* self, void* edx_unused, ui_event*
         break;
     case EVENT_OPEN:
         advanced_graphics_open(self, detail);
-#ifdef OPENMCM2_DEV
-        camera_rows_show(self);             /* the picture's finish and the frame limit */
-#endif
         break;
     case EVENT_CLOSE:
-#ifdef OPENMCM2_DEV
-        camera_rows_keep(self);
-#endif
         setting_set(USE_LAST_VIDEO_CARD, !option_current_index(find(self, CHK_SHOW_PICK_3D, 2)));
         if (option_current_index(find(self, RAD_TERR_SINGLE, 4)))
             method = 2;
@@ -1419,7 +1387,20 @@ static BYTE** options_pages(BYTE* self)
     return (BYTE**) (self + OPT_PAGES);
 }
 
-/* Show `page` (0 to 5), closing the others; one already open stays. */
+#ifdef OPENMCM2_DEV
+#define REBORN_TAB   "Reborn"
+#define REBORN_PAGE  6              /* after the game's six, its own: the screen has room for six */
+
+static void reborn_page_close(void)
+{
+    if (g_reborn_page) {
+        object_destroy(g_reborn_page);
+        g_reborn_page = NULL;
+    }
+}
+#endif
+
+/* Show `page` (0 to 5; in the dev build 6, REBORN), closing the others; one already open stays. */
 PORT(0x004B90B0)
 void __fastcall options_show_page(BYTE* self, void* edx_unused, int page)
 {
@@ -1434,6 +1415,14 @@ void __fastcall options_show_page(BYTE* self, void* edx_unused, int page)
             pages[i] = NULL;
         }
     }
+#ifdef OPENMCM2_DEV
+    if (page != REBORN_PAGE) {
+        reborn_page_close();
+    } else if (!g_reborn_page) {
+        g_reborn_page = dialog_new(0x7F58, __LINE__, "OptReborn.dtm", reborn_page_vtable());
+        gui_manager_open(session_gui, NULL, g_reborn_page, 0, 1, (DWORD) &area, self, 0, 0, 1);
+    }
+#endif
     if ((unsigned) page > 5 || pages[page])
         return;
     pages[page] = dialog_new(option_pages[page].size, option_pages[page].line,
@@ -1500,6 +1489,9 @@ static void options_click(BYTE* self, ui_event* event)
                 pages[i] = NULL;
             }
         }
+#ifdef OPENMCM2_DEV
+        reborn_page_close();
+#endif
         dialog_end((BYTE*) event->sender, NULL, 0);
         event->e = 1;
         return;
@@ -1510,6 +1502,12 @@ static void options_click(BYTE* self, ui_event* event)
             return;
         }
     }
+#ifdef OPENMCM2_DEV
+    if (named(event, REBORN_TAB)) {
+        options_show_page(self, NULL, REBORN_PAGE);
+        return;
+    }
+#endif
     if (named(event, BUT_RESTORE)) {
         box_open(event->manager, self,
                  dialog_new(0x7F58, 0x3B5, NAME(0x005756B0), (void*) 0x0055A898)); /* GlobSet.dtm */

@@ -7,7 +7,8 @@ of choices, or the game's words. The original's labels are drawn in the pictures
 boxes and frames go.
 
 Writes OPTBASE, OPTGAME, OPTGRAPH, OPTSOUND, OPTCONT, OPTMESS, OPTGAR and OPTADVG for the game's
-ui\modern\.
+ui\modern\, and OptReborn, MCM2:Reborn's own page of its settings (optionprocs.c, reborn_rows), its
+tab after the game's.
 """
 import sys
 from pathlib import Path
@@ -25,7 +26,7 @@ ROW_H, PITCH = 76, 88
 
 # The tabs in order: the control, its words (optionprocs.c's pages are by name).
 TABS = [("GameSettings", "GAME"), ("Graphics", "GRAPHICS"), ("Sound", "SOUND"), ("Controls", "CONTROLS"),
-        ("Messages", "MESSAGES"), ("Garage", "GARAGE")]
+        ("Messages", "MESSAGES"), ("Garage", "GARAGE"), ("Reborn", "REBORN")]
 
 
 def columns(count, area=PLACE, gap=40):
@@ -66,10 +67,10 @@ def choice(screen, board, row, words, choices, chosen=0, start=None):
         radio(screen, name, segment_states(board, where, label), where, screen.origin, chosen=k == chosen, Anchor="")
 
 
-def words(screen, board, name, row, label, size=28, align="RIGHT", colour=PAPER):
+def words(screen, board, name, row, label, size=28, align="RIGHT", colour=PAPER, split=0.42):
     """A setting the game shows in words: its name, the words at the well's right."""
     chip(board, row, label)
-    keys = {"Xywh": xywh((row[0] + (row[2] - row[0]) * 0.42, row[1], row[2] - 22, row[3]), screen.origin),
+    keys = {"Xywh": xywh((row[0] + (row[2] - row[0]) * split, row[1], row[2] - 22, row[3]), screen.origin),
             "TextLMargin": "0", "TextTMargin": "0", "Anchor": ""}
     keys.update(font(size, colour, align))
     screen.set(name, ("AnimNorm",), **keys)
@@ -147,7 +148,9 @@ def build_base(data):
     screen, board = full_screen(data, "OPTBASE", "OPTIONS", "SETTINGS")
     areas = tab_areas()
     for k, ((name, words), area) in enumerate(zip(TABS, areas)):
-        radio(screen, name, tab_states(board, area, words), area, (0, 0), chosen=k == 0, FitToAnimOn="0")
+        # REBORN is a tab of the screen's own, in the same group as the game's (AttachId 101).
+        added = {} if name in dict(screen.sections) else {"AttachId": "101", "SoundPush": '"CLICK04"'}
+        radio(screen, name, tab_states(board, area, words), area, (0, 0), chosen=k == 0, FitToAnimOn="0", **added)
     screen.button("Advanced", areas[-1], button_states(board, areas[-1], "ADVANCED", size=26))
     footer(screen, board, [("Help", "HELP")], [("Back", "DONE", 540, True), ("Restore", "RESTORE DEFAULTS", 560,
                                                                              False)])
@@ -167,9 +170,6 @@ def build_game(data):
                                        ("RiderPositionCheckBox", "RIDER POSITION"))):
         switch(screen, board, name, rows_area(left, top, k), label)
     words(screen, board, "MultChatMode", rows_area(left, top, 5), "CHAT BOX (MULTIPLAYER)")
-    # Reborn's bike physics or the game's own (optionprocs.c, camera_rows): the game has no such row.
-    screen.add("MultPhysStyle", Type="MULTISTATE", SoundPush='"Beep"')
-    words(screen, board, "MultPhysStyle", rows_area(left, top, 6), "PHYSICS")
     top = panel(board, right, "GAME")
     for k, (name, label) in enumerate((("ChkPodiums", "END OF RACE ANIMATIONS"), ("ChkUIAnims", "MENU ANIMATIONS"),
                                        ("ChkIntroMovie", "INTRO MOVIE"), ("ChkPlayerIndicator", "PLAYER INDICATOR"),
@@ -191,29 +191,43 @@ def build_graphics(data):
     top = panel(board, left, "DISPLAY")
     drop(screen, board, "DisplayResolutionDropDown", rows_area(left, top, 0), "RESOLUTION", list_h=420)
     slider(screen, board, "TerrainQualitySliderBar", rows_area(left, top, 1), "OVERALL QUALITY")
-    # The renderer's own (optionprocs.c, renderer_rows_show): the game has no such controls.
-    screen.add("ChkVSync", Type="MULTISTATE", NumStates="2", SoundPush='"Beep"', SourceBlit="-1")
-    switch(screen, board, "ChkVSync", rows_area(left, top, 2), "VSYNC")
-    for k, (name, label) in enumerate((("MultAntiAlias", "ANTI-ALIASING"), ("MultFiltering", "TEXTURE FILTERING"),
-                                       ("MultHudStyle", "HUD"), ("MultCamStyle", "FIRST PERSON"))):
-        screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
-        words(screen, board, name, rows_area(left, top, 3 + k), label)
     sub(board, "MORE IN ADVANCED: VISIBILITY, TERRAIN, OBJECTS AND TEXTURES", left[0] + 36, left[3] - 36, 22,
         (120, 122, 128), bold=True)
     top = panel(board, right, "FEATURES")
     for k, (name, label) in enumerate((("ShadowsCheckBox", "SHADOWS"), ("ParticlesCheckBox", "PARTICLE SYSTEMS"),
                                        ("SkyCheckBox", "SKY"))):
         switch(screen, board, name, rows_area(right, top, k), label)
-    # The first-person view's own (optionprocs.c, camera_rows_show), under a heading of its own.
-    heading(board, "FIRST-PERSON VIEW", right[0] + 36, top + 3 * PITCH + 50, 28, ORANGE)
-    for k, (name, label) in enumerate((("MultFpFov", "FIELD OF VIEW"), ("MultFpTilt", "TILT"), ("MultFpPitch", "PITCH"),
-                                       ("MultFpCorner", "CORNER ANTICIPATION"),
-                                       ("MultFpLean", "LEAN HEADING SCALE"))):
-        screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
-        words(screen, board, name, rows_area(right, top + 70, 3 + k), label)
     return finish_page(screen, board, ("DisplayResolutionBox", "DisplayResolutionText", "TerrainQualityBox",
                                        "TerrainQualityText", "rbwLabel6", "rbwLabel7", "GraphicFeaturesBox",
                                        "GraphicFeaturesText"))
+
+
+# The REBORN page: MCM2:Reborn's settings (optionprocs.c, reborn_rows), a column for each kind.
+REBORN_COLUMNS = (
+    ("PICTURE", (("MultAntiAlias", "ANTI-ALIASING"), ("MultFiltering", "TEXTURE FILTERING"), ("MultVSync", "VSYNC"),
+                 ("MultFxaa", "EDGE SMOOTHING"), ("MultSharpen", "SHARPENING"), ("MultVibrance", "COLOUR VIBRANCE"),
+                 ("MultBrightness", "BRIGHTNESS"), ("MultFrameLimit", "FRAME RATE LIMIT"))),
+    ("VIEW", (("MultHudStyle", "HUD"), ("MultCamStyle", "FIRST PERSON"), ("MultFpFov", "FIRST-PERSON FOV"),
+              ("MultFpTilt", "TILT"), ("MultFpPitch", "PITCH"), ("MultFpCorner", "CORNER ANTICIPATION"),
+              ("MultFpLean", "LEAN HEADING SCALE"))),
+    ("RIDING", (("MultPhysStyle", "PHYSICS"), ("MultAiRate", "COMPUTER RIDERS"))),
+)
+
+
+def build_reborn(data):
+    """Made from the game settings page, its controls put away: the page has none of the game's."""
+    screen, board = page(data, "OptReborn")
+    screen.layout = "OptReborn.dtm"
+    for name in screen.unplaced():
+        screen.hide(name)
+    for area, (title, rows) in zip(columns(3), REBORN_COLUMNS):
+        top = panel(board, area, title)
+        for k, (name, label) in enumerate(rows):
+            screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
+            words(screen, board, name, rows_area(area, top, k), label, size=24, split=0.5)
+    sub(board, "EACH ROW: CLICK TO CHANGE. REBORN OR CLASSIC: MCM2:REBORN'S OR THE GAME'S OWN.",
+        PLACE[0] + 36, PLACE[3] - 30, 22, (120, 122, 128), bold=True)
+    return finish_page(screen, board)
 
 
 def build_sound(data):
@@ -361,12 +375,6 @@ def build_advanced(data):
     words(screen, board, "Txt3DCard", rows_area(card, top, 0), "RENDERER", size=24)
     switch(screen, board, "ChkShowPick3D", rows_area(card, top, 1), "ASK AT START")
     switch(screen, board, "ChkForceVideoMem", rows_area(card, top, 2), "FIT IN VIDEO MEMORY")
-    # The picture's finish and the frame limit (optionprocs.c, camera_rows): the game has no such rows.
-    for k, (name, label) in enumerate((("MultFxaa", "EDGE SMOOTHING"), ("MultSharpen", "SHARPENING"),
-                                       ("MultVibrance", "COLOUR VIBRANCE"), ("MultBrightness", "BRIGHTNESS"),
-                                       ("MultFrameLimit", "FRAME RATE LIMIT"))):
-        screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
-        words(screen, board, name, rows_area(card, top, 3 + k), label)
 
     top = panel(board, repair, "TROUBLESHOOTING")
     switch(screen, board, "ChkFilterInput", rows_area(repair, top, 0), "FILTER JOYSTICK INPUT")
@@ -388,7 +396,8 @@ def main(ui, out, previews):
     read = lambda stem: (ui / (stem + ".DAT")).read_bytes()             # noqa: E731
     base = build_base(read("OPTBASE"))
     pages = [build_game(read("OPTGAME")), build_graphics(read("OPTGRAPH")), build_sound(read("OPTSOUND")),
-             build_controls(read("OPTCONT")), build_messages(read("OPTMESS")), build_garage(read("OPTGAR"))]
+             build_controls(read("OPTCONT")), build_messages(read("OPTMESS")), build_garage(read("OPTGAR")),
+             build_reborn(read("OPTGAME"))]
     advanced = build_advanced(read("OPTADVG"))
     out.mkdir(parents=True, exist_ok=True)
     previews.mkdir(parents=True, exist_ok=True)
