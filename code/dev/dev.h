@@ -1,9 +1,10 @@
 /*
     OpenMCM2 dev build - debugging tools and changes to the game.
 
-    Only the dev build (OPENMCM2_DEV, the dev branch) compiles this. Its switches come from
-    OpenMCM2-Dev.ini in the game folder; each is off unless the file turns it on, so the dev build
-    plays as the normal one until asked otherwise.
+    Only the dev build (OPENMCM2_DEV, the dev branch) compiles this. Its switches come from the
+    settings file beside the exe, named after it (OpenMCM2-Dev.ini, or MCM2Reborn.ini for a release);
+    each is off unless the file turns it on, so the dev build plays as the normal one until asked
+    otherwise.
 
         [trace]           what goes to openmcm2-dev.log
         screens=1         every menu screen opened, by number

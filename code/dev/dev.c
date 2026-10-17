@@ -7,7 +7,34 @@
 
 #include <stdarg.h>
 
-#define SETTINGS_FILE ".\\OpenMCM2-Dev.ini"
+/*
+    The settings file is named after the game's exe, beside it: OpenMCM2-Dev.ini for the dev build,
+    MCM2Reborn.ini for a release, so the two keep their own settings in one folder.
+*/
+static const char* settings_file(void)
+{
+    typedef DWORD (WINAPI* module_name_fn)(HMODULE, LPSTR, DWORD);
+    static char path[MAX_PATH];
+    module_name_fn module_name;
+    int n, dot = -1, i;
+
+    if (path[0])
+        return path;
+    module_name = (module_name_fn) api("kernel32.dll", "GetModuleFileNameA");
+    n = module_name ? (int) module_name(NULL, path, MAX_PATH - 4) : 0;
+    for (i = 0; i < n; i++) {
+        if (path[i] == '.')
+            dot = i;
+        else if (path[i] == '\\')
+            dot = -1;
+    }
+    if (n <= 0 || dot < 0)
+        lstrcpyA(path, ".\\OpenMCM2-Dev.ini");
+    else
+        lstrcpyA(path + dot, ".ini");
+    return path;
+}
+#define SETTINGS_FILE settings_file()
 
 dev_switches dev_settings = { 0 };     /* initialised, or it is a common symbol and lands in .data */
 camera_options g_camera_options = { 140, 0, 70, 0, 352 };
