@@ -291,6 +291,40 @@ namespace Mcm2Reborn.Launcher
         }
 
         // The launcher itself in the install folder, and the shortcuts to it.
+        // What older copies of the game left that MCM2:Reborn does not use: the portable copy's own
+        // launcher, the dgVoodoo DirectX wrapper (Reborn draws with OpenGL) and mcm2hook.
+        static readonly string[] Leftovers = {
+            "Play MCM2.exe", "DDraw.dll", "D3DImm.dll", "dgVoodoo.conf", "dgVoodooCpl.exe",
+            "mcm2hook.dll", "mcm2hook.ini", "mcm2hook.log", "mcm2inject.exe",
+        };
+
+        // Those files out of an install, to the Recycle Bin (one in use, by a running game, waits for
+        // the next start); how many went.
+        public static int RemoveLeftovers(string folder)
+        {
+            int removed = 0;
+            foreach (string name in Leftovers)
+            {
+                string path = Path.Combine(folder, name);
+                if (!File.Exists(path))
+                    continue;
+                try
+                {
+                    using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    {
+                    }                                       // in use: left for the next start, quietly
+                    Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(path,
+                        Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                        Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                    removed++;
+                }
+                catch (Exception)
+                {
+                }
+            }
+            return removed;
+        }
+
         public static string PlaceLauncher(string folder)
         {
             string self = typeof(Install).Assembly.Location;

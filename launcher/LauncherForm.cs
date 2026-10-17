@@ -147,6 +147,8 @@ namespace Mcm2Reborn.Launcher
             photo?.Dispose();
             photo = LoadPhoto(Path.Combine(folder, @"UI\modern\photo1.tga"));
             status = "";
+            string at = folder;
+            Background(() => Install.RemoveLeftovers(at));
             if (!Setup.Done(folder))
                 OpenSetup(true);
             CountPlayers();
