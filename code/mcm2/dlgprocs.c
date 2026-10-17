@@ -4930,6 +4930,14 @@ static void bike_rider_open(BYTE* self)
         FIELD(self, BR_SLOT, int) = background_new_slot(FIELD(self, 0x110, BYTE*), NULL, 1);
 }
 
+#ifdef OPENMCM2_DEV
+#define PLATE_LEAST 1               /* a plate, and one taken as it is typed */
+#define PLATE_TYPED 1
+#else
+#define PLATE_LEAST 101
+#define PLATE_TYPED 100
+#endif
+
 PORT(0x0044FE50)
 void __fastcall bike_rider_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
@@ -4965,15 +4973,18 @@ void __fastcall bike_rider_handle(BYTE* self, void* edx_unused, ui_event* event)
             options_open(self, FIELD(self, 0x2C, BYTE*), 0x7F8, 2);
         break;
     case EVENT_EDIT_DONE:
-        /* Plates run 101 to 999; under 100 gains 100 (so 100 itself becomes 101). */
+        /* Plates run 101 to 999; under 100 gains 100 (so 100 itself becomes 101). In the dev build
+           they run 1 to 999: the plate's picture (0x00418470) already draws one or two digits. */
         if (!clicked(event, EDIT_PLATE))
             break;
         edit_get_text((BYTE*) event->c, NULL, number, 9);
         plate = game_FUN_0053b6c7(number);
+#ifndef OPENMCM2_DEV
         if (plate < 100)
             plate += 100;
-        if (plate < 101)
-            plate = 101;
+#endif
+        if (plate < PLATE_LEAST)
+            plate = PLATE_LEAST;
         else if (plate > 999)
             plate = 999;
         FIELD(game_main, 0x2144, int) = plate;
@@ -4986,7 +4997,7 @@ void __fastcall bike_rider_handle(BYTE* self, void* edx_unused, ui_event* event)
             break;
         edit_get_text((BYTE*) event->c, NULL, number, 9);
         plate = game_FUN_0053b6c7(number);
-        if (plate >= 100 && plate <= 999) {
+        if (plate >= PLATE_TYPED && plate <= 999) {
             players_set(self, NULL, plate);
             FIELD(game_main, 0x2144, int) = plate;
         }
