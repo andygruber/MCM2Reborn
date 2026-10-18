@@ -6,11 +6,10 @@ data/encodings.tsv
 __pycache__/
 *.pyc
 
-# Editors and assistants
+# Editors
 .vs/
 .vscode/
 *.swp
-.mcp.json
 
 # Shipped game content, built by tools/content.py (too big for git; it goes in the release)
 dist/content/
