@@ -358,8 +358,50 @@ namespace Mcm2Reborn.Launcher
             string exe = folder != null ? Install.GameExe(folder) : null;
             if (exe == null || busy)
                 return;
-            Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = folder });
-            WindowState = FormWindowState.Minimized;
+            Process game = Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = folder });
+            if (game == null)
+                return;
+
+            /*
+                MCM2 takes keyboard, mouse and joystick input through DirectInput. Minimizing the
+                launcher immediately after Process.Start can happen before the game has created
+                its window; on some Windows setups that leaves the new game without foreground
+                input. Wait off the UI thread for its first window, activate it, then get the
+                launcher out of the way.
+            */
+            Background(() => {
+                IntPtr window = IntPtr.Zero;
+                try
+                {
+                    game.WaitForInputIdle(10000);
+                    for (int i = 0; i < 50 && !game.HasExited; i++)
+                    {
+                        game.Refresh();
+                        window = game.MainWindowHandle;
+                        if (window != IntPtr.Zero)
+                            break;
+                        Thread.Sleep(100);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    // The game can exit before creating a window.
+                }
+                catch (System.ComponentModel.Win32Exception)
+                {
+                    // Input-idle waiting is unavailable if Windows cannot inspect the process.
+                }
+                finally
+                {
+                    IntPtr target = window;
+                    Ui(() => {
+                        if (target != IntPtr.Zero)
+                            SetForegroundWindow(target);
+                        WindowState = FormWindowState.Minimized;
+                    });
+                    game.Dispose();
+                }
+            });
         }
 
         void CountPlayers()
@@ -754,6 +796,7 @@ namespace Mcm2Reborn.Launcher
 
         [DllImport("user32.dll")] static extern bool ReleaseCapture();
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr w, IntPtr l);
+        [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
 
         // ---- Threads ----
 
