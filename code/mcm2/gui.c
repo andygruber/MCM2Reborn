@@ -787,6 +787,17 @@ int __fastcall gui_input_tick(gui_input* self, void* edx_unused, DWORD time)
     type = FIELD(self->device, 0xC, int);
     if (!type)
         return 1;
+#ifdef OPENMCM2_DEV
+    if (type == 2 && input_is_xinput(self->device)) {
+        float x, y;
+
+        if (pad_menu_axes(&x, &y)) {
+            self->x = (int) x;
+            self->y = (int) y;
+            return 1;
+        }
+    }
+#endif
     if (FIELD(game_main, 0x2D4, BYTE) & 2) {
         self->x = (int) FIELD(self->axis_x, 0x24, float);
         self->y = (int) FIELD(self->axis_y, 0x24, float);

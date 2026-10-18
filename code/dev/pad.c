@@ -177,6 +177,32 @@ BOOL pad_start_down(void)
     return pad_read() && (g_state.buttons & 0x0010) != 0;
 }
 
+BOOL pad_back_down(void)
+{
+    return pad_read() && (g_state.buttons & 0x0020) != 0;
+}
+
+BOOL pad_accept_down(void)
+{
+    return pad_read() && (g_state.buttons & 0x1000) != 0;
+}
+
+BOOL pad_menu_axes(float* x, float* y)
+{
+    float lx, ly;
+    WORD buttons;
+
+    if (!x || !y || !pad_read())
+        return FALSE;
+    buttons = g_state.buttons;
+    stick(g_state.left_x, g_state.left_y, &lx, &ly);
+    *x = (buttons & 0x0004) ? -2.0f : (buttons & 0x0008) ? 2.0f
+       : lx < -STICK_DOWN ? -2.0f : lx > STICK_DOWN ? 2.0f : 0.0f;
+    *y = (buttons & 0x0001) ? -2.0f : (buttons & 0x0002) ? 2.0f
+       : ly > STICK_DOWN ? -2.0f : ly < -STICK_DOWN ? 2.0f : 0.0f;
+    return TRUE;
+}
+
 /* An analog stick's steering through the chosen response: its size to the power 1, 1.5, 2 or 3
    (the game's own, for its joysticks), its sign kept. */
 float pad_curve(float v)

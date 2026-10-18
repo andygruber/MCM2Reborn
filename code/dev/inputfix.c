@@ -19,11 +19,11 @@
     DIERR_NOTACQUIRED (scratchpad input/input.md, "Focus / alt-tab"). So a read that finds its
     device not acquired while the game's window is the one in front acquires it and reads again.
 
-    For the game pads ([gamepad], pad.c): a DirectInput pad of the "gamepad" kind (a DualSense)
-    is told to the game as an ordinary joystick, which it steers by its axes, not by a keyboard's
-    ramp; and an XInput pad's START is the keyboard's Escape, tapped. An XInput pad is also one of
-    DirectInput's joysticks (its device path has "IG_"): while pad.c reads it, that joystick tells
-    the game nothing, or each of its buttons would hold both its own action and the pad's.
+    For the game pads ([gamepad], pad.c): an XInput pad's START or BACK taps Escape, A taps Enter,
+    and its directions move menu focus. A DirectInput pad of the "gamepad" kind (a DualSense) is
+    told to the game as an ordinary joystick, which it steers by its axes, not by a keyboard's
+    ramp. An XInput pad is also one of DirectInput's joysticks (its device path has "IG_"): while
+    pad.c reads it, that joystick tells the game nothing, or its buttons would duplicate actions.
 */
 
 #include "dev.h"
@@ -84,6 +84,7 @@ static format_fn           g_set_format;
 static info_fn             g_get_info;
 static property_fn         g_get_property;
 static BOOL                g_start_was;
+static BOOL                g_accept_was;
 
 #define DEVICE_TYPE         36          /* DIDEVICEINSTANCE: dwDevType, its type then its subtype */
 #define TYPE_JOYSTICK       4           /* DIDEVTYPE_JOYSTICK */
@@ -155,6 +156,13 @@ static struct device* device_of(void* self, BOOL make)
             return &g_devices[i];
         }
     return NULL;
+}
+
+BOOL input_is_xinput(void* device)
+{
+    struct device* d = device_of(device, FALSE);
+
+    return d && d->xinput;
 }
 
 /* The button an offset is, as an index into held[], or -1 for an axis or hat. */
@@ -295,9 +303,15 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
             d->resyncs++;
         d->resync = FALSE;
     }
-    if (d->kind == KEYBOARD && pad_start_down() != g_start_was) {
-        g_start_was = !g_start_was;
-        if (g_start_was && room >= *count + 2) {
+    if (d->kind == KEYBOARD) {
+        BOOL start = pad_start_down() || pad_back_down();
+        BOOL accept = pad_accept_down();
+        BOOL escape_changed = start != g_start_was;
+        BOOL accept_changed = accept != g_accept_was;
+        BOOL escape_room = room >= *count + 2;
+        BOOL accept_room;
+
+        if (escape_changed && start && escape_room) {
             for (i = 0; i < 2; i++) {
                 data[*count].offset = KEY_ESCAPE;
                 data[*count].data = i ? 0 : 0x80;
@@ -306,6 +320,20 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
                 (*count)++;
             }
         }
+        if (escape_changed && (!start || escape_room))
+            g_start_was = start;
+        accept_room = room >= *count + 2;
+        if (accept_changed && accept && accept_room) {
+            for (i = 0; i < 2; i++) {
+                data[*count].offset = 0x1C;       /* DIK_RETURN */
+                data[*count].data = i ? 0 : 0x80;
+                data[*count].time = timeGetTime();
+                data[*count].sequence = 0;
+                (*count)++;
+            }
+        }
+        if (accept_changed && (!accept || accept_room))
+            g_accept_was = accept;
     }
     return result;
 }
