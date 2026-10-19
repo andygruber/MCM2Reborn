@@ -20,7 +20,7 @@ FARPROC api(const char* dll,const char* name)
 }
 void log_line(const char* fmt,...) { }
 void dev_trace(const char* area,const char* fmt,...) { }
-BOOL write_protected(void* to,const void* from,SIZE_T size) { return TRUE; }
+BOOL write_protected(void* to,const void* from,SIZE_T size) { memcpy(to,from,size); return TRUE; }
 BOOL pad_connected(void) { return TRUE; }
 BOOL pad_start_down(void) { return start; }
 BOOL pad_back_down(void) { return back; }
@@ -56,6 +56,11 @@ int main(void)
     menus=TRUE;back=TRUE;close_dropdown=TRUE;CHECK(!read_keys());back=FALSE;CHECK(!read_keys());
     close_dropdown=FALSE;binding=TRUE;back=TRUE;CHECK(!read_keys());back=FALSE;CHECK(!read_keys());binding=FALSE;
     front=FALSE;back=TRUE;CHECK(!read_keys());back=FALSE;CHECK(!read_keys());
+    { BYTE branch[2]={0x74,0x41};
+      CHECK(disable_legacy_race_feedback(branch)); CHECK(branch[0]==0xEB && branch[1]==0x41);
+      CHECK(disable_legacy_race_feedback(branch)); branch[1]=0x40;
+      CHECK(!disable_legacy_race_feedback(branch));
+    }
     printf("PASS %d input checks: retired legacy driver bypass; B/Start, dropdown back, capture and foreground gating\n",checks);
     return 0;
 }

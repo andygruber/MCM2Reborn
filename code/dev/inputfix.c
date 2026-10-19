@@ -434,10 +434,22 @@ static HRESULT WINAPI create(HINSTANCE instance, DWORD version, REFIID iid, void
     return result;
 }
 
+/* Modern controllers never create the legacy force-feedback joystick. Old saved
+   effects must not enter BikeRace's three-call legacy effect block. */
+static BOOL disable_legacy_race_feedback(BYTE* branch)
+{
+    const BYTE jump = 0xEB;
+    if ((branch[0] != 0x74 && branch[0] != jump) || branch[1] != 0x41)
+        return FALSE;
+    return branch[0] == jump || write_protected(branch, &jump, sizeof jump);
+}
+
 void inputfix_install(void)
 {
     create_fn mine = create;
 
+    if (!disable_legacy_race_feedback((BYTE*)0x0041A456))
+        log_line("input: could not disable legacy race force feedback");
     g_create = _imp__DirectInputCreateEx;
     if (!write_protected(&_imp__DirectInputCreateEx, &mine, sizeof mine))
         log_line("input: could not take over DirectInputCreateEx");
