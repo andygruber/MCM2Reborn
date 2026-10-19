@@ -14,7 +14,7 @@
     <RootNamespace>Mcm2Reborn.Launcher</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon Condition="Exists('icon.ico')">icon.ico</ApplicationIcon>
-    <Version>0.1</Version>
+    <Version>0.3.9</Version>
     <Product>MCM2:Reborn</Product>
     <Company>xshxdex98</Company>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
@@ -30,6 +30,10 @@
     <Reference Include="System.Web.Extensions" />
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="Microsoft.VisualBasic" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\assets\logo.png" LogicalName="branding.logo" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(FontsDir)' != ''">

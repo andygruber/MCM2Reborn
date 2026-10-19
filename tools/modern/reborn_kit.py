@@ -335,8 +335,18 @@ def page_title(img, kicker, title, size=92):
           ORANGE)
 
 
+def logo(img, area):
+    """The supplied Reborn artwork, with its aspect ratio and transparency preserved."""
+    from PIL import ImageOps
+    art = Image.open(Path(__file__).parents[2] / "assets" / "logo.png").convert("RGBA")
+    x0, y0, x1, y1 = area
+    art = ImageOps.contain(art, (int(x1 - x0), int(y1 - y0)), Image.Resampling.LANCZOS)
+    img.alpha_composite(art, (int(x0), int(y0 + (y1 - y0 - art.height) / 2)))
+
+
 def build_mark(img):
-    sub(img, "%s  \u00b7  VERSION %s" % (TITLE, VERSION), RIGHT, TOP + 18, 22, DIM, anchor="rs")
+    logo(img, (RIGHT - 360, TOP - 34, RIGHT - 100, TOP + 30))
+    sub(img, "v%s" % VERSION, RIGHT, TOP + 18, 22, DIM, anchor="rs")
 
 
 STEPS = [("01", "EVENT"), ("02", "BIKE & RIDER"), ("03", "RACE INFO")]

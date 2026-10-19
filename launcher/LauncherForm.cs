@@ -456,10 +456,9 @@ namespace Mcm2Reborn.Launcher
 
         void DrawTop(Graphics g)
         {
-            using (Font title = Theme.Heading(30))
             using (Font small = Theme.Text(13, true))
             {
-                Theme.Words(g, "MCM2:REBORN", title, Theme.Paper, R(36, 18, 400, 44));
+                g.DrawImage(Theme.Logo, R(36, 10, 180, 60));
                 using (var bar = new SolidBrush(Theme.Orange))
                     g.FillRectangle(bar, R(36, 64, 220, 4));
                 Theme.Words(g, "LAUNCHER  ·  VERSION " + Application.ProductVersion, small, Theme.Grey, R(36, 72, 400, 20));

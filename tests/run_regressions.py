@@ -32,6 +32,12 @@ def main():
     (out / "movie_under_test.inc").write_text(function(
         (ROOT / "code/mcm2/dlgprocs.c").read_text(encoding="utf-8"),
         "static void menu_movie_pause("), encoding="utf-8")
+    (out / "align_under_test.inc").write_text(function(source, "static DWORD reader_alignment("), encoding="utf-8")
+    (out / "frame_under_test.inc").write_text(function(source, "static void dialog_pad_frame("), encoding="utf-8")
+    counts = (ROOT / "code/mcm2/selectgamepicprocs.c").read_text(encoding="utf-8")
+    begin = counts.index("int g_track_counts[6][3]")
+    end = counts.index("#endif", begin)
+    (out / "counts_under_test.inc").write_text(counts[begin:end], encoding="utf-8")
     env = compiler.msvc_environment()
     cl = shutil.which("cl", path=env.get("Path") or env.get("PATH"))
     command = [cl, "/nologo", "/std:c11", "/O2", "/Gy", "/W4", "/WX", "/wd4100", "/wd4505", "/arch:IA32",
@@ -47,6 +53,11 @@ def main():
     input_command[input_command.index("/Fe" + str(out / "native.exe"))] = "/Fe" + str(out / "input.exe")
     subprocess.run(input_command, cwd=ROOT, env=env, check=True)
     subprocess.run([str(out / "input.exe")], check=True)
+    counts_command = input_command[:]
+    counts_command[counts_command.index(str(ROOT / "tests/input_regressions.c"))] = str(ROOT / "tests/count_regressions.c")
+    counts_command[counts_command.index("/Fe" + str(out / "input.exe"))] = "/Fe" + str(out / "counts.exe")
+    subprocess.run(counts_command, cwd=ROOT, env=env, check=True)
+    subprocess.run([str(out / "counts.exe")], check=True)
 
 
 if __name__ == "__main__":

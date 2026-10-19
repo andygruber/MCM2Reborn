@@ -113,12 +113,7 @@ def background():
         d.line((0, y, W, y), fill=int(200 * (y - 1000) / 440))
     canvas.paste((8, 8, 10, 255), mask=ImageChops.lighter(side, foot))
 
-    heading(canvas, "MCM", LEFT - 4, TOP + 118, 124, PAPER)
-    x = LEFT - 4 + heading_ink("MCM", 124) + 8
-    two = round(124 * kit.figure_scale() * 1.08)
-    ImageDraw.Draw(canvas).text((x, TOP + 118), "2:", font=kit.sub_font(two), fill=ORANGE, anchor="ls",
-                                stroke_width=max(3, two // 14), stroke_fill=ORANGE)
-    heading(canvas, "REBORN", LEFT - 4, TOP + 252, 124, PAPER)
+    kit.logo(canvas, (LEFT - 4, TOP, LEFT + 820, TOP + 274))
     shape(canvas, [(LEFT, TOP + 282), (LEFT + 640, TOP + 282), (LEFT + 634, TOP + 290), (LEFT - 2, TOP + 290)],
           ORANGE)
 

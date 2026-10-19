@@ -2212,9 +2212,28 @@ static void event_page_show(BYTE* self)
     DWORD kind = list_data(combo_list(self, SP_EVENT_TYPE), NULL, -1);
     int i;
 
+    track_counts_refresh();
+    if (kind < 6) {
+        BYTE* counts = dialog_find_control(self, NULL, "TrackCounts", 0);
+        if (counts) {
+            char totals[96];
+            game_FUN_0053a11f(totals, "ALL %d / BASE %d / CUSTOM %d",
+                             g_track_counts[kind][0], g_track_counts[kind][1], g_track_counts[kind][2]);
+            control_set_text(counts, NULL, totals);
+        }
+    }
     for (i = 0; i < (int) EVENT_CARDS; i++) {
         BYTE* card = dialog_find_control(self, NULL, event_cards[i].name, TAB_CONTROL);
 
+        char name[32], label[48];
+        BYTE* count;
+        int source = (unsigned)race_kind < 6 ? g_track_source[race_kind] : 0;
+        game_FUN_0053a11f(name, "TrackCount%d", event_cards[i].kind);
+        count = dialog_find_control(self, NULL, name, 0);
+        if (count) {
+            game_FUN_0053a11f(label, "%d TRACKS", g_track_counts[event_cards[i].kind][source]);
+            control_set_text(count, NULL, label);
+        }
         if (card && event_cards[i].kind == kind)
             radio_set(card, NULL, 0);
     }
@@ -2257,7 +2276,7 @@ static BOOL event_card_clicked(BYTE* self, const ui_event* event)
     static const char* const filters[] = { "TrackAll", "TrackBase", "TrackCustom" };
     for (i = 0; i < 3; i++)
         if (clicked(event, filters[i]) && (unsigned) race_kind < 6) {
-            g_track_source[race_kind] = i;
+            { int k; for (k = 0; k < 6; k++) g_track_source[k] = i; }
             sp_event_kind_set(self);
             sp_event_refresh(self);
             ghosts_fill(self);
@@ -2579,6 +2598,16 @@ PORT(0x0044E830)
 void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (event->type == EVENT_TIMER && event->a == 0x739) {
+        if (track_counts_refresh()) {
+            sp_event_kind_set(self);
+            sp_event_refresh(self);
+            ghosts_fill(self);
+        }
+        return;
+    }
+#endif
     if (event->type == EVENT_CLICK) {
 #ifdef OPENMCM2_DEV
         if (event_card_clicked(self, event))
@@ -2633,6 +2662,10 @@ void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
         }
 #endif
     } else if (event->type == EVENT_OPEN) {
+#ifdef OPENMCM2_DEV
+        if (dialog_find_control(self, NULL, "TrackCount0", 0))
+            dialog_add_timer(self, NULL, 0x739, 2000, NULL);
+#endif
         BYTE* list = combo_list(self, SP_EVENT_TYPE);
         char number[0x80];
         int i;

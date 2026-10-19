@@ -77,7 +77,7 @@
 #define GAME_TITLE "MCM2:Reborn"
 
 /* Its version, as the menus (tools/modern/reborn_kit.py, VERSION) and the launcher show it. */
-#define GAME_VERSION "0.3.8"
+#define GAME_VERSION "0.3.9"
 
 typedef struct dev_switches {
     BOOL trace_screens;
@@ -279,7 +279,10 @@ extern BOOL pad_navigation_active;
 void pad_menu_tick(void* manager);
 BOOL pad_close_dropdown(void* control);
 BOOL pad_menu_back(void);
+BOOL pad_back_from_dialog(void* dialog);
 extern int g_track_source[6];
+extern int g_track_counts[6][3];
+BOOL track_counts_refresh(void);
 BOOL track_is_stock(int kind, const char* stem);
 BOOL  input_is_xinput(void* device);
 BOOL  input_in_foreground(void);

@@ -13,6 +13,8 @@
 #include "../dev/dev.h"
 #endif
 
+void __fastcall session_go_to(BYTE* self, void* edx_unused, int screen);
+
 #define NAME(address) ((const char*) (address))
 #define KRUSTYUI_CPP  NAME(0x005736FC)      /* "D:\aardvark\VC\krusty2\krustyui.cpp" */
 #define READ_MODE     NAME(0x0056CA38)      /* "r" */
@@ -282,9 +284,16 @@ BYTE* __fastcall session_setup(BYTE* self, void* edx_unused, BYTE* screen, BOOL 
     session_gui(self)->unknown_34c =
         (FIELD(game_main, 0xF9C, int) ? (FIELD(game_main, 0xFB4, int) - 100) * 25 : -10000) - 200;
 
+#ifdef OPENMCM2_DEV
+    if ((!game_net || !FIELD(game_net, 0x14, int)) && intro) {
+        session_go_to(self, NULL, 100);
+        gui_manager_show_cursors(session_gui(self), NULL, TRUE);
+    }
+#else
     if ((!game_net || !FIELD(game_net, 0x14, int)) && intro)
         gui_manager_open(session_gui(self), NULL, dialog_new(0x7F5C, 0xCE, INTRO, 0x005599B4), 0,
                          2, 0, NULL, 0, 0, 1);
+#endif
     return self;
 }
 

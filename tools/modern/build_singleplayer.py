@@ -68,12 +68,21 @@ def event_cards(screen, board, ui):
             if chosen:
                 outline(canvas, points, ORANGE, 6)
                 shape(canvas, slanted((area[0] + 28, bottom - 12, area[2] - 2, bottom)), ORANGE)
+            centre = (area[0] + area[2]) / 2
+            kit.box(canvas, (centre - 100, top + 24, centre + 100, top + 76), (8, 8, 10, 220), 8)
             size = kit.fit(title, 38, card_w - 70)
             heading(canvas, title, area[0] + 44, bottom - 62, size, PAPER if chosen else SOFT)
             sub(canvas, kind, area[0] + 36, bottom - 28, 22, ORANGE if chosen else (120, 122, 128))
             pictures[state] = keyed_outside(under(canvas, area), points, area[:2])
         pictures["OnGrey"], pictures["OffGrey"] = pictures["On"], pictures["Off"]
         radio(screen, name, pictures, area, chosen=i == 1, AttachId=str(CARD_GROUP), FitToAnimOn="0")
+        count_area = (int((area[0] + area[2]) / 2 - 100), top + 24,
+                      int((area[0] + area[2]) / 2 + 100), top + 76)
+        count_keys = font(28, PAPER, "CENTER")
+        count_keys["TextDrop"] = "1"
+        screen.add("TrackCount%d" % CARDS[i][1], Type="STATICTEXT", Xywh=local(count_area),
+                   Text="", **count_keys)
+
 
 
 def track_panel(screen, board):
@@ -83,6 +92,8 @@ def track_panel(screen, board):
     area = (LEFT, 614, 900, PLACE[3])
     box(board, area, PANEL + (255,), 10)
     heading(board, "TRACKS", area[0] + 36, area[1] + 58, 30, ORANGE)
+    screen.add("TrackCounts", Type="STATICTEXT", Xywh=local((area[0] + 240, area[1] + 16, area[2] - 24, area[1] + 60)),
+               Text="", **font(21, PAPER, "RIGHT"))
     bar_x0, bar_x1 = area[2] - 56, area[2] - 12
     for k, (name, label) in enumerate((("TrackAll", "ALL"), ("TrackBase", "BASE GAME"), ("TrackCustom", "CUSTOM"))):
         where = (area[0] + 20 + k * 244, area[1] + 76, area[0] + 252 + k * 244, area[1] + 128)
@@ -128,7 +139,7 @@ def track_detail(screen, board):
     for name, where, way in (("TrackLeft", (956, 1082, 1008, 1134), "left"),
                              ("TrackRight", (1792, 1082, 1844, 1134), "right")):
         screen.button(name, where, arrow_states(board, where, way))
-    combo(screen, "DDLTextBox", board, (1016, 1078, 1784, 1138), arrow=False, list_h=360, size=34, align="CENTER")
+    combo(screen, "DDLTextBox", board, (1016, 1078, 1784, 1138), arrow=False, list_h=360, size=34, align="LEFT")
 
     row = (948, 1160, 1852, 1240)
     # Baja's waypoint gates: random or not, how many, and the seed.
@@ -164,7 +175,7 @@ def track_detail(screen, board):
     screen.button("GhostLeft", left, arrow_states(ghost_board, left, "left"), row[:2])
     screen.button("GhostRight", right, arrow_states(ghost_board, right, "right"), row[:2])
     combo(screen, "DDLGhostRaces", ghost_board, (left[2] + 8, row[1] + 12, right[0] - 8, row[3] - 12), arrow=False,
-          list_h=220, size=28, align="CENTER", origin=row[:2])
+          list_h=220, size=28, align="LEFT", origin=row[:2])
     del screen.shown[previewed:]
 
     for corner in ("CornerLR", "CornerUL", "CornerUR", "CornerLL"):

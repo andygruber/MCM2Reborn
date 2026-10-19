@@ -148,7 +148,7 @@ def build_event(data):
                              ("TrackRight", (strip[2] - 60, strip[1] + 8, strip[2] - 8, strip[3] - 8), "right")):
         screen.button(name, where, arrow_states(board, where, way))
     combo(screen, "DDLTextBox", board, (strip[0] + 68, strip[1] + 4, strip[2] - 68, strip[3] - 4), arrow=False,
-          list_h=360, size=34, align="CENTER")
+          list_h=360, size=34, align="LEFT")
     for k, (name, label) in enumerate((("TrackAll", "ALL"), ("TrackBase", "BASE GAME"), ("TrackCustom", "CUSTOM"))):
         where = (left[0] + 24 + k * 296, strip[3] + 24, left[0] + 308 + k * 296, strip[3] + 80)
         radio(screen, name, segment_states(board, where, label), where, screen.origin,
@@ -175,6 +175,9 @@ def build_event(data):
                     "TextLMargin": "0", "TextTMargin": "0"}
             keys.update(font(LABEL, GREY))
             screen.set(label, **keys)
+    count_area = (left[0] + 36, strip[3] + 92, left[2] - 36, strip[3] + 132)
+    screen.add("TrackCounts", Type="STATICTEXT", Xywh=xywh(count_area, screen.origin), Text="",
+               **font(22, PAPER, "CENTER"))
     tag, stunt = rows(right, top + 3 * PITCH, 2)
     toggle(screen, board, "ChkTagBall", tag, "TAG BALL")
     toggle(screen, board, "ChkStuntMode", stunt, "STUNT MODE")

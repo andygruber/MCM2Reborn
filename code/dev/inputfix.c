@@ -314,15 +314,13 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
         d->resync = FALSE;
     }
     if (d->kind == KEYBOARD) {
-        BOOL menus = pad_menus_active();
         BOOL binding = pad_binding_active();
-        BOOL start = pad_start_down() || (menus && pad_back_down());
+        BOOL start = pad_start_down();
         BOOL escape_changed = start != g_start_was;
         BOOL escape_room = room >= *count + 2;
 
         if (!binding && game_in_front() && escape_changed && start && escape_room) {
-            BOOL closed = menus && !pad_start_down() && pad_back_down() && pad_menu_back();
-            for (i = 0; !closed && i < 2; i++) {
+            for (i = 0; i < 2; i++) {
                 data[*count].offset = KEY_ESCAPE;
                 data[*count].data = i ? 0 : 0x80;
                 data[*count].time = timeGetTime();

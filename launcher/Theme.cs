@@ -25,6 +25,7 @@ namespace Mcm2Reborn.Launcher
 
         static readonly PrivateFontCollection fonts = new PrivateFontCollection();
         static FontFamily heading, text;
+        public static Image Logo { get; private set; }
 
         // The screen's pixels to the window's design pixels (96 a inch).
         public static float Scale = 1;
@@ -32,6 +33,9 @@ namespace Mcm2Reborn.Launcher
         public static void Load()
         {
             var assembly = typeof(Theme).Assembly;
+            using (Stream stream = assembly.GetManifestResourceStream("branding.logo"))
+            using (Image source = Image.FromStream(stream))
+                Logo = new Bitmap(source);
             foreach (string name in assembly.GetManifestResourceNames())
             {
                 if (!name.StartsWith("font.", StringComparison.Ordinal))

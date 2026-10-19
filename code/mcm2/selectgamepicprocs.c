@@ -14,6 +14,7 @@
 #include <mmsystem.h>
 #endif
 #include "dirlist.h"
+void __fastcall dialog_add_timer(BYTE* self, void* unused, DWORD id, DWORD period, BYTE* target);
 
 #define SGP_CPP NAME(0x00579D90)        /* "D:\aardvark\VC\krusty2\SelectGamePicProcs.cpp" */
 
@@ -461,6 +462,7 @@ BOOL __cdecl tracks_list_fill(merged_list* files, const char* folder, const char
         list_clear(pictures);
     if (*list_name) {
         names = FIELD(dialog_find_control(dialog, NULL, list_name, 0), COMBO_LIST, BYTE*);
+        control_set_align(names, NULL, 0x11);
         if (!keep)
             list_clear(names);
     }
@@ -562,6 +564,91 @@ BOOL __cdecl tracks_list_fill(merged_list* files, const char* folder, const char
 #define NATIONAL_FOLDER   NAME(0x0056F60C)    /* "Teraform\National" */
 #define SX_FOLDER         NAME(0x0056F63C)    /* "Teraform\SX" */
 #define ENDURO_FOLDER     NAME(0x0056CB5C)    /* "Teraform\Enduro" */
+
+#ifdef OPENMCM2_DEV
+int g_track_counts[6][3] = {0};
+
+/* Independent directory lists and scene metadata keep counting out of the selected
+   track, its session entries and the preview's resource state. */
+void __fastcall game_FUN_004ee5c0(void* resources, void* unused, void* archive);
+static BOOL count_track_folder(int slot, int kind, const char* folder, BOOL variants, int out[3])
+{
+    static DWORD stamps[7];
+    static BOOL valid[7];
+    static int cached[7][3];
+    merged_list files;
+    char own[MAX_PATH], shared[MAX_PATH], name[MAX_PATH], path[MAX_PATH], title[128];
+    DWORD stamp = 2166136261u;
+    BYTE scenes[0x394] = {0}; /* SceneManager's scalar constructor, 0x004EE760 */
+    BOOL found, changed;
+    int i;
+    merged_list_construct(&files);
+    game_FUN_0053a11f(own, PATH, (const char*)game_main + 0x2948, folder);
+    game_FUN_0053a11f(shared, PATH, (const char*)game_main + 0x2A4C, folder);
+    merged_list_set_folders(&files, NULL, own, shared);
+    dir_list_set_pattern(&files.base, NULL, ENV_FILES, TRUE);
+    merged_list_scan(&files);
+    for (i = 0; i < files.base.count; i++) {
+        const unsigned char* ch = (const unsigned char*)files.base.entries[i].name;
+        while (*ch) { stamp = (stamp ^ *ch++) * 16777619u; }
+        dir_list_title(&files.base, NULL, i, name);
+        stamp = (stamp ^ track_hidden(name)) * 16777619u;
+    }
+    changed = !valid[slot] || stamp != stamps[slot];
+    if (changed) {
+        ZeroMemory(cached[slot], sizeof cached[slot]);
+        found = dir_list_current_title(&files.base, NULL, name);
+        for (; found; found = dir_list_next_title(&files.base, NULL, name)) {
+            int amount = 1;
+            int source;
+            if (track_hidden(name)) continue;
+            if (variants) {
+                if (!profile_find_named_file(game_profile, NULL, folder, name, ENV, path)) continue;
+                game_FUN_004ee910(scenes, NULL, path);
+                FIELD(scenes, 0x390, int) = 0;
+                game_FUN_004eeda0(scenes, NULL, title, name, 1, SCN, NULL, NULL);
+                amount = FIELD(scenes, 0x390, int);
+                if (amount < 0) amount = 0;
+            }
+            source = track_is_stock(kind, name) ? 1 : 2;
+            cached[slot][0] += amount;
+            cached[slot][source] += amount;
+        }
+        stamps[slot] = stamp;
+        valid[slot] = TRUE;
+    }
+    for (i = 0; i < 3; i++) out[i] = cached[slot][i];
+    if (FIELD(scenes, 0, void*)) {
+        void* archive = FIELD(scenes, 0, void*);
+        game_FUN_004ee5c0(game_resources, NULL, archive);
+        game_FUN_00461cd0(archive);
+        game_delete(archive);
+    }
+    merged_list_destruct(&files);
+    return changed;
+}
+
+BOOL track_counts_refresh(void)
+{
+    int before = profile_event(game_profile);
+    int kind, source, enduro[3];
+    BOOL changed = FALSE;
+    for (kind = 0; kind < 6; kind++) {
+        const char* folder;
+        profile_set_event(game_profile, NULL, kind);
+        folder = kind == 1 ? BAJA_FOLDER : kind == 2 ? NATIONAL_FOLDER
+               : kind == 3 ? SX_FOLDER : kind == 5 ? ENDURO_FOLDER : CUSTOM_FOLDER;
+        if (count_track_folder(kind, kind, folder, kind == 1 || kind == 5, g_track_counts[kind]))
+            changed = TRUE;
+    }
+    /* Stunt also offers Enduro environments, once each rather than their race routes. */
+    profile_set_event(game_profile, NULL, 5);
+    if (count_track_folder(6, 5, ENDURO_FOLDER, FALSE, enduro)) changed = TRUE;
+    for (source = 0; source < 3; source++) g_track_counts[0][source] += enduro[source];
+    profile_set_event(game_profile, NULL, before);
+    return changed;
+}
+#endif
 
 /* The race kind's tracks; quarries always with big pictures. */
 PORT(0x004F7F20)
@@ -2733,7 +2820,7 @@ void __fastcall mp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
         int i;
         for (i = 0; i < 3; i++)
             if (clicked(event, filters[i])) {
-                g_track_source[race_kind] = i;
+                { int k; for (k = 0; k < 6; k++) g_track_source[k] = i; }
                 mp_event_kind_set(self);
                 mp_event_sync(self, NULL, TRUE);
                 mp_event_refresh(self);
@@ -2779,10 +2866,23 @@ void __fastcall mp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
         }
         break;
     }
+#ifdef OPENMCM2_DEV
+    case EVENT_TIMER:
+        if (event->a == 0x739 && track_counts_refresh()) {
+            if (net_hosting && !(FIELD(game_main, 0x214C, BYTE) & 2))
+                mp_event_kind_set(self);
+            mp_event_refresh(self);
+        }
+        break;
+#endif
     case EVENT_OPEN: {
         BYTE* list = combo_list(self, SP_EVENT_TYPE);
         int opponents;
 
+#ifdef OPENMCM2_DEV
+        if (dialog_find_control(self, NULL, "TrackCounts", 0))
+            dialog_add_timer(self, NULL, 0x739, 2000, NULL);
+#endif
         FIELD(self, EVENT_FILLED, int) = 0;
         list_add_string(list, 0x13ED, 1);
         list_add_string(list, 0x13EE, 0);
@@ -2825,6 +2925,16 @@ void __fastcall mp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
 PORT(0x004FB7A0)
 void __fastcall mp_event_refresh(BYTE* self)
 {
+#ifdef OPENMCM2_DEV
+    BYTE* track_counts = dialog_find_control(self, NULL, "TrackCounts", 0);
+    if (track_counts && (unsigned)race_kind < 6) {
+        char totals[96];
+        track_counts_refresh();
+        game_FUN_0053a11f(totals, "ALL %d   /   BASE GAME %d   /   CUSTOM %d",
+                         g_track_counts[race_kind][0], g_track_counts[race_kind][1], g_track_counts[race_kind][2]);
+        control_set_text(track_counts, NULL, totals);
+    }
+#endif
     BOOL open = net_hosting && !(FIELD(game_main, 0x214C, BYTE) & 1);
     BYTE walk[0x94];
     BYTE* control;

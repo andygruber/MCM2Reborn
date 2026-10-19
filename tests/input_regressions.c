@@ -50,7 +50,7 @@ int main(void)
     for(i=0;i<8;i++)CHECK(state[i]==32767);
     for(i=8;i<12;i++)CHECK(state[i]==-1);
     g_devices[1].self=(void*)2;g_devices[1].kind=KEYBOARD;g_devices[1].state_size=256;
-    back=TRUE;CHECK(read_keys()==2);CHECK(!read_keys());back=FALSE;CHECK(!read_keys());
+    back=TRUE;CHECK(read_keys()==0);CHECK(!read_keys());back=FALSE;CHECK(!read_keys());
     menus=FALSE;back=TRUE;CHECK(!read_keys());back=FALSE;CHECK(!read_keys());
     start=TRUE;CHECK(read_keys()==2);start=FALSE;CHECK(!read_keys());
     menus=TRUE;back=TRUE;close_dropdown=TRUE;CHECK(!read_keys());back=FALSE;CHECK(!read_keys());

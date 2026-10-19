@@ -125,6 +125,10 @@ static void test_tracks(void)
 #define COMBO_OPEN 0x208
 #define COMBO_LIST 0x1FC
 #define COMBO_LIST_OWNER 0x250
+#define COMBO_BUTTON_OWNER 0x1F0
+#define COMBO_SLIDER_OWNER 0x220
+#define COMBO_BUTTON_VTABLE ((void**) 0x12340004)
+#define COMBO_SLIDER_VTABLE ((void**) 0x12340008)
 #define COMBO_LIST_VTABLE ((void**) 0x12340000)
 #define UICONTROL_CLASS "UIControl"
 static BYTE dialog_fixture[0x8000], controls_fixture[6][0x400];
@@ -151,9 +155,65 @@ typedef int (__fastcall* control_two)(void*,void*,DWORD,DWORD);
 #define slider_value(s) FIELD(s,0x300,int)
 #define slider_steps(s) FIELD(s,0x1F0,unsigned)
 #define slider_set(s,v,r) (FIELD(s,0x300,int)=(v))
-static void control_tell(BYTE* s,void* event,DWORD kind) { list_updates++; }
+static int back_clicks;
+static BYTE* back_button;
+static void control_tell(BYTE* s,void* event,DWORD kind) { if(kind==EVENT_CLICK) { back_clicks++; back_button=s; } else list_updates++; }
+static BYTE* dialog_find_control(BYTE* d,void* unused,const char* name,int type) {
+    int i;
+    for(i=0;i<6;i++) if(FIELD(controls[i],CTL_DIALOG,BYTE*)==d && !strcmp((char*)controls[i]+0xF4,name)) return controls[i];
+    return NULL;
+}
 static void combo_open(BYTE* s,void* unused,BOOL open) { FIELD(s,COMBO_OPEN,BOOL)=open; }
 #include "menu_under_test.inc"
+BOOL pad_menu_back(void) { return pad_back_from_dialog(dialog_fixture); }
+#define WORD_TOP "TOP"
+#define WORD_BOTTOM "BOTTOM"
+#define WORD_LEFT "LEFT"
+#define WORD_RIGHT "RIGHT"
+#define WORD_CENTER "CENTER"
+#define game_FUN_0053b6e0 _stricmp
+static const BYTE left_aligned_types[10] = {0,0,0,1,0,0,1,1,1,0};
+#include "align_under_test.inc"
+static void test_alignment(void) {
+    unsigned type;
+    for(type=1;type<=12;type++) {
+        CHECK((reader_alignment(type,"LEFT","TOP")&7)==1);
+        CHECK((reader_alignment(type,"CENTER","TOP")&7)==2);
+        CHECK((reader_alignment(type,"RIGHT","TOP")&7)==4);
+    }
+    puts("PASS actual UI loader alignment for every control type, including lists and combos");
+}
+#define DLG_USER 0x34
+static int frames, released_dc;
+static RECT frame_box;
+static HBRUSH frame_brush(COLORREF colour) { CHECK(colour==RGB(255,196,0));return (HBRUSH)1; }
+static int frame_rect(HDC dc,const RECT* area,HBRUSH brush) { if(!frames)frame_box=*area;frames++;return 1; }
+static BOOL frame_delete(HGDIOBJ brush) {return TRUE;}
+static HRESULT WINAPI frame_get_dc(void* surface,HDC* dc) {*dc=(HDC)1;return S_OK;}
+static HRESULT WINAPI frame_release_dc(void* surface,HDC dc) {released_dc++;return S_OK;}
+#define CreateSolidBrush frame_brush
+#define FrameRect frame_rect
+#define DeleteObject frame_delete
+#include "frame_under_test.inc"
+#undef CreateSolidBrush
+#undef FrameRect
+#undef DeleteObject
+static void test_focus_frame(void) {
+    BYTE screen[0x80]={0};void* surface[32]={0};void* table[32]={0};
+    gui_user user={0};int type;
+    surface[0]=table;table[0x44/4]=(void*)frame_get_dc;table[0x68/4]=(void*)frame_release_dc;
+    FIELD(screen,0x48,void*)=surface;FIELD(dialog_fixture,0x18,void*)=screen;
+    FIELD(dialog_fixture,DLG_USER,gui_user*)=&user;
+    user.focus=controls[0];pad_navigation_active=TRUE;
+    for(type=1;type<=8;type++) {
+        FIELD(controls[0],CTL_TYPE,int)=type;
+        frames=0;released_dc=0;dialog_pad_frame(dialog_fixture);
+        CHECK(frames==3);CHECK(released_dc==1);
+        CHECK(EqualRect(&frame_box,&FIELD(controls[0],CTL_RECT,RECT)));
+    }
+    pad_navigation_active=FALSE;frames=0;dialog_pad_frame(dialog_fixture);CHECK(!frames);
+    puts("PASS final menu focus frame for buttons, event cards, lists, combos and sliders");
+}
 #define MENU_MOVIE 0x7F58
 #include "movie_under_test.inc"
 static int video_paused;
@@ -215,11 +275,23 @@ static void test_menu(void)
       FIELD(dialog_fixture,DLG_MODAL,int)=0; CHECK(!pad_focusable(controls[0]));
       FIELD(dialog_fixture,DLG_PARENT,BYTE*)=NULL;
     }
+    strcpy((char*)controls[0]+0xF4,"Back");
+    CHECK(pad_back_from_dialog(dialog_fixture)); CHECK(back_clicks==1); CHECK(back_button==controls[0]);
+    FIELD(controls[0],0x70,int)=0; CHECK(!pad_back_from_dialog(dialog_fixture));
+    FIELD(controls[0],0x70,int)=1;
+    hardware.buttons=0; pad_next(); pad_menu_tick(&manager);
+    hardware.buttons=0x2000; pad_next(); pad_menu_tick(&manager); CHECK(back_clicks==2);
+    pad_next(); pad_menu_tick(&manager); CHECK(back_clicks==2);
+    ((char*)controls[0]+0xF4)[0]=0;
+    FIELD(controls[1],CTL_TYPE,int)=1; FIELD(controls[1],0x1D8,DWORD)=1;
+    CHECK(pad_back_from_dialog(dialog_fixture)); CHECK(back_button==controls[1]);
+    FIELD(controls[1],0x1D8,DWORD)=0;
+    hardware.buttons=0; pad_next(); pad_menu_tick(&manager);
     FIELD(dialog_fixture,DLG_SHOWN,int)=0; CHECK(!pad_focusable(controls[0]));
     puts("PASS controller focus without startup joystick, A activation/debounce, rebinding, lists, sliders and mouse handoff");
 }
 int main(void)
 {
-    test_ai(); test_radar(); test_tracks(); test_movie(); test_pad(); test_sony(); test_menu();
+    test_alignment(); test_ai(); test_radar(); test_tracks(); test_movie(); test_pad(); test_sony(); test_menu(); test_focus_frame();
     printf("%d native checks passed\n",checks); return 0;
 }

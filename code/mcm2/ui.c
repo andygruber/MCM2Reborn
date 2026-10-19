@@ -1153,6 +1153,30 @@ int __fastcall dialog_slot_14(BYTE* self)
     return game_vf_14_46A290(self);
 }
 
+#ifdef OPENMCM2_DEV
+static void dialog_pad_frame(BYTE* self)
+{
+    gui_user* user = FIELD(self, DLG_USER, gui_user*);
+    BYTE* focus = user ? user->focus : NULL;
+    if (pad_navigation_active && focus && FIELD(focus, 0xB8, BYTE*) == self
+        && FIELD(focus, 0x6C, int) && FIELD(focus, 0x70, int)) {
+        void* surface = FIELD(object_screen(self), 0x48, void*);
+        HDC dc = NULL;
+        if (SUCCEEDED(VIRTUAL(surface, 0x44, HRESULT (__stdcall*)(void*, HDC*))(surface, &dc)) && dc) {
+            RECT box = FIELD(focus, 0x2C, RECT);
+            HBRUSH brush = CreateSolidBrush(RGB(255, 196, 0));
+            int i;
+            for (i = 0; i < 3 && box.right > box.left && box.bottom > box.top; i++) {
+                FrameRect(dc, &box, brush);
+                box.left++; box.top++; box.right--; box.bottom--;
+            }
+            DeleteObject(brush);
+            VIRTUAL(surface, 0x68, HRESULT (__stdcall*)(void*, HDC))(surface, dc);
+        }
+    }
+}
+#endif
+
 /* Vtable slot 15: draw; a frozen dialog draws its picture when 0x7F18 is set. Slot 0x68 follows a
    screen change while 0x7F50 is set. */
 PORT(0x00470250)
@@ -1162,6 +1186,10 @@ int __fastcall dialog_draw(BYTE* self)
         game_vf_15_46A2D0(self);
     else if (FIELD(self, 0x7F44, void*) && FIELD(self, 0x7F18, int))
         draw_frozen(self, FIELD(self, 0x7F44, void*));
+#ifdef OPENMCM2_DEV
+    if (!(FIELD(self, 0x25, BYTE) & 4))
+        dialog_pad_frame(self);
+#endif
     if (FIELD(self, 0x7F50, int) && FIELD(self, 0x7F54, DWORD) != FIELD(object_screen(self), 0x1C, DWORD))
         VIRTUAL(self, 0x68, method_0)(self);
     return 1;
@@ -9621,6 +9649,27 @@ static void reader_common(dialog_reader* r, int margin[2])
 /* Which way a control's text goes when TextAlign is not RIGHT or CENTER: by type (1 to 10). */
 static const BYTE left_aligned_types[10] = { 0, 0, 0, 1, 0, 0, 1, 1, 1, 0 };
 
+static DWORD reader_alignment(unsigned control_type, const char* horizontal, const char* vertical)
+{
+    DWORD align;
+    if (!game_FUN_0053b6e0(vertical, WORD_TOP))
+        align = 8;
+    else
+        align = game_FUN_0053b6e0(vertical, WORD_BOTTOM) ? 0x10 : 0x20;
+    if (!game_FUN_0053b6e0(horizontal, WORD_RIGHT))
+        align |= 4;
+    else if (!game_FUN_0053b6e0(horizontal, WORD_CENTER))
+        align |= 2;
+    else if (!game_FUN_0053b6e0(horizontal, WORD_LEFT))
+        align |= 1;
+    else {
+        unsigned type = control_type - 1;
+
+        align |= type < 10 && !left_aligned_types[type] ? 2 : 1;
+    }
+    return align;
+}
+
 /* The control's own font, when it names one or a size and it differs from the dialog's. */
 static void reader_font(dialog_reader* r, BYTE* control)
 {
@@ -9729,20 +9778,10 @@ static void reader_apply(dialog_reader* r, BYTE* control, const char* name, cons
     control_set_colour(control, NULL, k->colour);
     control_set_shadow_colour(control, NULL, k->drop_colour);
 
-    if (!game_FUN_0053b6e0(k->text_align_v, WORD_TOP))
-        align = 8;
-    else
-        align = game_FUN_0053b6e0(k->text_align_v, WORD_BOTTOM) ? 0x10 : 0x20;
-    if (!game_FUN_0053b6e0(k->text_align, WORD_RIGHT))
-        align |= 4;
-    else if (!game_FUN_0053b6e0(k->text_align, WORD_CENTER))
-        align |= 2;
-    else {
-        unsigned type = FIELD(control, CTL_TYPE, unsigned) - 1;
-
-        align |= type < 10 && !left_aligned_types[type] ? 2 : 1;
-    }
+    align = reader_alignment(FIELD(control, CTL_TYPE, unsigned), k->text_align, k->text_align_v);
     control_set_align(control, NULL, align);
+    if (FIELD(control, CTL_TYPE, unsigned) == 6)
+        control_set_align(FIELD(control, COMBO_LIST, BYTE*), NULL, align);
 
     /* FX: how it comes and goes. */
     {
@@ -10021,6 +10060,10 @@ BOOL pad_close_dropdown(void* object)
 {
     BYTE* control = object;
 
+    if (control && *(void***) control == COMBO_BUTTON_VTABLE)
+        control = FIELD(control, COMBO_BUTTON_OWNER, BYTE*);
+    if (control && *(void***) control == COMBO_SLIDER_VTABLE)
+        control = FIELD(control, COMBO_SLIDER_OWNER, BYTE*);
     if (control && *(void***) control == COMBO_LIST_VTABLE)
         control = FIELD(control, COMBO_LIST_OWNER, BYTE*);
     if (control && FIELD(control, CTL_TYPE, int) == 6 && FIELD(control, COMBO_OPEN, BOOL)) {
@@ -10036,6 +10079,8 @@ static BOOL pad_focusable(BYTE* control)
     const RECT* area = &FIELD(control, CTL_RECT, RECT);
     const RECT* design = &FIELD(control, CTL_DESIGN, RECT);
 
+    if (*(void***) control == COMBO_BUTTON_VTABLE || *(void***) control == COMBO_SLIDER_VTABLE)
+        return FALSE;
     if (!takes_focus(control) || area->right <= area->left || area->bottom <= area->top
         || (design->right - design->left <= 4 && design->bottom - design->top <= 4)
         || !VIRTUAL(control, 0x78, method_0)(control))
@@ -10048,6 +10093,44 @@ static BOOL pad_focusable(BYTE* control)
         dialog = FIELD(dialog, DLG_PARENT, BYTE*);
     }
     return TRUE;
+}
+
+BOOL pad_back_from_dialog(void* object)
+{
+    static const char* names[] = {"ButCancelProfile", "CancelButton", "ButCancel", "ButBack", "Back", "ButResume", "ButExit"};
+    BYTE* dialog = object;
+    unsigned i;
+    while (dialog) {
+        for (i = 0; i < sizeof names / sizeof names[0]; i++) {
+            BYTE* button = dialog_find_control(dialog, NULL, names[i], 0);
+            if (button && pad_focusable(button)) {
+                ui_event event;
+                ZeroMemory(&event, sizeof event);
+                control_tell(button, &event, EVENT_CLICK);
+                return TRUE;
+            }
+        }
+        {
+            BYTE walk[0x94];
+            BYTE* button;
+            walk_begin(walk, NULL, dialog, 1, UICONTROL_CLASS);
+            while ((button = walk_next(walk)) != NULL) {
+                if (FIELD(button, CTL_DIALOG, BYTE*) == dialog && FIELD(button, CTL_TYPE, int) == 1
+                    && FIELD(button, 0x1D8, DWORD) == 1 && pad_focusable(button)) {
+                    ui_event event;
+                    walk_end(walk);
+                    ZeroMemory(&event, sizeof event);
+                    control_tell(button, &event, EVENT_CLICK);
+                    return TRUE;
+                }
+            }
+            walk_end(walk);
+        }
+        if (FIELD(dialog, DLG_MODAL, int))
+            break;
+        dialog = FIELD(dialog, DLG_PARENT, BYTE*);
+    }
+    return FALSE;
 }
 
 static BYTE* pad_focus_in(BYTE* root, BYTE* focus, int direction)
@@ -10077,7 +10160,15 @@ static BYTE* pad_focus_in(BYTE* root, BYTE* focus, int direction)
             across = direction <= 2 ? dx : dy;
             if (along <= 1)
                 continue;
-            score = along * along + across * across * 4;
+            if (direction <= 2) {
+                across = to.left > from.right ? (float)(to.left - from.right)
+                       : from.left > to.right ? (float)(from.left - to.right) : 0;
+            } else {
+                across = to.top > from.bottom ? (float)(to.top - from.bottom)
+                       : from.top > to.bottom ? (float)(from.top - to.bottom) : 0;
+            }
+            score = across * across * 16 + along * along
+                  + (dx * dx + dy * dy) * 0.05f;
         }
         if (score < score_best) {
             score_best = score;
@@ -10097,6 +10188,7 @@ void pad_menu_tick(void* object)
     static int previous_direction;
     static DWORD repeat_at;
     static BOOL accept_was;
+    static BOOL back_was;
     BYTE* focus;
     BYTE* dialog;
     BYTE* active;
@@ -10104,9 +10196,12 @@ void pad_menu_tick(void* object)
     float x = 0, y = 0;
     BOOL accept = pad_accept_down();
     BOOL pressed = accept && !accept_was;
+    BOOL back = pad_back_down();
+    BOOL back_pressed = back && !back_was;
     DWORD now = timeGetTime();
     int direction = 0;
 
+    back_was = back;
     accept_was = accept;                 /* held across a dialog transition is not another click */
     if (manager != previous_manager) {
         previous_manager = manager;
@@ -10124,6 +10219,17 @@ void pad_menu_tick(void* object)
         return;
     }
     direction = y < 0 ? 1 : y > 0 ? 2 : x < 0 ? 3 : x > 0 ? 4 : 0;
+    if (back_pressed) {
+        pad_navigation_active = TRUE;
+        active = gui_manager_active_dialog(manager);
+        dialog = user->focus ? FIELD(user->focus, CTL_DIALOG, BYTE*) : active;
+        if (active && FIELD(active, DLG_MODAL, int))
+            dialog = active;
+        if (!pad_close_dropdown(user->focus))
+            pad_back_from_dialog(dialog);
+        previous_direction = 0;
+        return;
+    }
     if (!direction && !pressed) {
         previous_direction = 0;
         return;
@@ -10166,7 +10272,8 @@ void pad_menu_tick(void* object)
             if (next >= 0 && next < list_count(focus)) {
                 int done = 0;
                 list_select_all(focus, NULL, next);
-                VIRTUAL(focus, 0x108, list_stepped_slot)(focus, NULL, &done);
+                if (*(void***) focus != COMBO_LIST_VTABLE)
+                    VIRTUAL(focus, 0x108, list_stepped_slot)(focus, NULL, &done);
                 adjusted = TRUE;
             }
         } else if ((type == 7 || type == 8) && direction >= 3) {

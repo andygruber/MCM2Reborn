@@ -33,7 +33,17 @@ BOOL pad_menu_back(void)
     gui_manager* manager = session ? FIELD(session, 0x2C, gui_manager*) : NULL;
     gui_user* user = manager && manager->user_count ? manager->users[0] : NULL;
 
-    return user && pad_close_dropdown(user->focus);
+    BYTE* dialog;
+    BYTE* active;
+    if (!user)
+        return FALSE;
+    if (pad_close_dropdown(user->focus))
+        return TRUE;
+    active = gui_manager_active_dialog(manager);
+    dialog = user->focus ? FIELD(user->focus, 0xB8, BYTE*) : active;
+    if (active && FIELD(active, 0x148, int))
+        dialog = active;
+    return pad_back_from_dialog(dialog);
 }
 #endif
 
