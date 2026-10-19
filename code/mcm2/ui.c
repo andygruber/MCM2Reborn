@@ -10021,6 +10021,8 @@ BOOL pad_close_dropdown(void* object)
 {
     BYTE* control = object;
 
+    if (control && *(void***) control == COMBO_LIST_VTABLE)
+        control = FIELD(control, COMBO_LIST_OWNER, BYTE*);
     if (control && FIELD(control, CTL_TYPE, int) == 6 && FIELD(control, COMBO_OPEN, BOOL)) {
         combo_open(control, NULL, FALSE);
         return TRUE;

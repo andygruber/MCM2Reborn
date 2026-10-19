@@ -52,7 +52,7 @@ what the game needs; stock Proton does not.
 - Every action can be bound to any button or trigger: click it, then press the button.
 - Alt-tabbing no longer flips the camera or locks the controls.
 
-For the 0.3.7 fixes, automated checks and remaining hardware validation, see [the update notes](docs/release-0.3.7.md).
+For the 0.3.8 fixes, automated checks and remaining hardware validation, see [the update notes](docs/release-0.3.8.md).
 
 ## Settings
 

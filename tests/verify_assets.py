@@ -47,6 +47,14 @@ def main():
     checks += 1
     assert port.ports_in_source()[0x00487100] == "gui_manager_capture_screen"
     checks += 1
+    from run_regressions import function
+    dialogs = (ROOT / "code/mcm2/dlgprocs.c").read_text(encoding="utf-8")
+    opening = function(dialogs, "static void multi_open(")
+    modern = opening[opening.index("if (dev_settings.menus_modern)"):opening.index("eos_online(FALSE)")]
+    assert "return;" in modern and "net_make(" not in modern
+    connecting = function(dialogs, "static void connect_by(")
+    assert connecting.index("eos_online(FALSE)") < connecting.index("net_make()")
+    checks += 2
     image, sections = disasm.load_image()
     source = (ROOT / "code/dev/riders.c").read_text(encoding="utf-8")
     sites = re.findall(r'\{\s*(0x[\dA-Fa-f]+),\s*\{([^}]+)\},\s*\{([^}]+)\},\s*(\d+)', source)

@@ -124,6 +124,8 @@ static void test_tracks(void)
 #define SLIDER_RANGE 0x200
 #define COMBO_OPEN 0x208
 #define COMBO_LIST 0x1FC
+#define COMBO_LIST_OWNER 0x250
+#define COMBO_LIST_VTABLE ((void**) 0x12340000)
 #define UICONTROL_CLASS "UIControl"
 static BYTE dialog_fixture[0x8000], controls_fixture[6][0x400];
 static BYTE* controls[6]; static BOOL binding; static int clicks, list_updates;
@@ -200,6 +202,10 @@ static void test_menu(void)
     hardware.buttons=2; pad_next(); pad_menu_tick(&manager); CHECK(FIELD(controls[5],0x200,int)==2);
     CHECK(pad_close_dropdown(focus)); CHECK(!FIELD(focus,COMBO_OPEN,BOOL));
     CHECK(!pad_close_dropdown(focus));
+    { BYTE entry[0x300]={0};
+      *(void***)entry=COMBO_LIST_VTABLE; FIELD(entry,COMBO_LIST_OWNER,BYTE*)=focus;
+      FIELD(focus,COMBO_OPEN,BOOL)=TRUE; CHECK(pad_close_dropdown(entry));
+    }
     hardware.buttons=0; mouse.x=25; pad_next(); pad_menu_tick(&manager); CHECK(!pad_navigation_active);
     FIELD(controls[2],0x70,int)=0; CHECK(!pad_focusable(controls[2]));
     { static BYTE parent[0x8000];

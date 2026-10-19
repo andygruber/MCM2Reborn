@@ -3767,11 +3767,11 @@ static void multi_open(BYTE* self)
     control_enable(dialog_find_control(self, NULL, BUT_MODEM, 1), FALSE);
     FIELD(game_main, 0x3170, DWORD) = 0;
 #ifdef OPENMCM2_DEV
-    eos_online(FALSE);                  /* the services listed are DirectPlay's own */
     if (dev_settings.menus_modern) {
         gui_manager_set_cursors(manager, NULL, manager->cursor_image, 0);
         return;                         /* create LAN's network only when LAN is chosen */
     }
+    eos_online(FALSE);                  /* the services listed are DirectPlay's own */
 #endif
     if (net_make()) {
         game_FUN_0053b88e(connections, CONNECTION_SIZE, CONNECTION_COUNT, CONNECTION_CONSTRUCT,
@@ -3804,6 +3804,10 @@ static void connect_by(GUID service, DWORD kind, int line)
     void* address;
     DWORD size;
 
+#ifdef OPENMCM2_DEV
+    if (!eos_online(FALSE))              /* switching from Internet may also create LAN's network */
+        return;
+#endif
     if (!game_net && !net_make())
         return;
     if (game_FUN_004b0600(game_net, NULL, service, NO_TEXT, NO_TEXT, NULL, &address, &size)
