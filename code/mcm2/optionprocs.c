@@ -563,6 +563,11 @@ static int  g_binding = -1;             /* the action listening, or -1 */
 static int  g_binding_ticks;
 static BOOL g_binding_let_go;           /* every control was up since the click */
 
+BOOL pad_binding_active(void)
+{
+    return g_binding >= 0;
+}
+
 static void bind_button_name(int action, char* name)
 {
     wsprintfA(name, "BtnPad%d", action);
@@ -1015,6 +1020,10 @@ static void controls_open(BYTE* self)
     FIELD(self, CTL_LISTENING, int) = 0;
     FIELD(self, CTL_ARMING, int) = 0;
     FIELD(self, CTL_FEEDBACK, int) = 0;
+#ifdef OPENMCM2_DEV
+    if (dev_settings.menus_modern)
+        controls_device = 0;             /* this page edits keyboard bindings only */
+#endif
     bind_controls(self, control_bindings, 11);
     list = find(self, ACTION_LIST, 0);
     for (i = 0; i < ACTIONS; i++) {
@@ -1024,6 +1033,10 @@ static void controls_open(BYTE* self)
     list = combo_list(self, INPUT_DEVICE_DDL);
     list_clear(list);
     for (i = 0; i < 8; i++) {
+#ifdef OPENMCM2_DEV
+        if (dev_settings.menus_modern && i > 0)
+            break;
+#endif
         load_string(0x1CC + i, text);
         list_add_text(list, NULL, text, i, 0);
     }
@@ -1646,8 +1659,17 @@ static void options_open(BYTE* self, const ui_event* event)
         control_set_align(tab, NULL, 0x22);
     }
     page = event->param == 1 ? 3 : event->param == 2 ? 5 : 0;
+#ifdef OPENMCM2_DEV
+    if (event->param == 1 && dev_settings.menus_modern)
+        page = REBORN_PAGE + 1;           /* the controller shortcut opens modern GAMEPAD */
+#endif
     options_show_page(self, NULL, page);
-    radio_set(find(self, option_pages[page].tab, 4), NULL, 0);
+#ifdef OPENMCM2_DEV
+    if (page >= REBORN_PAGE)
+        radio_set(find(self, own_pages[page - REBORN_PAGE].tab, 4), NULL, 0);
+    else
+#endif
+        radio_set(find(self, option_pages[page].tab, 4), NULL, 0);
     if (game_FUN_00527300(game_main))
         control_show(find(self, BUT_RESTORE, 0), NULL, FALSE, TRUE);
 #ifdef OPENMCM2_DEV

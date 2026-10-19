@@ -84,14 +84,18 @@ def track_panel(screen, board):
     box(board, area, PANEL + (255,), 10)
     heading(board, "TRACKS", area[0] + 36, area[1] + 58, 30, ORANGE)
     bar_x0, bar_x1 = area[2] - 56, area[2] - 12
-    listing = (area[0] + 12, area[1] + 84, bar_x0 - 8, area[3] - 12)
-    keys = {"Type": "LISTBOX", "AttachId": str(TRACK_GROUP), "Xywh": local(listing), "MaxItems": "100",
+    for k, (name, label) in enumerate((("TrackAll", "ALL"), ("TrackBase", "BASE GAME"), ("TrackCustom", "CUSTOM"))):
+        where = (area[0] + 20 + k * 244, area[1] + 76, area[0] + 252 + k * 244, area[1] + 128)
+        radio(screen, name, segment_states(board, where, label), where,
+              chosen=k == 0, AttachId="152", FitToAnimOn="0")
+    listing = (area[0] + 12, area[1] + 144, bar_x0 - 8, area[3] - 12)
+    keys = {"Type": "LISTBOX", "AttachId": str(TRACK_GROUP), "Xywh": local(listing), "MaxItems": "2048",
             "Selectable": "1", "AllowWScroll": "0", "TextLMargin": "24", "TextTMargin": "0",
             "SelectColor": colorref(ORANGE), "SelectBoxColor": colorref(SELECTED), "ItemBoxColor": colorref(PANEL)}
     keys.update(font(34, SOFT))
     screen.add("TrackList", **keys)
     # Rows like the game's, for the preview.
-    for k, words in enumerate(["01   Bela's Backwards", "02   Third Degree Berms", "03   El Centro"]):
+    for k, words in enumerate(["Bela's Backwards", "Third Degree Berms", "El Centro"]):
         screen.shown.append((text_row(listing, words, k == 1), (listing[0], int(listing[1] + k * 46))))
 
     up = (bar_x0, listing[1], bar_x1, listing[1] + 44)
@@ -257,7 +261,7 @@ def main(ui, out, previews):
     kit.fonts_from(ui / "modern" / "fonts")
     read = lambda stem: (ui / (stem + ".DAT")).read_bytes()             # noqa: E731
     base = build_base(read("SPBASE"), "SPBASE", "SINGLE PLAYER", TITLES, TABS,
-                      [("Back", "BACK"), ("Help", "HELP"), ("Options", "OPTIONS"), ("Joystick", "CONTROLS")],
+                      [("Back", "BACK"), ("Help", "HELP"), ("Options", "OPTIONS"), ("Joystick", "GAMEPAD")],
                       [("Start", "RIDE", 540, True)])
     pages = [build_event(read("SPEVENT"), ui), build_bike(read("SPBIKER"), "SPBIKER"),
              build_results(read("SPRINFO"))]

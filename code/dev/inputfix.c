@@ -19,11 +19,10 @@
     DIERR_NOTACQUIRED (scratchpad input/input.md, "Focus / alt-tab"). So a read that finds its
     device not acquired while the game's window is the one in front acquires it and reads again.
 
-    For the game pads ([gamepad], pad.c): an XInput pad's START or BACK taps Escape, A taps Enter,
-    and its directions move menu focus. A DirectInput pad of the "gamepad" kind (a DualSense) is
-    told to the game as an ordinary joystick, which it steers by its axes, not by a keyboard's
-    ramp. An XInput pad is also one of DirectInput's joysticks (its device path has "IG_"): while
-    pad.c reads it, that joystick tells the game nothing, or its buttons would duplicate actions.
+    Modern pads are read independently (pad.c, padsony.c). START pauses; B/Circle or BACK
+    taps Escape in menus, closing an open dropdown first. UI focus and activation run in
+    ui.c without a legacy joystick. Legacy joystick reads return neutral input before entering
+    their driver, avoiding duplicate actions and the old buffered joystick path altogether.
 */
 
 #include "dev.h"
@@ -84,7 +83,6 @@ static format_fn           g_set_format;
 static info_fn             g_get_info;
 static property_fn         g_get_property;
 static BOOL                g_start_was;
-static BOOL                g_accept_was;
 
 #define DEVICE_TYPE         36          /* DIDEVICEINSTANCE: dwDevType, its type then its subtype */
 #define TYPE_JOYSTICK       4           /* DIDEVTYPE_JOYSTICK */
@@ -114,10 +112,10 @@ static BOOL is_xinput(void* self)
     return FALSE;
 }
 
-/* The joystick is the pad pad.c reads now: it tells the game nothing. */
+/* Legacy joystick bindings are retired. The modern reader owns controllers. */
 static BOOL silenced(const struct device* d)
 {
-    return d->xinput && pad_connected();
+    return d->kind == JOYSTICK;
 }
 
 /* The window in front is one of the game's. */
@@ -138,6 +136,11 @@ static BOOL game_in_front(void)
         return FALSE;
     window = foreground();
     return window && window_process(window, &owner) && owner == process_id();
+}
+
+BOOL input_in_foreground(void)
+{
+    return game_in_front();
 }
 
 static struct device* device_of(void* self, BOOL make)
@@ -242,11 +245,9 @@ static BOOL acquired_again(struct device* d, HRESULT result)
 static HRESULT WINAPI get_state(void* self, DWORD size, void* state)
 {
     struct device* d = device_of(self, FALSE);
-    HRESULT result = g_get_state(self, size, state);
+    HRESULT result;
 
-    if (d && acquired_again(d, result))
-        result = g_get_state(self, size, state);
-    if (d && result >= 0 && silenced(d) && state && size >= JOY_BUTTONS) {
+    if (d && silenced(d) && state && size >= JOY_BUTTONS) {
         LONG* axes = (LONG*) state;             /* the axes and sliders in the middle, no hat, nothing down */
         int k;
 
@@ -255,7 +256,11 @@ static HRESULT WINAPI get_state(void* self, DWORD size, void* state)
             axes[k] = 32767;
         for (k = 8; k < 12; k++)
             axes[k] = -1;
+        return DI_OK;
     }
+    result = g_get_state(self, size, state);
+    if (d && acquired_again(d, result))
+        result = g_get_state(self, size, state);
     return result;
 }
 
@@ -263,9 +268,14 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
 {
     struct device* d = device_of(self, FALSE);
     DWORD room = count ? *count : 0;
-    HRESULT result = g_get_data(self, object_size, data, count, flags);
+    HRESULT result;
     DWORD i;
 
+    if (d && silenced(d) && count) {
+        *count = 0;
+        return DI_OK;
+    }
+    result = g_get_data(self, object_size, data, count, flags);
     if (!d)
         return result;
     if (acquired_again(d, result)) {
@@ -304,15 +314,15 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
         d->resync = FALSE;
     }
     if (d->kind == KEYBOARD) {
-        BOOL start = pad_start_down() || pad_back_down();
-        BOOL accept = pad_accept_down();
+        BOOL menus = pad_menus_active();
+        BOOL binding = pad_binding_active();
+        BOOL start = pad_start_down() || (menus && pad_back_down());
         BOOL escape_changed = start != g_start_was;
-        BOOL accept_changed = accept != g_accept_was;
         BOOL escape_room = room >= *count + 2;
-        BOOL accept_room;
 
-        if (escape_changed && start && escape_room) {
-            for (i = 0; i < 2; i++) {
+        if (!binding && game_in_front() && escape_changed && start && escape_room) {
+            BOOL closed = menus && !pad_start_down() && pad_back_down() && pad_menu_back();
+            for (i = 0; !closed && i < 2; i++) {
                 data[*count].offset = KEY_ESCAPE;
                 data[*count].data = i ? 0 : 0x80;
                 data[*count].time = timeGetTime();
@@ -322,18 +332,7 @@ static HRESULT WINAPI get_data(void* self, DWORD object_size, object_data* data,
         }
         if (escape_changed && (!start || escape_room))
             g_start_was = start;
-        accept_room = room >= *count + 2;
-        if (accept_changed && accept && accept_room) {
-            for (i = 0; i < 2; i++) {
-                data[*count].offset = 0x1C;       /* DIK_RETURN */
-                data[*count].data = i ? 0 : 0x80;
-                data[*count].time = timeGetTime();
-                data[*count].sequence = 0;
-                (*count)++;
-            }
-        }
-        if (accept_changed && (!accept || accept_room))
-            g_accept_was = accept;
+
     }
     return result;
 }

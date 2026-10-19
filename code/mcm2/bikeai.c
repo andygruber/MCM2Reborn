@@ -92,6 +92,15 @@ typedef struct ai_bike {
 
 static ai_bike g_ai_bikes[BIKES_MOST];
 
+/* Timing and interpolation belong to one set of race bikes. Keeping dead bikes
+   filled this table after a few events; colliding replacements then discarded
+   each other's owed time every frame and never reached a complete AI step. */
+void ai_race_reset(void)
+{
+    __stosd((unsigned long*) g_ai_bikes, 0, sizeof g_ai_bikes / 4);
+    g_animate_later = FALSE;
+}
+
 /* The bike's own, if it has stepped as a computer rider; else NULL. */
 static ai_bike* ai_bike_find(BYTE* bike)
 {

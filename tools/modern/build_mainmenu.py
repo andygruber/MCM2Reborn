@@ -29,9 +29,9 @@ HERE = Path(__file__).parent
 VERSION, TITLE = kit.VERSION, kit.TITLE
 
 # The rows, top to bottom: control, title, what it holds.
-ROWS = [("ButProCircuit", "PRO CIRCUIT", "YOUR CAREER · SPONSORS · PRIZE MONEY"),
-        ("MenuSingle", "SINGLE PLAYER", "SUPERCROSS · NATIONALS · BAJA · ENDURO · STUNT QUARRY"),
+ROWS = [("MenuSingle", "SINGLE PLAYER", "SUPERCROSS · NATIONALS · BAJA · ENDURO · STUNT QUARRY"),
         ("MenuMulti", "MULTIPLAYER", "LOCAL NETWORK · INTERNET · LEADERBOARDS"),
+        ("ButProCircuit", "PRO CIRCUIT", "YOUR CAREER · SPONSORS · PRIZE MONEY"),
         ("MenuReplay", "REPLAYS", "WATCH YOUR SAVED RACES"),
         ("MenuHighScore", "LEADERBOARDS", "BEST LAPS BY TRACK · EVENT · BIKE CLASS"),
         ("MenuOptions", "OPTIONS", "CONTROLS · AUDIO · GRAPHICS")]
@@ -333,6 +333,7 @@ def build(original_dat):
     for i, (name, words, line) in enumerate(ROWS):
         area = (ROW_X, ROW_TOP + i * ROW_H, ROW_X + ROW_W, ROW_TOP + (i + 1) * ROW_H)
         put(pictures, controls, name, area, row_states(board, area, words, line))
+        controls[name]["TabIndex"] = str(i + 1)
         drops[name] = TEXT_KEYS
     # Pro Circuit leaves the single player panel to be a row of the menu's own.
     controls["ButProCircuit"]["Anchor"] = ""

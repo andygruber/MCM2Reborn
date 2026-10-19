@@ -77,7 +77,7 @@
 #define GAME_TITLE "MCM2:Reborn"
 
 /* Its version, as the menus (tools/modern/reborn_kit.py, VERSION) and the launcher show it. */
-#define GAME_VERSION "0.3.6"
+#define GAME_VERSION "0.3.7"
 
 typedef struct dev_switches {
     BOOL trace_screens;
@@ -273,7 +273,16 @@ BOOL  pad_back_down(void);
 BOOL  pad_accept_down(void);
 BOOL  pad_menu_axes(float* x, float* y);
 BOOL  pad_connected(void);
+BOOL  pad_binding_active(void);
+BOOL  pad_menus_active(void);
+extern BOOL pad_navigation_active;
+void pad_menu_tick(void* manager);
+BOOL pad_close_dropdown(void* control);
+BOOL pad_menu_back(void);
+extern int g_track_source[6];
+BOOL track_is_stock(int kind, const char* stem);
 BOOL  input_is_xinput(void* device);
+BOOL  input_in_foreground(void);
 /* The first control down that an action may be given, or PAD_NONE (the GAMEPAD page's binding). */
 int   pad_pressed(void);
 /* A stick's steering through the chosen response and sensitivity. */

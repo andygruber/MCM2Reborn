@@ -492,6 +492,15 @@ BOOL __cdecl tracks_list_fill(merged_list* files, const char* folder, const char
 
         if (track_hidden(name))
             continue;
+#ifdef OPENMCM2_DEV
+        if ((unsigned) race_kind < 6 && (!game_net || net_hosting)
+            && dialog_find_control(dialog, NULL, "TrackAll", 0)) {
+            int source = g_track_source[race_kind];
+            BOOL stock = track_is_stock((int) profile_event(game_profile), name);
+            if ((source == 1 && !stock) || (source == 2 && stock))
+                continue;
+        }
+#endif
         profile_find_named_file(game_profile, NULL, folder, name, kind, env_path);
         game_FUN_004ee910(game_scenes, NULL, env_path);
         if (race_kind != 1 && race_kind != 5) {
@@ -538,7 +547,8 @@ BOOL __cdecl tracks_list_fill(merged_list* files, const char* folder, const char
     }
     index = (int) list_data(names, NULL, -1);
     VIRTUAL(files, 4, method_0)(files);
-    dir_list_title(&files->base, NULL, FIELD(session_tracks + index * TRACK_SIZE, 0, DWORD), track);
+    if (index >= 0)
+        dir_list_title(&files->base, NULL, FIELD(session_tracks + index * TRACK_SIZE, 0, DWORD), track);
     if (archive) {
         game_FUN_00461cd0(archive);
         game_delete(archive);
@@ -2049,6 +2059,8 @@ static void mp_screen_click(BYTE* self, ui_event* event)
                 dialog_notify_controls(FIELD(self, 0x7F5C, BYTE*), NULL, 1);
             if (FIELD(self, 0x7F64, BYTE*))
                 dialog_notify_controls(FIELD(self, 0x7F64, BYTE*), NULL, 1);
+            if (!mp_user_ready || mp_track_state || !race_track[0])
+                return;
             mp_settings_save();
             mp_setup_send(self, NULL, 1);
         }
@@ -2714,6 +2726,21 @@ PORT(0x004FB130)
 void __fastcall mp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
 {
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (event->type == EVENT_CLICK && net_hosting && !(FIELD(game_main, 0x214C, BYTE) & 2)
+        && (unsigned) race_kind < 6) {
+        static const char* const filters[] = { "TrackAll", "TrackBase", "TrackCustom" };
+        int i;
+        for (i = 0; i < 3; i++)
+            if (clicked(event, filters[i])) {
+                g_track_source[race_kind] = i;
+                mp_event_kind_set(self);
+                mp_event_sync(self, NULL, TRUE);
+                mp_event_refresh(self);
+                return;
+            }
+    }
+#endif
     switch (event->type) {
     case EVENT_CLICK:
         if (clicked(event, SP_TRACK_LEFT))
@@ -2738,6 +2765,8 @@ void __fastcall mp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
             mp_event_kind_set(self);
             mp_event_refresh(self);
         } else if (clicked(event, LIST_TEXT_BOX)) {
+            if (list_selected(list) < 0)
+                break;
             BYTE* track = FIELD(game_session, 0x60, BYTE*)
                           + list_data(list, NULL, -1) * TRACK_ENTRY;
 
@@ -2817,6 +2846,16 @@ void __fastcall mp_event_refresh(BYTE* self)
     for (control = game_FUN_0046a980(walk); control; control = game_FUN_0046a980(walk))
         control_enable(control, open);
     dialog_enable_controls(self, NULL, 0x141, open);
+#ifdef OPENMCM2_DEV
+    {
+        static const char* const filters[] = { "TrackAll", "TrackBase", "TrackCustom" };
+        for (i = 0; i < 3; i++) {
+            BYTE* filter = dialog_find_control(self, NULL, filters[i], 4);
+            if (filter)
+                control_enable(filter, net_hosting && !(FIELD(game_main, 0x214C, BYTE) & 2));
+        }
+    }
+#endif
     control_show(FIELD(dialog_find_control(self, NULL, SP_EVENT_TYPE, 6), COMBO_BUTTON, BYTE*),
                  NULL, open, TRUE);
     control_show(FIELD(dialog_find_control(self, NULL, SP_RACE_MODE, 6), COMBO_BUTTON, BYTE*),
@@ -2935,6 +2974,14 @@ void __fastcall mp_event_kind_set(BYTE* self)
                          (char*) game_main + kind * 0x80 + 0xC6C);
     }
     profile_set_event(game_profile, NULL, FIELD(race_settings, SET_TRACK_ID, DWORD));
+#ifdef OPENMCM2_DEV
+    {
+        static const char* const filters[] = { "TrackAll", "TrackBase", "TrackCustom" };
+        BYTE* filter = dialog_find_control(self, NULL, filters[(unsigned) kind < 6 ? g_track_source[kind] : 0], 4);
+        if (filter)
+            radio_set(filter, NULL, 0);
+    }
+#endif
 }
 
 /* Slot 31, host only: the page into the settings (`out`), or back from them. */
@@ -2961,6 +3008,14 @@ void __fastcall mp_event_sync(BYTE* self, void* edx_unused, DWORD out)
 
         text_copy((char*) settings + SET_TRACK, NO_TEXT);
         list = combo_list(self, LIST_TEXT_BOX);
+#ifdef OPENMCM2_DEV
+        if (list_selected(list) < 0) {
+            FIELD(settings, SET_TRACK, BYTE) = 0;
+            mp_track_state = 2;
+            mp_user_ready = FALSE;
+            return;
+        }
+#endif
         track = FIELD(game_session, 0x60, BYTE*) + list_data(list, NULL, -1) * TRACK_ENTRY;
         text_copy_most((char*) settings + SET_TRACK, (const char*) track + 0x14, 0xFF);
         profile_set_event(game_profile, NULL, FIELD(track, 0x8, DWORD));

@@ -293,6 +293,8 @@ void __fastcall gui_user_drop_tooltip(gui_user* self);
 void __fastcall gui_user_make_tooltip(gui_user* self, void* edx_unused, void* screen,
                                       gui_manager* manager);
 BYTE* __fastcall gui_manager_active_dialog(gui_manager* self);
+int __fastcall gui_user_set_capture(gui_user* self, void* edx_unused, BYTE* control, BYTE** old);
+void __fastcall gui_user_apply_focus(gui_user* self, void* edx_unused, BOOL force);
 void __fastcall gui_manager_refresh(gui_manager* self);
 void __fastcall gui_user_make_cursor(gui_user* self, void* edx_unused, const char* image,
                                      DWORD arg);

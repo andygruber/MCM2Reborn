@@ -636,6 +636,10 @@ void __fastcall ghosts_fill(BYTE* self)
     game_FUN_00526fc0(game_main, NULL, 0x14C7, none, sizeof none);
     list_add_text(list, NULL, none, (DWORD) -1, 0);
     list_select_all(list, NULL, 0);
+#ifdef OPENMCM2_DEV
+    if (list_selected(FIELD(dialog_find_control(self, NULL, LIST_TEXT_BOX, 6), COMBO_LIST, BYTE*)) < 0)
+        return;
+#endif
     search = FindFirstFileA(NAME(0x0056FB6C), &found);                      /* Record\*.gho */
     if (search == INVALID_HANDLE_VALUE)
         return;
@@ -2216,12 +2220,21 @@ static void event_page_show(BYTE* self)
     }
     if (!mirror)
         return;
+    {
+        static const char* const filters[] = { "TrackAll", "TrackBase", "TrackCustom" };
+        int source = (unsigned) race_kind < 6 ? g_track_source[race_kind] : 0;
+        BYTE* filter = dialog_find_control(self, NULL, filters[source], 4);
+        BYTE* parent = FIELD(self, 0x2C, BYTE*);
+        BYTE* start = parent ? dialog_find_control(parent, NULL, "Start", 0) : NULL;
+
+        if (filter)
+            radio_set(filter, NULL, 0);
+        if (start)
+            VIRTUAL(start, 0xC4, method_1)(start, NULL, FIELD(tracks, 0x1EC, int) > 0);
+    }
     list_clear(mirror);
     for (i = 0; i < FIELD(tracks, 0x1EC, int); i++) {
-        char row[0x100];
-
-        game_FUN_0053a11f(row, "%02d   %s", i + 1, list_text(tracks, NULL, i));
-        list_add_text(mirror, NULL, row, list_data(tracks, NULL, i), 0);
+        list_add_text(mirror, NULL, list_text(tracks, NULL, i), list_data(tracks, NULL, i), 0);
     }
     list_select_all(mirror, NULL, list_selected(tracks));
 }
@@ -2241,6 +2254,15 @@ static BOOL event_card_clicked(BYTE* self, const ui_event* event)
 {
     int i;
 
+    static const char* const filters[] = { "TrackAll", "TrackBase", "TrackCustom" };
+    for (i = 0; i < 3; i++)
+        if (clicked(event, filters[i]) && (unsigned) race_kind < 6) {
+            g_track_source[race_kind] = i;
+            sp_event_kind_set(self);
+            sp_event_refresh(self);
+            ghosts_fill(self);
+            return TRUE;
+        }
     for (i = 0; i < (int) EVENT_CARDS; i++)
         if (clicked(event, event_cards[i].name)) {
             list_select_data(combo_list(self, SP_EVENT_TYPE), NULL, event_cards[i].kind);
@@ -2371,6 +2393,10 @@ void __fastcall sp_event_sync(BYTE* self, void* edx_unused, DWORD out)
 
         text_copy((char*) settings + SET_TRACK, NO_TEXT);
         list = combo_list(self, LIST_TEXT_BOX);
+#ifdef OPENMCM2_DEV
+        if (list_selected(list) < 0)
+            return;
+#endif
         track = (int) list_data(list, NULL, -1) * TRACK_ENTRY;
         name = FIELD(game_session, 0x60, char*) + track + 0x14;
         length = text_length(name);
@@ -2591,11 +2617,15 @@ void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
             sp_event_refresh(self);
             ghosts_fill(self);
         } else if (clicked(event, LIST_TEXT_BOX)) {
+            if (list_selected(list) < 0)
+                return;
             ghosts_fill(self);
             text_copy((char*) game_main + race_kind * 0x80 + 0xC6C, list_text(list, NULL, -1));
         }
 #ifdef OPENMCM2_DEV
         else if (clicked(event, "TrackList")) {
+            if (list_selected((BYTE*) event->c) < 0)
+                return;
             list = combo_list(self, LIST_TEXT_BOX);
             list_select_all(list, NULL, list_selected(dialog_find_control(self, NULL, "TrackList", 0)));
             ghosts_fill(self);
@@ -3608,9 +3638,20 @@ static void control_enable(BYTE* control, DWORD enabled)
 /* The movie's video (0x1EC), its slot 0x40: paused, it seems (the tick plays it with 0). */
 static void menu_movie_pause(BYTE* self, DWORD paused)
 {
-    void* video = FIELD(FIELD(self, MENU_MOVIE, BYTE*), 0x1EC, void*);
+    BYTE* movie = FIELD(self, MENU_MOVIE, BYTE*);
+    void* video = movie ? FIELD(movie, 0x1EC, void*) : NULL;
 
-    VIRTUAL(video, 0x40, method_1)(video, NULL, paused);
+    if (video)
+        VIRTUAL(video, 0x40, method_1)(video, NULL, paused);
+}
+
+static void menu_movie_stop(BYTE* self)
+{
+    BYTE* movie = FIELD(self, MENU_MOVIE, BYTE*);
+    void* video = movie ? FIELD(movie, 0x1EC, void*) : NULL;
+
+    if (video)
+        game_FUN_004a3f30(video);
 }
 
 static void panel_close(BYTE* self, int panel, int open)
@@ -3703,9 +3744,10 @@ static void menu_open(BYTE* self, const ui_event* event)
                        dialog_find_control(self, NULL, NAME(0x0056F724), 0), -1); /* ScreenOverCtl */
     control_set_link(FIELD(self, MENU_MOVIE, BYTE*), NULL,
                      dialog_find_control(self, NULL, SINGLE_ANIMATION, 0), 0);
-    movie_open(FIELD(self, MENU_MOVIE, BYTE*), NULL, NAME(0x0056F714), FALSE, MOVIE_LOOP,
-               (DWORD) self);                                                 /* ui\events.avi */
-    FIELD(self, MENU_MOVIE_READY, DWORD) = 1;
+    FIELD(self, MENU_MOVIE_READY, DWORD) =
+        movie_open(movie, NULL, NAME(0x0056F714), FALSE, MOVIE_LOOP, (DWORD) self); /* ui\events.avi */
+    if (!FIELD(self, MENU_MOVIE_READY, DWORD))
+        log_line("menus: preview video unavailable; continuing without it");
     menu_movie_pause(self, 1);
 }
 
@@ -3726,6 +3768,10 @@ static void multi_open(BYTE* self)
     FIELD(game_main, 0x3170, DWORD) = 0;
 #ifdef OPENMCM2_DEV
     eos_online(FALSE);                  /* the services listed are DirectPlay's own */
+    if (dev_settings.menus_modern) {
+        gui_manager_set_cursors(manager, NULL, manager->cursor_image, 0);
+        return;                         /* create LAN's network only when LAN is chosen */
+    }
 #endif
     if (net_make()) {
         game_FUN_0053b88e(connections, CONNECTION_SIZE, CONNECTION_COUNT, CONNECTION_CONSTRUCT,
@@ -3758,6 +3804,8 @@ static void connect_by(GUID service, DWORD kind, int line)
     void* address;
     DWORD size;
 
+    if (!game_net && !net_make())
+        return;
     if (game_FUN_004b0600(game_net, NULL, service, NO_TEXT, NO_TEXT, NULL, &address, &size)
         && game_FUN_004b04e0(game_net, NULL, address, size, kind)) {
         game_FUN_004a4450(address, DLGPROCS_CPP, line);
@@ -3790,7 +3838,7 @@ static void connect_modem(void)
 /* A race of `kind` from `folder`, its screen in place of the menu. */
 static void event_screen_open(BYTE* self, ui_event* event, int kind, const char* folder, int line)
 {
-    game_FUN_004a3f30(FIELD(FIELD(self, MENU_MOVIE, BYTE*), 0x1EC, void*));
+    menu_movie_stop(self);
     FIELD(game_main, 0x2F60, int) = kind;
     FIELD(game_main, 0x2F64, int) = kind;
     FIELD(game_main, 0xC18, const char*) = folder;
@@ -4609,7 +4657,7 @@ static void menu_click(BYTE* self, ui_event* event)
     } else if (clicked(event, NAME(0x0056F620))) {                          /* "ButNationals" */
         event_screen_open(self, event, 2, NAME(0x0056F60C), 0x171);         /* Teraform\National */
     } else if (clicked(event, NAME(0x0056F5FC))) {                          /* "ButProCircuit" */
-        game_FUN_004a3f30(FIELD(FIELD(self, MENU_MOVIE, BYTE*), 0x1EC, void*));
+        menu_movie_stop(self);
         gui_manager_open(session_gui, NULL,
                          dialog_new(0x8074, 0x176, NAME(0x0056F5F0), (void*) 0x00556AC8),
                          0, 2, 0, NULL, 0, 0, 1);                           /* PCStart.dtm */

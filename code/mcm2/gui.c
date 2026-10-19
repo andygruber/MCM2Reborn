@@ -15,6 +15,26 @@
 
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
+
+/* Read the active GUI user rather than the startup joystick inventory. This
+   remains valid for pause menus and for a pad first connected during a race. */
+BOOL pad_menus_active(void)
+{
+    BYTE* session = FIELD(game_main, 0x56C, BYTE*);
+    gui_manager* manager = session ? FIELD(session, 0x2C, gui_manager*) : NULL;
+    gui_user* user = manager && manager->user_count ? manager->users[0] : NULL;
+
+    return user && (user->focus || user->capture || gui_manager_active_dialog(manager));
+}
+
+BOOL pad_menu_back(void)
+{
+    BYTE* session = FIELD(game_main, 0x56C, BYTE*);
+    gui_manager* manager = session ? FIELD(session, 0x2C, gui_manager*) : NULL;
+    gui_user* user = manager && manager->user_count ? manager->users[0] : NULL;
+
+    return user && pad_close_dropdown(user->focus);
+}
 #endif
 
 /* Two strings, equal: the game inlines strcmp() == 0 like this. */
@@ -183,6 +203,7 @@ int __fastcall gui_manager_tick(gui_manager* self, void* edx_unused, DWORD time)
     (void) edx_unused;
     game_vf_10_46A300(self, NULL, time);
 #ifdef OPENMCM2_DEV
+    pad_menu_tick(self);
     live_menu_tick();
 #endif
     if (self->busy) {
@@ -788,14 +809,9 @@ int __fastcall gui_input_tick(gui_input* self, void* edx_unused, DWORD time)
     if (!type)
         return 1;
 #ifdef OPENMCM2_DEV
-    if (type == 2 && input_is_xinput(self->device)) {
-        float x, y;
-
-        if (pad_menu_axes(&x, &y)) {
-            self->x = (int) x;
-            self->y = (int) y;
-            return 1;
-        }
+    if (type == 2 || type == 3) {
+        self->x = self->y = 0;           /* modern navigation runs once per GUI user */
+        return 1;
     }
 #endif
     if (FIELD(game_main, 0x2D4, BYTE) & 2) {
@@ -1578,7 +1594,6 @@ void __fastcall game_FUN_00469df0(void* scene, void* edx_unused, const char* cla
     when `darken` is set: 8-bit by blanking every other pixel, the rest by halving each channel.
     NULL when the screen cannot be locked.
 */
-PORT(0x00487100)
 #ifdef OPENMCM2_DEV
 void render_inks(void* picture_surface);
 
@@ -1617,6 +1632,7 @@ static void darken_inks(WORD* pixels, int count, BOOL is_555)
 }
 #endif
 
+PORT(0x00487100)
 void* __fastcall gui_manager_capture_screen(gui_manager* self, void* edx_unused, BOOL darken,
                                             const RECT* area)
 {

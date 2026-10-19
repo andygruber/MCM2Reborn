@@ -2,7 +2,8 @@
 
 **Motocross Madness 2** (Rainbow Studios, 2000), rebuilt to run and play well on today's PCs. It has
 modern menus, a new race HUD, an OpenGL renderer, online play for 30 riders, lap leaderboards and
-proper gamepad support. Every change can be switched back to the original's behaviour in Options.
+proper gamepad support. Gameplay and visual options include the original's behaviour; controllers
+use the modern input system.
 
 ## Installing
 
@@ -26,6 +27,7 @@ what the game needs; stock Proton does not.
 - The bike's physics behave the same at any frame rate, and computer riders move smoothly.
 - The Pro Circuit's rider gear is in every event.
 - Add as many of your own skins as you like: every `.tga` in `RIDERS\` and `BIKES\` is its own choice.
+- Track pickers have All, Base Game and Custom filters for every event, in single player and hosted multiplayer.
 
 **Online**
 - Lobbies through Epic Online Services, up to 30 riders each, found from the game's Internet screen.
@@ -44,9 +46,13 @@ what the game needs; stock Proton does not.
 - Edge smoothing (FXAA), sharpening, colour vibrance, brightness and bloom.
 
 **Controls**
-- XInput gamepads steer by their sticks, with response, sensitivity, smoothing and dead-zone settings.
+- Xbox/XInput and native DualShock 4/DualSense gamepads steer by their sticks, with response, sensitivity, smoothing and dead-zone settings.
+- Connect or reconnect a pad at startup, in menus or during a race.
+- Navigate menus with the stick or D-pad, select with A/Cross, and go back with B/Circle. Start/Options pauses.
 - Every action can be bound to any button or trigger: click it, then press the button.
 - Alt-tabbing no longer flips the camera or locks the controls.
+
+For the 0.3.7 fixes, automated checks and remaining hardware validation, see [the update notes](docs/release-0.3.7.md).
 
 ## Settings
 

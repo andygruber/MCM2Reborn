@@ -14,6 +14,7 @@
 
 #ifdef OPENMCM2_DEV
 #include "../dev/dev.h"
+#include <mmsystem.h>
 
 /*
     Widescreen menus: the 640x480 the menus were made for, scaled evenly to fit `screen` and
@@ -1077,6 +1078,10 @@ void __fastcall dialog_track_pointer(BYTE* self)
     BYTE* focus;
     POINT at;
 
+#ifdef OPENMCM2_DEV
+    if (pad_navigation_active)
+        return;
+#endif
     if (!user->input)
         return;
     container = FIELD(self, DLG_CONTAINER, BYTE*);
@@ -8282,7 +8287,7 @@ BOOL __fastcall movie_open(BYTE* self, void* edx_unused, const char* file, BOOL 
     if (stream)
         stream = stream_construct(stream, NULL, 1);
     FIELD(self, MOVIE_STREAM, BYTE*) = stream;
-    if (!stream_open(stream, NULL, object_screen(self), file, a, b)) {
+    if (!stream || !stream_open(stream, NULL, object_screen(self), file, a, b)) {
         FIELD(self, MOVIE_STREAM, BYTE*) = NULL;
         return FALSE;
     }
@@ -10005,3 +10010,200 @@ int __fastcall dialog_read(BYTE* self, void* edx_unused, void* data, DWORD size)
     param_destruct(&r->file);
     return 1;
 }
+
+
+#ifdef OPENMCM2_DEV
+/* Controller focus does not require a legacy joystick or a mouse over a button.
+   The mouse resumes ownership when it moves; otherwise it must not erase pad focus. */
+BOOL pad_navigation_active = FALSE;
+
+BOOL pad_close_dropdown(void* object)
+{
+    BYTE* control = object;
+
+    if (control && FIELD(control, CTL_TYPE, int) == 6 && FIELD(control, COMBO_OPEN, BOOL)) {
+        combo_open(control, NULL, FALSE);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static BOOL pad_focusable(BYTE* control)
+{
+    BYTE* dialog = FIELD(control, CTL_DIALOG, BYTE*);
+    const RECT* area = &FIELD(control, CTL_RECT, RECT);
+    const RECT* design = &FIELD(control, CTL_DESIGN, RECT);
+
+    if (!takes_focus(control) || area->right <= area->left || area->bottom <= area->top
+        || (design->right - design->left <= 4 && design->bottom - design->top <= 4)
+        || !VIRTUAL(control, 0x78, method_0)(control))
+        return FALSE;
+    while (dialog) {
+        if (!FIELD(dialog, DLG_SHOWN, int) || (FIELD(dialog, 0x25, BYTE) & 4) || FIELD(dialog, 0x7F50, int))
+            return FALSE;
+        if (FIELD(dialog, DLG_MODAL, int))
+            break;                      /* the modal's parent is intentionally frozen */
+        dialog = FIELD(dialog, DLG_PARENT, BYTE*);
+    }
+    return TRUE;
+}
+
+static BYTE* pad_focus_in(BYTE* root, BYTE* focus, int direction)
+{
+    BYTE walk[0x94];
+    BYTE* control;
+    BYTE* best = NULL;
+    float score_best = 1e30f;
+    RECT from = {0, 0, 0, 0};
+
+    if (focus)
+        from = FIELD(focus, CTL_RECT, RECT);
+    walk_begin(walk, NULL, root, 1, UICONTROL_CLASS);
+    while ((control = walk_next(walk)) != NULL) {
+        RECT to;
+        float dx, dy, along, across, score;
+
+        if (control == focus || !pad_focusable(control))
+            continue;
+        to = FIELD(control, CTL_RECT, RECT);
+        if (!focus) {
+            score = (float) to.top * 10000 + to.left;
+        } else {
+            dx = (to.left + to.right - from.left - from.right) * 0.5f;
+            dy = (to.top + to.bottom - from.top - from.bottom) * 0.5f;
+            along = direction == 1 ? -dy : direction == 2 ? dy : direction == 3 ? -dx : dx;
+            across = direction <= 2 ? dx : dy;
+            if (along <= 1)
+                continue;
+            score = along * along + across * across * 4;
+        }
+        if (score < score_best) {
+            score_best = score;
+            best = control;
+        }
+    }
+    walk_end(walk);
+    return best;
+}
+
+void pad_menu_tick(void* object)
+{
+    gui_manager* manager = object;
+    gui_user* user = manager->user_count ? manager->users[0] : NULL;
+    static gui_manager* previous_manager;
+    static POINT mouse;
+    static int previous_direction;
+    static DWORD repeat_at;
+    static BOOL accept_was;
+    BYTE* focus;
+    BYTE* dialog;
+    BYTE* active;
+    BYTE* root;
+    float x = 0, y = 0;
+    BOOL accept = pad_accept_down();
+    BOOL pressed = accept && !accept_was;
+    DWORD now = timeGetTime();
+    int direction = 0;
+
+    accept_was = accept;                 /* held across a dialog transition is not another click */
+    if (manager != previous_manager) {
+        previous_manager = manager;
+        pad_navigation_active = FALSE;
+        mouse.x = manager->mouse ? manager->mouse->x : 0;
+        mouse.y = manager->mouse ? manager->mouse->y : 0;
+    }
+    if (manager->mouse && (mouse.x != manager->mouse->x || mouse.y != manager->mouse->y)) {
+        mouse.x = manager->mouse->x;
+        mouse.y = manager->mouse->y;
+        pad_navigation_active = FALSE;
+    }
+    if (!user || !input_in_foreground() || pad_binding_active() || !pad_menu_axes(&x, &y)) {
+        previous_direction = 0;
+        return;
+    }
+    direction = y < 0 ? 1 : y > 0 ? 2 : x < 0 ? 3 : x > 0 ? 4 : 0;
+    if (!direction && !pressed) {
+        previous_direction = 0;
+        return;
+    }
+    focus = user->focus;
+    active = gui_manager_active_dialog(manager);
+    dialog = focus ? FIELD(focus, CTL_DIALOG, BYTE*) : active;
+    if (active && FIELD(active, DLG_MODAL, int) && active != dialog) {
+        dialog = active;
+        focus = NULL;
+    }
+    if (!dialog || (FIELD(dialog, 0x25, BYTE) & 4) || FIELD(dialog, 0x7F50, int))
+        return;
+    root = dialog;
+    while (!FIELD(root, DLG_MODAL, int) && FIELD(root, DLG_PARENT, BYTE*))
+        root = FIELD(root, DLG_PARENT, BYTE*);
+    pad_navigation_active = TRUE;
+    if (!focus || !pad_focusable(focus)) {
+        focus = pad_focus_in(root, NULL, direction);
+        if (focus)
+            gui_user_set_capture(user, NULL, focus, NULL);
+    } else if (direction && (direction != previous_direction || (LONG) (now - repeat_at) >= 0)) {
+        int type = FIELD(focus, CTL_TYPE, int);
+        BOOL adjusted = FALSE;
+
+        repeat_at = now + (direction != previous_direction ? 350 : 110);
+        if (type == 6 && (direction >= 3 || FIELD(focus, COMBO_OPEN, BOOL))) {
+            BYTE* list = FIELD(focus, COMBO_LIST, BYTE*);
+            int next = list_selected(list) + (direction == 1 || direction == 3 ? -1 : 1);
+            if (next >= 0 && next < list_count(list)) {
+                int done = 0;
+                list_select_all(list, NULL, next);
+                if (!FIELD(focus, COMBO_OPEN, BOOL))
+                    VIRTUAL(list, 0x108, list_stepped_slot)(list, NULL, &done);
+            }
+            adjusted = TRUE;
+        } else if (type == 3 && direction <= 2) {
+            int selected = list_selected(focus);
+            int next = selected + (direction == 1 ? -1 : 1);
+            if (next >= 0 && next < list_count(focus)) {
+                int done = 0;
+                list_select_all(focus, NULL, next);
+                VIRTUAL(focus, 0x108, list_stepped_slot)(focus, NULL, &done);
+                adjusted = TRUE;
+            }
+        } else if ((type == 7 || type == 8) && direction >= 3) {
+            unsigned range = slider_steps(focus) ? slider_steps(focus) : FIELD(focus, SLIDER_RANGE, unsigned);
+            int value = slider_value(focus) + (direction == 3 ? -1 : 1);
+            ui_event event;
+            if (value >= 0 && (unsigned) value <= range) {
+                slider_set(focus, value, range);
+                ZeroMemory(&event, sizeof event);
+                control_tell(focus, &event, 3);
+            }
+            adjusted = TRUE;
+        }
+        if (!adjusted) {
+            BYTE* next = pad_focus_in(root, focus, direction);
+            if (next)
+                gui_user_set_capture(user, NULL, next, NULL);
+        }
+    }
+    previous_direction = direction;
+    focus = user->focus;
+    if (pressed && focus) {
+        if (FIELD(focus, CTL_TYPE, int) == 3 && list_selected(focus) >= 0) {
+            int done = 0;
+            VIRTUAL(focus, 0x108, list_stepped_slot)(focus, NULL, &done);
+            return;
+        }
+        if (FIELD(focus, CTL_TYPE, int) == 6 && FIELD(focus, COMBO_OPEN, BOOL)) {
+            BYTE* list = FIELD(focus, COMBO_LIST, BYTE*);
+            int done = 0;
+            VIRTUAL(list, 0x108, list_stepped_slot)(list, NULL, &done);
+            return;
+        }
+        /* Use the control's own press/release handlers: buttons, toggles, tabs,
+           combos and bindings all deliver their normal dialog events. */
+        gui_user_set_capture(user, NULL, focus, NULL);
+        VIRTUAL(focus, 0xDC, control_two)(focus, NULL, 0, 0);
+        gui_user_apply_focus(user, NULL, FALSE);
+        VIRTUAL(focus, 0xE0, control_two)(focus, NULL, 0, 0);
+    }
+}
+#endif

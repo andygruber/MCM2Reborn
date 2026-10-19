@@ -25,7 +25,7 @@ PLACE = (LEFT, 380, RIGHT, 1264)            # the pages' room, under the tabs
 ROW_H, PITCH = 76, 88
 
 # The tabs in order: the control, its words (optionprocs.c's pages are by name).
-TABS = [("GameSettings", "GAME"), ("Graphics", "GRAPHICS"), ("Sound", "SOUND"), ("Controls", "CONTROLS"),
+TABS = [("GameSettings", "GAME"), ("Graphics", "GRAPHICS"), ("Sound", "SOUND"), ("Controls", "KEYBOARD"),
         ("Messages", "MESSAGES"), ("Garage", "GARAGE"), ("Reborn", "REBORN"), ("Gamepad", "GAMEPAD")]
 
 
@@ -219,10 +219,9 @@ REBORN_COLUMNS = (
 # The GAMEPAD page: the XInput pad's settings and each action's control (optionprocs.c, reborn_rows;
 # code/dev/pad.c). Actions 0 to 3, steering and lean, are the sticks.
 PAD_COLUMNS = (
-    ("STICKS", (("MultPadOn", "XINPUT PADS"), ("MultPadResponse", "STEERING RESPONSE"),
+    ("STICKS", (("MultPadOn", "CONTROLLER SUPPORT"), ("MultPadResponse", "STEERING RESPONSE"),
                 ("MultPadDeadzone", "STICK DEAD ZONE"), ("MultPadSensitivity", "STEERING SENSITIVITY"),
-                ("MultPadSmooth", "STEERING SMOOTHING"), ("MultPadLean", "LEAN WITH"),
-                ("MultPadDirect", "OTHER PADS' STICKS"))),
+                ("MultPadSmooth", "STEERING SMOOTHING"), ("MultPadLean", "LEAN WITH"))),
     ("RIDING", (("BtnPad4", "ACCELERATE"), ("BtnPad5", "BRAKE"), ("BtnPad12", "CLUTCH"),
                 ("BtnPad13", "BACK UP"), ("BtnPad6", "STUNTS 1-8"), ("BtnPad7", "STUNTS 9-16"))),
     ("MORE", (("BtnPad8", "KAHUNA DUMPSTER"), ("BtnPad9", "TAUNTING"), ("BtnPad10", "THRILL CAM"),
@@ -261,7 +260,7 @@ def build_reborn(data):
 
 def build_pad(data):
     return rows_page(data, "OptPad", PAD_COLUMNS,
-                     "THE LEFT STICK STEERS, START PAUSES. CLICK AN ACTION, THEN PRESS ITS BUTTON ON THE PAD.")
+                     "STICK / D-PAD: MOVE  ·  A / CROSS: SELECT  ·  B / CIRCLE: BACK  ·  START / OPTIONS: PAUSE")
 
 
 def build_sound(data):
@@ -285,9 +284,9 @@ def build_sound(data):
 def build_controls(data):
     screen, board = page(data, "OPTCONT")
     keys_col, feel, feedback = columns(3)
-    top = panel(board, keys_col, "CONTROLS")
-    drop(screen, board, "InputDeviceDDL", rows_area(keys_col, top, 0), "PRESET", list_h=360)
-    switch(screen, board, "ChkAnalogAxes", rows_area(keys_col, top, 1), "ANALOG AXES")
+    top = panel(board, keys_col, "KEYBOARD")
+    sub(board, "Select an action to change its key.", keys_col[0] + 36, top + 44, 24, GREY)
+    sub(board, "Controller settings: GAMEPAD tab.", keys_col[0] + 36, top + 100, 24, GREY)
 
     # The assignments: what each action is, and its key, side by side; a click remaps it.
     table = (keys_col[0] + 24, top + 2 * PITCH, keys_col[2] - 24, keys_col[3] - 24)
@@ -313,11 +312,11 @@ def build_controls(data):
     sub(board, "ON: HOW FAST IT PRESSES  ·  OFF: HOW FAST IT LETS GO", feel[0] + 36, feel[3] - 30, 20,
         (120, 122, 128), bold=True)
 
-    top = panel(board, feedback, "FORCE FEEDBACK")
-    switch(screen, board, "ForceFeedCheck", rows_area(feedback, top, 0), "FORCE FEEDBACK")
-    slider(screen, board, "FeedbackSlider", rows_area(feedback, top, 1), "STRENGTH", split=0.45)
-    switch(screen, board, "ChkGasGyro", rows_area(feedback, top, 2), "GAS GYRO EFFECT")
-    switch(screen, board, "ChkBrakeGyro", rows_area(feedback, top, 3), "BRAKE GYRO EFFECT")
+    top = panel(board, feedback, "GAMEPAD")
+    sub(board, "Set controller buttons and sticks on the GAMEPAD tab.",
+        feedback[0] + 36, top + 40, 22, GREY, bold=True)
+    for name in ("InputDeviceDDL", "ChkAnalogAxes", "ForceFeedCheck", "FeedbackSlider", "ChkGasGyro", "ChkBrakeGyro"):
+        screen.hide(name)
     return finish_page(screen, board, (
         "AssignmentsBox", "ControlSensitivityBox", "ClickBelowText", "CurrentAssignmentText", "ControlSensitivityText",
         "PressText", "ReleaseSensitivityText", "SteeringText", "CrossUpText", "PitchText", "PressThrottleText",
@@ -410,9 +409,11 @@ def build_advanced(data):
     switch(screen, board, "ChkShowPick3D", rows_area(card, top, 1), "ASK AT START")
     switch(screen, board, "ChkForceVideoMem", rows_area(card, top, 2), "FIT IN VIDEO MEMORY")
 
-    top = panel(board, repair, "TROUBLESHOOTING")
-    switch(screen, board, "ChkFilterInput", rows_area(repair, top, 0), "FILTER JOYSTICK INPUT")
-    switch(screen, board, "ChkShowPickController", rows_area(repair, top, 1), "ASK CONTROLLER AT START")
+    top = panel(board, repair, "CONTROLLERS")
+    sub(board, "Controllers are detected automatically.", repair[0] + 36, top + 44, 24, GREY)
+    sub(board, "Connect or reconnect one at any time.", repair[0] + 36, top + 100, 24, GREY)
+    screen.hide("ChkFilterInput")
+    screen.hide("ChkShowPickController")
 
     for name in ("UnusedGraphicsSlideBox", "UnusedSlide03Text", "Less03", "More03", "rbwLabel1", "rbwLabel2",
                  "rbwLabel3", "rbwLabel4", "rbwLabel5", "rbwLabel6", "rbwLabel7", "rbwLabel8", "rbwLabel9",

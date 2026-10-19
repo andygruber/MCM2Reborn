@@ -118,7 +118,7 @@ def build_base_mp(data):
     board = ground()
     screen, board, window = build_base(data, "MPBASE", "MULTIPLAYER", TITLES, TABS,
                                        [("Back", "BACK"), ("Help", "HELP"), ("Options", "OPTIONS"),
-                                        ("Joystick", "CONTROLS")],
+                                        ("Joystick", "GAMEPAD")],
                                        [("Start", "START RACE", 540, True)], stage=MP_STAGE, board=board)
     riders_and_chat(screen, board)
     screen.set("Set_Information", BackgroundImage=screen.picture("MBack", board, window))
@@ -149,6 +149,10 @@ def build_event(data):
         screen.button(name, where, arrow_states(board, where, way))
     combo(screen, "DDLTextBox", board, (strip[0] + 68, strip[1] + 4, strip[2] - 68, strip[3] - 4), arrow=False,
           list_h=360, size=34, align="CENTER")
+    for k, (name, label) in enumerate((("TrackAll", "ALL"), ("TrackBase", "BASE GAME"), ("TrackCustom", "CUSTOM"))):
+        where = (left[0] + 24 + k * 296, strip[3] + 24, left[0] + 308 + k * 296, strip[3] + 80)
+        radio(screen, name, segment_states(board, where, label), where, screen.origin,
+              chosen=k == 0, AttachId="152", FitToAnimOn="0")
 
     top = right[1] + 24
     for row, box_name, label, names, words in zip(
