@@ -434,22 +434,44 @@ static HRESULT WINAPI create(HINSTANCE instance, DWORD version, REFIID iid, void
     return result;
 }
 
-/* Modern controllers never create the legacy force-feedback joystick. Old saved
-   effects must not enter BikeRace's three-call legacy effect block. */
-static BOOL disable_legacy_race_feedback(BYTE* branch)
+/*
+    The race start (0x0041A44E) restarts the force-feedback effect when one was made, through the
+    legacy joystick, without asking whether that joystick is still there. With a modern pad it
+    never is, and Unacquire (0x004C6E20) read through NULL. The block is now skipped without one,
+    as the game's other force-feedback calls already do.
+*/
+#define FEEDBACK_TEST   0x0041A44E      /* mov ecx,[eax+1000h]; test ecx,ecx; je 0x0041A499 */
+#define FEEDBACK_RESUME 0x0041A458
+#define FEEDBACK_SKIP   0x0041A499
+
+static const BYTE feedback_was[] = { 0x8B, 0x88, 0x00, 0x10, 0x00, 0x00, 0x85, 0xC9, 0x74, 0x41 };
+
+/* eax holds the input manager; [eax+1000h] the effect, [[eax+14h]+0Ch] the joystick. */
+static __declspec(naked) void feedback_restart(void)
 {
-    const BYTE jump = 0xEB;
-    if ((branch[0] != 0x74 && branch[0] != jump) || branch[1] != 0x41)
-        return FALSE;
-    return branch[0] == jump || write_protected(branch, &jump, sizeof jump);
+    __asm {
+        mov ecx, dword ptr [eax + 1000h]
+        test ecx, ecx
+        jz skip
+        mov edx, dword ptr [eax + 14h]
+        cmp dword ptr [edx + 0Ch], 0
+        je no_joystick
+        push FEEDBACK_RESUME
+        ret
+    no_joystick:
+        xor ecx, ecx
+    skip:
+        push FEEDBACK_SKIP
+        ret
+    }
 }
 
 void inputfix_install(void)
 {
     create_fn mine = create;
 
-    if (!disable_legacy_race_feedback((BYTE*)0x0041A456))
-        log_line("input: could not disable legacy race force feedback");
+    if (!jump_over(FEEDBACK_TEST, feedback_was, sizeof feedback_was, feedback_restart))
+        log_line("input: could not guard the race's force feedback");
     g_create = _imp__DirectInputCreateEx;
     if (!write_protected(&_imp__DirectInputCreateEx, &mine, sizeof mine))
         log_line("input: could not take over DirectInputCreateEx");

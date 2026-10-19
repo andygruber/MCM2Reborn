@@ -49,18 +49,25 @@ static DWORD WINAPI get_pad(DWORD user, xinput_state* state)
 static void pad_next(void) { clock_ms += 1100; }
 static void test_pad(void)
 {
-    float x,y;
     g_loaded=TRUE; g_get=get_pad; g_index=-1; g_sony=FALSE;
-    CHECK(!pad_connected());
+    CHECK(!pad_connected()); CHECK(pad_menu_direction()==-1);
     connected[2]=TRUE; pad_next(); CHECK(pad_connected()); CHECK(g_index==2);
     hardware.buttons=0x2000; pad_next(); CHECK(pad_back_down()); CHECK(!pad_start_down());
     hardware.buttons=0x1000; pad_next(); CHECK(pad_accept_down());
-    hardware.buttons=0x0009; pad_next(); CHECK(pad_menu_axes(&x,&y)); CHECK(x>0 && y<0);
+    hardware.buttons=0x0009; pad_next(); CHECK(pad_menu_direction()==1);
+    hardware.buttons=0x0008; pad_next(); CHECK(pad_menu_direction()==4);
+    hardware.buttons=0x0100; pad_next(); CHECK(pad_menu_tab()==-1);
+    hardware.buttons=0x0200; pad_next(); CHECK(pad_menu_tab()==1);
+    hardware.buttons=0x0300; pad_next(); CHECK(pad_menu_tab()==0);
     hardware.buttons=0; hardware.left_x=-32768; hardware.left_y=-32768;
-    pad_next(); CHECK(pad_menu_axes(&x,&y)); CHECK(x<0 && y>0);
+    pad_next(); CHECK(pad_menu_direction()==2);
+    hardware.left_x=-30000; hardware.left_y=12000; pad_next(); CHECK(pad_menu_direction()==3);
+    hardware.left_x=9000; hardware.left_y=26000; pad_next(); CHECK(pad_menu_direction()==1);
+    hardware.left_x=3000; hardware.left_y=-4000; pad_next(); CHECK(pad_menu_direction()==0);
+    hardware.left_x=hardware.left_y=0;
     connected[2]=FALSE; pad_next(); CHECK(!pad_connected()); CHECK(!pad_accept_down()); CHECK(!pad_back_down());
     connected[0]=TRUE; ZeroMemory(&hardware,sizeof hardware); pad_next(); CHECK(pad_connected()); CHECK(g_index==0);
-    puts("PASS controller startup, unplug/reconnect, buttons, D-pad and sticks");
+    puts("PASS controller startup, unplug/reconnect, buttons, bumpers, D-pad and dominant stick axis");
 }
 static void test_sony(void)
 {
@@ -131,10 +138,19 @@ static void test_tracks(void)
 #define COMBO_SLIDER_VTABLE ((void**) 0x12340008)
 #define COMBO_LIST_VTABLE ((void**) 0x12340000)
 #define UICONTROL_CLASS "UIControl"
+#define RADIO_CLASS "UIRadioButton"
 static BYTE dialog_fixture[0x8000], controls_fixture[6][0x400];
 static BYTE* controls[6]; static BOOL binding; static int clicks, list_updates;
-static void walk_begin(BYTE* walk,void* unused,void* root,int depth,const char* kind) { FIELD(walk,0,int)=0; }
-static BYTE* walk_next(BYTE* walk) { int i=FIELD(walk,0,int)++; return i<6?controls[i]:NULL; }
+static void walk_begin(BYTE* walk,void* unused,void* root,int depth,const char* kind)
+{ FIELD(walk,0,int)=0; FIELD(walk,4,BOOL)=!strcmp(kind,RADIO_CLASS); }
+static BYTE* walk_next(BYTE* walk)
+{
+    int i;
+    while((i=FIELD(walk,0,int)++)<6)
+        if(!FIELD(walk,4,BOOL) || FIELD(controls[i],CTL_TYPE,int)==4) return controls[i];
+    return NULL;
+}
+static int option_current_index(BYTE* self) { return FIELD(self,0x310,int); }
 static void walk_end(BYTE* walk) { }
 static BOOL takes_focus(BYTE* c) { return FIELD(c,0x6C,int)&&FIELD(c,0x70,int); }
 BOOL pad_binding_active(void) { return binding; }
@@ -184,35 +200,37 @@ static void test_alignment(void) {
     puts("PASS actual UI loader alignment for every control type, including lists and combos");
 }
 #define DLG_USER 0x34
-static int frames, released_dc;
-static RECT frame_box;
-static HBRUSH frame_brush(COLORREF colour) { CHECK(colour==RGB(255,196,0));return (HBRUSH)1; }
-static int frame_rect(HDC dc,const RECT* area,HBRUSH brush) { if(!frames)frame_box=*area;frames++;return 1; }
-static BOOL frame_delete(HGDIOBJ brush) {return TRUE;}
-static HRESULT WINAPI frame_get_dc(void* surface,HDC* dc) {*dc=(HDC)1;return S_OK;}
-static HRESULT WINAPI frame_release_dc(void* surface,HDC dc) {released_dc++;return S_OK;}
-#define CreateSolidBrush frame_brush
-#define FrameRect frame_rect
-#define DeleteObject frame_delete
-#include "frame_under_test.inc"
+static int marks, released_dc;
+static RECT mark_box;
+static HBRUSH mark_brush(COLORREF colour) { CHECK(colour==RGB(255,138,0));return (HBRUSH)1; }
+static int mark_fill(HDC dc,const RECT* area,HBRUSH brush) { mark_box=*area;marks++;return 1; }
+static HRESULT WINAPI mark_get_dc(void* surface,HDC* dc) {*dc=(HDC)1;return S_OK;}
+static HRESULT WINAPI mark_release_dc(void* surface,HDC dc) {released_dc++;return S_OK;}
+#define CreateSolidBrush mark_brush
+#define FillRect mark_fill
+#include "mark_under_test.inc"
 #undef CreateSolidBrush
-#undef FrameRect
-#undef DeleteObject
-static void test_focus_frame(void) {
+#undef FillRect
+static void test_focus_mark(void) {
     BYTE screen[0x80]={0};void* surface[32]={0};void* table[32]={0};
-    gui_user user={0};int type;
-    surface[0]=table;table[0x44/4]=(void*)frame_get_dc;table[0x68/4]=(void*)frame_release_dc;
+    gui_user user={0};const RECT* box=&FIELD(controls[0],CTL_RECT,RECT);
+    surface[0]=table;table[0x44/4]=(void*)mark_get_dc;table[0x68/4]=(void*)mark_release_dc;
     FIELD(screen,0x48,void*)=surface;FIELD(dialog_fixture,0x18,void*)=screen;
     FIELD(dialog_fixture,DLG_USER,gui_user*)=&user;
+    FIELD(dialog_fixture,DLG_SHOWN,int)=1;FIELD(controls[0],0x70,int)=1;
     user.focus=controls[0];pad_navigation_active=TRUE;
-    for(type=1;type<=8;type++) {
-        FIELD(controls[0],CTL_TYPE,int)=type;
-        frames=0;released_dc=0;dialog_pad_frame(dialog_fixture);
-        CHECK(frames==3);CHECK(released_dc==1);
-        CHECK(EqualRect(&frame_box,&FIELD(controls[0],CTL_RECT,RECT)));
-    }
-    pad_navigation_active=FALSE;frames=0;dialog_pad_frame(dialog_fixture);CHECK(!frames);
-    puts("PASS final menu focus frame for buttons, event cards, lists, combos and sliders");
+    FIELD(controls[0],0x16C,void*)=FIELD(controls[0],0x170,void*)=NULL;
+    marks=released_dc=0;dialog_pad_mark(dialog_fixture);
+    CHECK(marks==1);CHECK(released_dc==1);
+    CHECK(mark_box.left==box->left && mark_box.right==box->right && mark_box.top==box->bottom+2);
+    CHECK(mark_box.bottom-mark_box.top>=2 && mark_box.bottom-mark_box.top<=4);
+    FIELD(controls[0],0x16C,void*)=FIELD(controls[0],0x170,void*)=(void*)8;
+    marks=0;dialog_pad_mark(dialog_fixture);CHECK(marks==1);
+    FIELD(controls[0],0x170,void*)=(void*)16;
+    marks=0;dialog_pad_mark(dialog_fixture);CHECK(!marks);
+    FIELD(controls[0],0x170,void*)=NULL;
+    pad_navigation_active=FALSE;marks=0;dialog_pad_mark(dialog_fixture);CHECK(!marks);
+    puts("PASS focus mark only under controls without their own focus picture, and only for the pad");
 }
 #define MENU_MOVIE 0x7F58
 #include "movie_under_test.inc"
@@ -289,9 +307,35 @@ static void test_menu(void)
     hardware.buttons=0; pad_next(); pad_menu_tick(&manager);
     FIELD(dialog_fixture,DLG_SHOWN,int)=0; CHECK(!pad_focusable(controls[0]));
     puts("PASS controller focus without startup joystick, A activation/debounce, rebinding, lists, sliders and mouse handoff");
+
+    FIELD(dialog_fixture,DLG_SHOWN,int)=1;
+    for(i=0;i<6;i++) { FIELD(controls[i],CTL_TYPE,int)=1; FIELD(controls[i],COMBO_OPEN,BOOL)=FALSE; FIELD(controls[i],0x70,int)=1; }
+    user.focus=NULL; clicks=0;
+    hardware.buttons=0x1000; pad_next(); pad_menu_tick(&manager);
+    CHECK(user.focus==controls[0]); CHECK(!clicks);
+    user.focus=NULL; hardware.buttons=0; pad_next(); pad_menu_tick(&manager); CHECK(user.focus==controls[0]);
+    hardware.buttons=1; pad_next(); pad_menu_tick(&manager); CHECK(user.focus==controls[5]);
+    hardware.buttons=0; pad_next(); pad_menu_tick(&manager);
+    hardware.buttons=2; pad_next(); pad_menu_tick(&manager); CHECK(user.focus==controls[0]);
+    for(i=1;i<=3;i++) {
+        FIELD(controls[i],CTL_TYPE,int)=4; FIELD(controls[i],0x310,int)=i==2;
+        SetRect(&FIELD(controls[i],CTL_RECT,RECT),i*200,40,i*200+180,90);
+    }
+    hardware.buttons=0x0200; pad_next(); pad_menu_tick(&manager); CHECK(clicks==1); CHECK(user.focus==controls[3]);
+    pad_next(); pad_menu_tick(&manager); CHECK(clicks==1);
+    hardware.buttons=0x0100; pad_next(); pad_menu_tick(&manager); CHECK(clicks==2); CHECK(user.focus==controls[1]);
+    FIELD(controls[2],0x310,int)=0; FIELD(controls[1],0x310,int)=1;
+    hardware.buttons=0; pad_next(); pad_menu_tick(&manager);
+    hardware.buttons=0x0100; pad_next(); pad_menu_tick(&manager); CHECK(clicks==2);
+    focus=controls[4]; user.focus=focus; FIELD(focus,CTL_TYPE,int)=8; FIELD(focus,0x1F0,unsigned)=100;
+    slider_value(focus)=0;
+    hardware.buttons=8; pad_next(); pad_menu_tick(&manager); CHECK(slider_value(focus)==1);
+    pad_next(); pad_menu_tick(&manager); CHECK(slider_value(focus)==6);
+    hardware.buttons=0; pad_next(); pad_menu_tick(&manager);
+    puts("PASS first control shown on a new screen, up/down wrap, LB/RB tabs and held slider speed-up");
 }
 int main(void)
 {
-    test_alignment(); test_ai(); test_radar(); test_tracks(); test_movie(); test_pad(); test_sony(); test_menu(); test_focus_frame();
+    test_alignment(); test_ai(); test_radar(); test_tracks(); test_movie(); test_pad(); test_sony(); test_menu(); test_focus_mark();
     printf("%d native checks passed\n",checks); return 0;
 }

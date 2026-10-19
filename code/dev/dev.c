@@ -304,6 +304,23 @@ void dev_graphics_save(void)
     write_number("graphics", "bloom", g_render.bloom);
 }
 
+BOOL jump_over(DWORD at, const BYTE* was, int size, void (*to)(void))
+{
+    BYTE code[16];
+    int i;
+
+    if (size < 5 || size > (int) sizeof code)
+        return FALSE;
+    for (i = 0; i < size; i++)
+        if (((const BYTE*) at)[i] != was[i])
+            return FALSE;
+    code[0] = 0xE9;
+    *(DWORD*) (code + 1) = (DWORD) to - (at + 5);
+    for (i = 5; i < size; i++)
+        code[i] = 0x90;
+    return write_protected((void*) at, code, size);
+}
+
 /* A clock for timing: milliseconds since it was first read. */
 double dev_milliseconds(void)
 {

@@ -336,22 +336,6 @@ static void sites_write(const site* sites, int count)
     }
 }
 
-/* A jump to `to` written over `at`, if the bytes there are still the game's; the rest nops. */
-static BOOL jump_over(DWORD at, const BYTE* was, int size, void (*to)(void))
-{
-    BYTE code[16];
-    int i;
-
-    for (i = 0; i < size; i++)
-        if (((const BYTE*) at)[i] != was[i])
-            return FALSE;
-    code[0] = 0xE9;
-    *(DWORD*) (code + 1) = (DWORD) to - (at + 5);
-    for (i = 5; i < size; i++)
-        code[i] = 0x90;
-    return write_protected((void*) at, code, size);
-}
-
 /* Each table made bigger only if all its bytes are the game's as known. */
 static void enlarge(const char* what, const site* sites, int count)
 {

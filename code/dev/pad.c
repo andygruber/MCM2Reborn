@@ -184,20 +184,30 @@ BOOL pad_accept_down(void)
     return pad_read() && (g_state.buttons & 0x1000) != 0;
 }
 
-BOOL pad_menu_axes(float* x, float* y)
+/* The way the d-pad or left stick points in the menus: 1 up, 2 down, 3 left, 4 right, 0 none,
+   -1 with no pad. The stick goes by its stronger axis, so a rough diagonal is not read as up. */
+int pad_menu_direction(void)
 {
-    float lx, ly;
     WORD buttons;
+    float x, y;
 
-    if (!x || !y || !pad_read())
-        return FALSE;
+    if (!pad_read())
+        return -1;
     buttons = g_state.buttons;
-    stick(g_state.left_x, g_state.left_y, &lx, &ly);
-    *x = (buttons & 0x0004) ? -2.0f : (buttons & 0x0008) ? 2.0f
-       : lx < -STICK_DOWN ? -2.0f : lx > STICK_DOWN ? 2.0f : 0.0f;
-    *y = (buttons & 0x0001) ? -2.0f : (buttons & 0x0002) ? 2.0f
-       : ly > STICK_DOWN ? -2.0f : ly < -STICK_DOWN ? 2.0f : 0.0f;
-    return TRUE;
+    if (buttons & 0x000F)
+        return buttons & 0x0001 ? 1 : buttons & 0x0002 ? 2 : buttons & 0x0004 ? 3 : 4;
+    stick(g_state.left_x, g_state.left_y, &x, &y);
+    if ((x < 0 ? -x : x) > (y < 0 ? -y : y))
+        return x < -STICK_DOWN ? 3 : x > STICK_DOWN ? 4 : 0;
+    return y > STICK_DOWN ? 1 : y < -STICK_DOWN ? 2 : 0;
+}
+
+/* LB -1, RB 1, neither (or both) 0: they step through a screen's tabs. */
+int pad_menu_tab(void)
+{
+    if (!pad_read())
+        return 0;
+    return ((g_state.buttons & 0x0200) != 0) - ((g_state.buttons & 0x0100) != 0);
 }
 
 /* An analog stick's steering through the chosen response: its size to the power 1, 1.5, 2 or 3

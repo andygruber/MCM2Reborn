@@ -21,6 +21,9 @@ FARPROC api(const char* dll,const char* name)
 void log_line(const char* fmt,...) { }
 void dev_trace(const char* area,const char* fmt,...) { }
 BOOL write_protected(void* to,const void* from,SIZE_T size) { memcpy(to,from,size); return TRUE; }
+static DWORD jumped_at; static const BYTE* jumped_was; static int jumped_size; static void (*jumped_to)(void);
+BOOL jump_over(DWORD at,const BYTE* was,int size,void (*to)(void))
+{ jumped_at=at; jumped_was=was; jumped_size=size; jumped_to=to; return TRUE; }
 BOOL pad_connected(void) { return TRUE; }
 BOOL pad_start_down(void) { return start; }
 BOOL pad_back_down(void) { return back; }
@@ -56,11 +59,9 @@ int main(void)
     menus=TRUE;back=TRUE;close_dropdown=TRUE;CHECK(!read_keys());back=FALSE;CHECK(!read_keys());
     close_dropdown=FALSE;binding=TRUE;back=TRUE;CHECK(!read_keys());back=FALSE;CHECK(!read_keys());binding=FALSE;
     front=FALSE;back=TRUE;CHECK(!read_keys());back=FALSE;CHECK(!read_keys());
-    { BYTE branch[2]={0x74,0x41};
-      CHECK(disable_legacy_race_feedback(branch)); CHECK(branch[0]==0xEB && branch[1]==0x41);
-      CHECK(disable_legacy_race_feedback(branch)); branch[1]=0x40;
-      CHECK(!disable_legacy_race_feedback(branch));
-    }
-    printf("PASS %d input checks: retired legacy driver bypass; B/Start, dropdown back, capture and foreground gating\n",checks);
+    inputfix_install();
+    CHECK(jumped_at==0x0041A44E && jumped_to==feedback_restart && jumped_size==10);
+    CHECK(jumped_was[8]==0x74 && jumped_was[9]==0x41);
+    printf("PASS %d input checks: retired legacy driver bypass; B/Start, dropdown back, capture and foreground gating; race force feedback guarded\n",checks);
     return 0;
 }

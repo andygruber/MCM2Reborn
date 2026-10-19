@@ -77,7 +77,7 @@
 #define GAME_TITLE "MCM2:Reborn"
 
 /* Its version, as the menus (tools/modern/reborn_kit.py, VERSION) and the launcher show it. */
-#define GAME_VERSION "0.3.10"
+#define GAME_VERSION "0.3.9.1"
 
 typedef struct dev_switches {
     BOOL trace_screens;
@@ -229,6 +229,10 @@ void inputfix_install(void);
 /* The computer riders' animation run once a frame, not in their fixed steps (bikeai.c). */
 void ai_install(void);
 
+/* A jump to `to` written over the `size` bytes at `at` (5 to 16), the rest nops; FALSE, and nothing
+   written, unless those bytes are still `was`, the game's. */
+BOOL jump_over(DWORD at, const BYTE* was, int size, void (*to)(void));
+
 /* The terrain grid's cells kept inside it (gridfix.c). */
 void gridfix_install(void);
 
@@ -271,7 +275,8 @@ BOOL  pad_held(int action);
 BOOL  pad_start_down(void);
 BOOL  pad_back_down(void);
 BOOL  pad_accept_down(void);
-BOOL  pad_menu_axes(float* x, float* y);
+int   pad_menu_direction(void);
+int   pad_menu_tab(void);
 BOOL  pad_connected(void);
 BOOL  pad_binding_active(void);
 BOOL  pad_menus_active(void);

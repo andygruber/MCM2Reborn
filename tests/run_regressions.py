@@ -33,7 +33,7 @@ def main():
         (ROOT / "code/mcm2/dlgprocs.c").read_text(encoding="utf-8"),
         "static void menu_movie_pause("), encoding="utf-8")
     (out / "align_under_test.inc").write_text(function(source, "static DWORD reader_alignment("), encoding="utf-8")
-    (out / "frame_under_test.inc").write_text(function(source, "static void dialog_pad_frame("), encoding="utf-8")
+    (out / "mark_under_test.inc").write_text(function(source, "static void dialog_pad_mark("), encoding="utf-8")
     counts = (ROOT / "code/mcm2/selectgamepicprocs.c").read_text(encoding="utf-8")
     begin = counts.index("int g_track_counts[6][3]")
     end = counts.index("#endif", begin)

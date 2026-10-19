@@ -1154,26 +1154,36 @@ int __fastcall dialog_slot_14(BYTE* self)
 }
 
 #ifdef OPENMCM2_DEV
-static void dialog_pad_frame(BYTE* self)
+/* A control the pad has chosen shows its own focus picture. One without (a list, a slider, a tab)
+   gets the menus' orange rule under it instead. */
+static void dialog_pad_mark(BYTE* self)
 {
+    static HBRUSH orange;
     gui_user* user = FIELD(self, DLG_USER, gui_user*);
     BYTE* focus = user ? user->focus : NULL;
-    if (pad_navigation_active && focus && FIELD(focus, 0xB8, BYTE*) == self
-        && FIELD(focus, 0x6C, int) && FIELD(focus, 0x70, int)) {
-        void* surface = FIELD(object_screen(self), 0x48, void*);
-        HDC dc = NULL;
-        if (SUCCEEDED(VIRTUAL(surface, 0x44, HRESULT (__stdcall*)(void*, HDC*))(surface, &dc)) && dc) {
-            RECT box = FIELD(focus, 0x2C, RECT);
-            HBRUSH brush = CreateSolidBrush(RGB(255, 196, 0));
-            int i;
-            for (i = 0; i < 3 && box.right > box.left && box.bottom > box.top; i++) {
-                FrameRect(dc, &box, brush);
-                box.left++; box.top++; box.right--; box.bottom--;
-            }
-            DeleteObject(brush);
-            VIRTUAL(surface, 0x68, HRESULT (__stdcall*)(void*, HDC))(surface, dc);
-        }
-    }
+    void* lit;
+    void* surface;
+    HDC dc = NULL;
+    RECT rule;
+    int height;
+
+    if (!pad_navigation_active || !focus || FIELD(focus, 0xB8, BYTE*) != self
+        || !FIELD(focus, 0x6C, int) || !FIELD(focus, 0x70, int))
+        return;
+    lit = FIELD(focus, 0x170, void*);
+    if (lit && lit != FIELD(focus, 0x16C, void*))
+        return;
+    rule = FIELD(focus, 0x2C, RECT);
+    height = (rule.bottom - rule.top) / 16;
+    rule.top = rule.bottom + 2;
+    rule.bottom = rule.top + (height < 2 ? 2 : height > 4 ? 4 : height);
+    surface = FIELD(object_screen(self), 0x48, void*);
+    if (FAILED(VIRTUAL(surface, 0x44, HRESULT (__stdcall*)(void*, HDC*))(surface, &dc)) || !dc)
+        return;
+    if (!orange)
+        orange = CreateSolidBrush(RGB(255, 138, 0));
+    FillRect(dc, &rule, orange);
+    VIRTUAL(surface, 0x68, HRESULT (__stdcall*)(void*, HDC))(surface, dc);
 }
 #endif
 
@@ -1188,7 +1198,7 @@ int __fastcall dialog_draw(BYTE* self)
         draw_frozen(self, FIELD(self, 0x7F44, void*));
 #ifdef OPENMCM2_DEV
     if (!(FIELD(self, 0x25, BYTE) & 4))
-        dialog_pad_frame(self);
+        dialog_pad_mark(self);
 #endif
     if (FIELD(self, 0x7F50, int) && FIELD(self, 0x7F54, DWORD) != FIELD(object_screen(self), 0x1C, DWORD))
         VIRTUAL(self, 0x68, method_0)(self);
@@ -10133,12 +10143,18 @@ BOOL pad_back_from_dialog(void* object)
     return FALSE;
 }
 
+/*
+    The control to go to from `focus` in `direction` (1 up, 2 down, 3 left, 4 right): the nearest
+    that way, preferring one in line. Up and down go round from the last row to the first. With no
+    focus, the control at the top left.
+*/
 static BYTE* pad_focus_in(BYTE* root, BYTE* focus, int direction)
 {
     BYTE walk[0x94];
     BYTE* control;
     BYTE* best = NULL;
-    float score_best = 1e30f;
+    BYTE* round = NULL;
+    float best_score = 1e30f, round_score = 1e30f;
     RECT from = {0, 0, 0, 0};
 
     if (focus)
@@ -10153,30 +10169,128 @@ static BYTE* pad_focus_in(BYTE* root, BYTE* focus, int direction)
         to = FIELD(control, CTL_RECT, RECT);
         if (!focus) {
             score = (float) to.top * 10000 + to.left;
-        } else {
-            dx = (to.left + to.right - from.left - from.right) * 0.5f;
-            dy = (to.top + to.bottom - from.top - from.bottom) * 0.5f;
-            along = direction == 1 ? -dy : direction == 2 ? dy : direction == 3 ? -dx : dx;
-            across = direction <= 2 ? dx : dy;
-            if (along <= 1)
-                continue;
-            if (direction <= 2) {
-                across = to.left > from.right ? (float)(to.left - from.right)
-                       : from.left > to.right ? (float)(from.left - to.right) : 0;
-            } else {
-                across = to.top > from.bottom ? (float)(to.top - from.bottom)
-                       : from.top > to.bottom ? (float)(from.top - to.bottom) : 0;
+            if (score < best_score) {
+                best_score = score;
+                best = control;
             }
-            score = across * across * 16 + along * along
-                  + (dx * dx + dy * dy) * 0.05f;
+            continue;
         }
-        if (score < score_best) {
-            score_best = score;
-            best = control;
+        dx = (to.left + to.right - from.left - from.right) * 0.5f;
+        dy = (to.top + to.bottom - from.top - from.bottom) * 0.5f;
+        along = direction == 1 ? -dy : direction == 2 ? dy : direction == 3 ? -dx : dx;
+        if (direction <= 2)
+            across = to.left > from.right ? (float) (to.left - from.right)
+                   : from.left > to.right ? (float) (from.left - to.right) : 0;
+        else
+            across = to.top > from.bottom ? (float) (to.top - from.bottom)
+                   : from.top > to.bottom ? (float) (from.top - to.bottom) : 0;
+        if (along > 1) {
+            score = across * across * 16 + along * along + (dx * dx + dy * dy) * 0.05f;
+            if (score < best_score) {
+                best_score = score;
+                best = control;
+            }
+        } else if (along < -1 && direction <= 2) {
+            score = across * across * 16 - along * along;   /* the farthest back, in line */
+            if (score < round_score) {
+                round_score = score;
+                round = control;
+            }
         }
     }
     walk_end(walk);
-    return best;
+    return best ? best : round;
+}
+
+/*
+    A screen's tabs are its highest row of radio buttons in one group. The tab `step` along from
+    the one that is on, or NULL at either end or on a screen without tabs.
+*/
+static BYTE* pad_tab_beside(BYTE* root, int step)
+{
+    BYTE walk[0x94];
+    BYTE* control;
+    BYTE* top = NULL;
+    BYTE* row[16];
+    int count = 0, on = -1, i;
+
+    walk_begin(walk, NULL, root, 1, RADIO_CLASS);
+    while ((control = walk_next(walk)) != NULL)
+        if (pad_focusable(control) && (!top || FIELD(control, CTL_RECT, RECT).top < FIELD(top, CTL_RECT, RECT).top))
+            top = control;
+    walk_end(walk);
+    if (!top)
+        return NULL;
+
+    walk_begin(walk, NULL, root, 1, RADIO_CLASS);
+    while ((control = walk_next(walk)) != NULL && count < 16) {
+        LONG below = FIELD(control, CTL_RECT, RECT).top - FIELD(top, CTL_RECT, RECT).top;
+
+        if (FIELD(control, 0x7C, DWORD) != FIELD(top, 0x7C, DWORD) || below > 8 || !pad_focusable(control))
+            continue;
+        for (i = count++; i > 0 && FIELD(row[i - 1], CTL_RECT, RECT).left > FIELD(control, CTL_RECT, RECT).left; i--)
+            row[i] = row[i - 1];
+        row[i] = control;
+    }
+    walk_end(walk);
+    for (i = 0; i < count; i++)
+        if (option_current_index(row[i]) == 1)
+            on = i;
+    return on >= 0 && on + step >= 0 && on + step < count ? row[on + step] : NULL;
+}
+
+/* Press and release `control` as a click does, so it sends its usual events. */
+static void pad_click(gui_user* user, BYTE* control)
+{
+    gui_user_set_capture(user, NULL, control, NULL);
+    VIRTUAL(control, 0xDC, control_two)(control, NULL, 0, 0);
+    gui_user_apply_focus(user, NULL, FALSE);
+    VIRTUAL(control, 0xE0, control_two)(control, NULL, 0, 0);
+}
+
+/* Step the focused list, drop-down or slider along `direction`; FALSE when it does not go that
+   way (or is at its end), so the focus moves on instead. A held slider speeds up after a second. */
+static BOOL pad_adjust(BYTE* focus, int direction, BOOL held_long)
+{
+    int type = FIELD(focus, CTL_TYPE, int);
+    int done = 0;
+
+    if (type == 6 && (direction >= 3 || FIELD(focus, COMBO_OPEN, BOOL))) {
+        BYTE* list = FIELD(focus, COMBO_LIST, BYTE*);
+        int next = list_selected(list) + (direction == 1 || direction == 3 ? -1 : 1);
+
+        if (next >= 0 && next < list_count(list)) {
+            list_select_all(list, NULL, next);
+            if (!FIELD(focus, COMBO_OPEN, BOOL))
+                VIRTUAL(list, 0x108, list_stepped_slot)(list, NULL, &done);
+        }
+        return TRUE;
+    }
+    if (type == 3 && direction <= 2) {
+        int next = list_selected(focus) + (direction == 1 ? -1 : 1);
+
+        if (next < 0 || next >= list_count(focus))
+            return FALSE;
+        list_select_all(focus, NULL, next);
+        if (*(void***) focus != COMBO_LIST_VTABLE)
+            VIRTUAL(focus, 0x108, list_stepped_slot)(focus, NULL, &done);
+        return TRUE;
+    }
+    if ((type == 7 || type == 8) && direction >= 3) {
+        unsigned range = slider_steps(focus) ? slider_steps(focus) : FIELD(focus, SLIDER_RANGE, unsigned);
+        int step = held_long && range >= 40 ? (int) range / 20 : 1;
+        int value = slider_value(focus) + (direction == 3 ? -step : step);
+        ui_event event;
+
+        value = value < 0 ? 0 : (unsigned) value > range ? (int) range : value;
+        if (value != slider_value(focus)) {
+            slider_set(focus, value, range);
+            ZeroMemory(&event, sizeof event);
+            control_tell(focus, &event, 3);
+        }
+        return TRUE;
+    }
+    return FALSE;
 }
 
 void pad_menu_tick(void* object)
@@ -10185,24 +10299,25 @@ void pad_menu_tick(void* object)
     gui_user* user = manager->user_count ? manager->users[0] : NULL;
     static gui_manager* previous_manager;
     static POINT mouse;
-    static int previous_direction;
-    static DWORD repeat_at;
-    static BOOL accept_was;
-    static BOOL back_was;
+    static int previous_direction, previous_tab;
+    static DWORD repeat_at, held_since;
+    static BOOL accept_was, back_was;
     BYTE* focus;
     BYTE* dialog;
     BYTE* active;
     BYTE* root;
-    float x = 0, y = 0;
     BOOL accept = pad_accept_down();
     BOOL pressed = accept && !accept_was;
     BOOL back = pad_back_down();
     BOOL back_pressed = back && !back_was;
+    int direction = pad_menu_direction();
+    int tab = pad_menu_tab();
+    int tab_pressed = tab != previous_tab ? tab : 0;
     DWORD now = timeGetTime();
-    int direction = 0;
 
     back_was = back;
     accept_was = accept;                 /* held across a dialog transition is not another click */
+    previous_tab = tab;
     if (manager != previous_manager) {
         previous_manager = manager;
         pad_navigation_active = FALSE;
@@ -10214,11 +10329,10 @@ void pad_menu_tick(void* object)
         mouse.y = manager->mouse->y;
         pad_navigation_active = FALSE;
     }
-    if (!user || !input_in_foreground() || pad_binding_active() || !pad_menu_axes(&x, &y)) {
+    if (!user || !input_in_foreground() || pad_binding_active() || direction < 0) {
         previous_direction = 0;
         return;
     }
-    direction = y < 0 ? 1 : y > 0 ? 2 : x < 0 ? 3 : x > 0 ? 4 : 0;
     if (back_pressed) {
         pad_navigation_active = TRUE;
         active = gui_manager_active_dialog(manager);
@@ -10230,7 +10344,7 @@ void pad_menu_tick(void* object)
         previous_direction = 0;
         return;
     }
-    if (!direction && !pressed) {
+    if (!pad_navigation_active && !direction && !pressed && !tab_pressed) {
         previous_direction = 0;
         return;
     }
@@ -10241,54 +10355,39 @@ void pad_menu_tick(void* object)
         dialog = active;
         focus = NULL;
     }
-    if (!dialog || (FIELD(dialog, 0x25, BYTE) & 4) || FIELD(dialog, 0x7F50, int))
+    if (!dialog || (FIELD(dialog, 0x25, BYTE) & 4) || FIELD(dialog, 0x7F50, int)) {
+        previous_direction = direction;
         return;
+    }
     root = dialog;
     while (!FIELD(root, DLG_MODAL, int) && FIELD(root, DLG_PARENT, BYTE*))
         root = FIELD(root, DLG_PARENT, BYTE*);
     pad_navigation_active = TRUE;
+
+    /* A new screen starts on its first control, shown before anything is moved or pressed. */
     if (!focus || !pad_focusable(focus)) {
-        focus = pad_focus_in(root, NULL, direction);
+        focus = pad_focus_in(root, NULL, 0);
         if (focus)
             gui_user_set_capture(user, NULL, focus, NULL);
-    } else if (direction && (direction != previous_direction || (LONG) (now - repeat_at) >= 0)) {
-        int type = FIELD(focus, CTL_TYPE, int);
-        BOOL adjusted = FALSE;
+        previous_direction = direction;
+        repeat_at = now + 350;
+        return;
+    }
+    if (tab_pressed) {
+        BYTE* next = pad_tab_beside(root, tab_pressed);
 
+        if (next)
+            pad_click(user, next);
+        previous_direction = direction;
+        return;
+    }
+    if (direction != previous_direction)
+        held_since = now;
+    if (direction && (direction != previous_direction || (LONG) (now - repeat_at) >= 0)) {
         repeat_at = now + (direction != previous_direction ? 350 : 110);
-        if (type == 6 && (direction >= 3 || FIELD(focus, COMBO_OPEN, BOOL))) {
-            BYTE* list = FIELD(focus, COMBO_LIST, BYTE*);
-            int next = list_selected(list) + (direction == 1 || direction == 3 ? -1 : 1);
-            if (next >= 0 && next < list_count(list)) {
-                int done = 0;
-                list_select_all(list, NULL, next);
-                if (!FIELD(focus, COMBO_OPEN, BOOL))
-                    VIRTUAL(list, 0x108, list_stepped_slot)(list, NULL, &done);
-            }
-            adjusted = TRUE;
-        } else if (type == 3 && direction <= 2) {
-            int selected = list_selected(focus);
-            int next = selected + (direction == 1 ? -1 : 1);
-            if (next >= 0 && next < list_count(focus)) {
-                int done = 0;
-                list_select_all(focus, NULL, next);
-                if (*(void***) focus != COMBO_LIST_VTABLE)
-                    VIRTUAL(focus, 0x108, list_stepped_slot)(focus, NULL, &done);
-                adjusted = TRUE;
-            }
-        } else if ((type == 7 || type == 8) && direction >= 3) {
-            unsigned range = slider_steps(focus) ? slider_steps(focus) : FIELD(focus, SLIDER_RANGE, unsigned);
-            int value = slider_value(focus) + (direction == 3 ? -1 : 1);
-            ui_event event;
-            if (value >= 0 && (unsigned) value <= range) {
-                slider_set(focus, value, range);
-                ZeroMemory(&event, sizeof event);
-                control_tell(focus, &event, 3);
-            }
-            adjusted = TRUE;
-        }
-        if (!adjusted) {
+        if (!pad_adjust(focus, direction, now - held_since >= 1000)) {
             BYTE* next = pad_focus_in(root, focus, direction);
+
             if (next)
                 gui_user_set_capture(user, NULL, next, NULL);
         }
@@ -10296,23 +10395,14 @@ void pad_menu_tick(void* object)
     previous_direction = direction;
     focus = user->focus;
     if (pressed && focus) {
-        if (FIELD(focus, CTL_TYPE, int) == 3 && list_selected(focus) >= 0) {
-            int done = 0;
+        int done = 0;
+
+        if (FIELD(focus, CTL_TYPE, int) == 3 && list_selected(focus) >= 0)
             VIRTUAL(focus, 0x108, list_stepped_slot)(focus, NULL, &done);
-            return;
-        }
-        if (FIELD(focus, CTL_TYPE, int) == 6 && FIELD(focus, COMBO_OPEN, BOOL)) {
-            BYTE* list = FIELD(focus, COMBO_LIST, BYTE*);
-            int done = 0;
-            VIRTUAL(list, 0x108, list_stepped_slot)(list, NULL, &done);
-            return;
-        }
-        /* Use the control's own press/release handlers: buttons, toggles, tabs,
-           combos and bindings all deliver their normal dialog events. */
-        gui_user_set_capture(user, NULL, focus, NULL);
-        VIRTUAL(focus, 0xDC, control_two)(focus, NULL, 0, 0);
-        gui_user_apply_focus(user, NULL, FALSE);
-        VIRTUAL(focus, 0xE0, control_two)(focus, NULL, 0, 0);
+        else if (FIELD(focus, CTL_TYPE, int) == 6 && FIELD(focus, COMBO_OPEN, BOOL))
+            VIRTUAL(FIELD(focus, COMBO_LIST, BYTE*), 0x108, list_stepped_slot)(FIELD(focus, COMBO_LIST, BYTE*), NULL, &done);
+        else
+            pad_click(user, focus);
     }
 }
 #endif

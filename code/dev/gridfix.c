@@ -67,22 +67,6 @@ static __declspec(naked) void leaf_cell(void)
     }
 }
 
-/* A jump to `to` written over `at`, if the bytes there are still the game's; the rest nops. */
-static BOOL jump_over(DWORD at, const BYTE* was, int size, void (*to)(void))
-{
-    BYTE code[8];
-    int i;
-
-    for (i = 0; i < size; i++)
-        if (((const BYTE*) at)[i] != was[i])
-            return FALSE;
-    code[0] = 0xE9;
-    *(DWORD*) (code + 1) = (DWORD) to - (at + 5);
-    for (i = 5; i < size; i++)
-        code[i] = 0x90;
-    return write_protected((void*) at, code, size);
-}
-
 void gridfix_install(void)
 {
     BOOL node = jump_over(NODE_CLAMP, node_was, sizeof node_was, node_cell);
