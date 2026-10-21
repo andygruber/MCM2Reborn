@@ -1542,13 +1542,13 @@ static HRESULT WINAPI s_QueryInterface(IDirectDrawSurface7* self, REFIID iid, vo
         IsEqualGUID(iid, &IID_IUnknown))
     {
         *out = self;
-        ++SELF->refs;
+        ++SELF->top->refs;
         return S_OK;
     }
     if (IsEqualGUID(iid, &IID_IDirectDrawGammaControl))
     {
         *out = &SELF->gamma;
-        ++SELF->refs;
+        ++SELF->top->refs;
         return S_OK;
     }
     if (IsEqualGUID(iid, &IID_IDirectDrawSurface) || IsEqualGUID(iid, &IID_IDirectDrawSurface2) ||
