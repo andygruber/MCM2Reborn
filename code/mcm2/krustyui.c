@@ -176,6 +176,7 @@ static BYTE* dialog_new(size_t size, int line, const char* name, DWORD vtable)
 
 __declspec(noinline) void __fastcall session_load_bikes(BYTE* self);
 __declspec(noinline) void __fastcall session_load_presets(BYTE* self);
+void __fastcall session_build_scene(BYTE* self, void* edx_unused, int stage);
 
 /* ---- Set-up ---- */
 
@@ -286,6 +287,9 @@ BYTE* __fastcall session_setup(BYTE* self, void* edx_unused, BYTE* screen, BOOL 
 
 #ifdef OPENMCM2_DEV
     if ((!game_net || !FIELD(game_net, 0x14, int)) && intro) {
+        /* Straight to the main menu. The intro's wait screens built the garage, so build it here,
+           or the bike and rider pages open on a camera that was never made. */
+        session_build_scene(self, NULL, -1);
         session_go_to(self, NULL, 100);
         gui_manager_show_cursors(session_gui(self), NULL, TRUE);
     }
