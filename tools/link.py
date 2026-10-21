@@ -286,6 +286,10 @@ def main():
         "-FIXED",
         "-ENTRY:" + entry,
 
+        # The whole 4 GB a 64-bit Windows gives a 32-bit process. At high resolutions with
+        # anti-aliasing the GL driver can use up the first 2 GB after a few races, and crashes.
+        "-LARGEADDRESSAWARE",
+
         # uuid.lib is requested by a CRT directive and holds nothing but COM interface GUID
         # constants, which this image already carries in its own data - they are emitted out of
         # Mcm2.exe's .rdata. It lives only in the SDK's um directory, the one path that must stay

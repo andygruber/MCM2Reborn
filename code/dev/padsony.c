@@ -65,6 +65,37 @@ static BOOL CALLBACK find_sony(const DIDEVICEINSTANCEA* instance, void* unused)
     return DIENUM_STOP;
 }
 
+/* The scan's find, opened by the game's thread (g_found set once g_found_pad is written). */
+static DIDEVICEINSTANCEA g_found_pad;
+static volatile LONG g_found;
+static volatile LONG g_scanning;
+
+static BOOL CALLBACK note_sony(const DIDEVICEINSTANCEA* instance, void* unused)
+{
+    (void) unused;
+    if ((instance->guidProduct.Data1 & 0xFFFF) != 0x054C)
+        return DIENUM_CONTINUE;
+    g_found_pad = *instance;
+    InterlockedExchange(&g_found, 1);
+    return DIENUM_STOP;
+}
+
+/* EnumDevices takes over a second on some PCs, even with nothing plugged in. Run on the game's
+   thread once a second with no pad connected, it held every frame of the menus for seconds. */
+static DWORD WINAPI scan_for_sony(void* unused)
+{
+    create8_fn create = (create8_fn) api("dinput8.dll", "DirectInput8Create");
+    IDirectInput8A* input = NULL;
+
+    (void) unused;
+    if (create && SUCCEEDED(create(GetModuleHandleA(NULL), 0x0800, &iid_input8, (void**) &input, NULL))) {
+        IDirectInput8_EnumDevices(input, DI8DEVCLASS_GAMECTRL, note_sony, NULL, DIEDFL_ATTACHEDONLY);
+        IDirectInput8_Release(input);
+    }
+    InterlockedExchange(&g_scanning, 0);
+    return 0;
+}
+
 BOOL sony_pad_read(xinput_state* state, BOOL scan)
 {
     DWORD now = timeGetTime();
@@ -79,9 +110,18 @@ BOOL sony_pad_read(xinput_state* state, BOOL scan)
     }
     if (!g_input)
         return FALSE;
-    if (!g_device && scan && (!g_scanned || now - g_scanned >= 1000)) {
+    if (!g_device && InterlockedExchange(&g_found, 0))
+        find_sony(&g_found_pad, NULL);
+    if (!g_device && scan && !g_scanning && (!g_scanned || now - g_scanned >= 1000)) {
+        HANDLE thread;
+
         g_scanned = now;
-        IDirectInput8_EnumDevices(g_input, DI8DEVCLASS_GAMECTRL, find_sony, NULL, DIEDFL_ATTACHEDONLY);
+        g_scanning = 1;
+        thread = CreateThread(NULL, 0, scan_for_sony, NULL, 0, NULL);
+        if (thread)
+            CloseHandle(thread);
+        else
+            g_scanning = 0;
     }
     if (!g_device)
         return FALSE;
