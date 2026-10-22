@@ -68,13 +68,13 @@ static LONG perf_tenths(LONG ticks)
     return (LONG) ((double) ticks * 10000.0 / (double) g_perf.frequency.LowPart);
 }
 
-/* A frame was shown: count it, and once a second say how the last ones went. */
+/* A frame was shown: count it, and once a second say how the last ones went. Untraced, only a
+   second that held a frame up 50 ms or more says so (the first hundred), for players' logs. */
 static void perf_frame(void)
 {
+    static int hitches_told;
     LONG frame, n;
 
-    if (!dev_settings.trace_display)
-        return;
     if (!g_perf.frame.QuadPart)
     {
         perf_mark(&g_perf.frame);
@@ -86,19 +86,22 @@ static void perf_frame(void)
     g_perf.frames++;
     if (frame > g_perf.worst)
         g_perf.worst = frame;
-    if (perf_since(&g_perf.report) < (LONG) g_perf.frequency.LowPart)
+    if (!g_perf.frequency.LowPart || perf_since(&g_perf.report) < (LONG) g_perf.frequency.LowPart)
         return;
 
     n = g_perf.frames;
-    log_line("[perf] %ld fps, worst frame %ld.%ld ms; a frame: %ld DCs in %ld.%ld ms, %ld readbacks"
-             " (%ld whole) of %ld px in %ld.%ld ms, %ld px blitted in memory, %ld px converted", n,
-             perf_tenths(g_perf.worst) / 10, perf_tenths(g_perf.worst) % 10, g_perf.gdi_calls / n,
-             perf_tenths(g_perf.gdi / n) / 10, perf_tenths(g_perf.gdi / n) % 10, g_perf.reads / n,
-             g_perf.whole_reads / n, g_perf.read_pixels / n,
-             perf_tenths(g_perf.read / n) / 10, perf_tenths(g_perf.read / n) % 10,
-             g_perf.blit_pixels / n, g_perf.converted / n);
-    if (g_perf.whole_reads)
-        log_line("[perf] the whole readbacks followed a bind from %08X", (DWORD) g_perf.whole_after);
+    if (dev_settings.trace_display || (perf_tenths(g_perf.worst) >= 500 && hitches_told < 100)) {
+        hitches_told += !dev_settings.trace_display;
+        log_line("[perf] %ld fps, worst frame %ld.%ld ms; a frame: %ld DCs in %ld.%ld ms, %ld readbacks"
+                 " (%ld whole) of %ld px in %ld.%ld ms, %ld px blitted in memory, %ld px converted", n,
+                 perf_tenths(g_perf.worst) / 10, perf_tenths(g_perf.worst) % 10, g_perf.gdi_calls / n,
+                 perf_tenths(g_perf.gdi / n) / 10, perf_tenths(g_perf.gdi / n) % 10, g_perf.reads / n,
+                 g_perf.whole_reads / n, g_perf.read_pixels / n,
+                 perf_tenths(g_perf.read / n) / 10, perf_tenths(g_perf.read / n) % 10,
+                 g_perf.blit_pixels / n, g_perf.converted / n);
+        if (g_perf.whole_reads)
+            log_line("[perf] the whole readbacks followed a bind from %08X", (DWORD) g_perf.whole_after);
+    }
     g_perf.frames = g_perf.worst = g_perf.gdi = g_perf.read = 0;
     g_perf.gdi_calls = g_perf.reads = g_perf.whole_reads = g_perf.read_pixels = 0;
     g_perf.blit_pixels = g_perf.converted = 0;

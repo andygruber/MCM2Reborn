@@ -222,6 +222,10 @@ static void bind_controls(BYTE* self, const binding* list, int count)
     for (; count; count--, list++) {
         BYTE* control = find(self, list->name, 0);
 
+#ifdef OPENMCM2_DEV
+        if (!control)               /* a layout without it */
+            continue;
+#endif
         VIRTUAL(control, 0xD8, control_bind)(control, NULL, list->value);
     }
 }
@@ -273,6 +277,10 @@ static void ratchet_play(BYTE* self)
 {
     void* sound = (void*) dialog_find(self, NULL, RATCHET);
 
+#ifdef OPENMCM2_DEV
+    if (!sound)                     /* GLOBAL.DAT's, found through the message dialog: none, nothing to play */
+        return;
+#endif
     game_FUN_004c1330(sound, NULL, FIELD(self, 0x30, gui_manager*)->unknown_34c, 0);
     if (sound)
         game_FUN_004c0e00(sound, NULL, 0, 0, 0);
