@@ -1,10 +1,13 @@
 // A release's notes to Discord, in MCM2:Reborn's colours: node announce-release.mjs [tag]
 // (the latest release without one). The webhooks are the DISCORD_WEBHOOK_URL and
 // DISCORD_CHANGELOG_WEBHOOK_URL secrets; GITHUB_REPOSITORY and GITHUB_TOKEN as Actions sets them.
-// DRY_RUN=1 prints the messages instead.
+// The changelog channel's post pings @everyone. DRY_RUN=1 prints the messages instead.
 
 const repo = process.env.GITHUB_REPOSITORY || "xshxdex98/MCM2Reborn";
-const webhooks = [process.env.DISCORD_WEBHOOK_URL, process.env.DISCORD_CHANGELOG_WEBHOOK_URL].filter(Boolean);
+const webhooks = [
+    { url: process.env.DISCORD_WEBHOOK_URL, ping: false },
+    { url: process.env.DISCORD_CHANGELOG_WEBHOOK_URL, ping: true },
+].filter(w => w.url);
 const tag = process.argv[2] || process.env.RELEASE_TAG || "";
 
 const ORANGE = 0xFF8C1A;
@@ -101,12 +104,21 @@ function messages(embeds) {
     return out;
 }
 
+// The first message pings @everyone when `ping` is on.
+function bodies(embeds, ping) {
+    return messages(embeds).map((batch, i) => ({
+        username: "MCM2:Reborn", avatar_url: LOGO, embeds: batch,
+        ...(ping && i === 0 ? { content: "@everyone", allowed_mentions: { parse: ["everyone"] } }
+                            : { allowed_mentions: { parse: [] } }),
+    }));
+}
+
 async function post(webhook, embeds) {
-    for (const batch of messages(embeds)) {
-        const answer = await fetch(webhook, {
+    for (const body of bodies(embeds, webhook.ping)) {
+        const answer = await fetch(webhook.url, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ username: "MCM2:Reborn", avatar_url: LOGO, embeds: batch, allowed_mentions: { parse: [] } }),
+            body: JSON.stringify(body),
         });
         if (!answer.ok)
             throw new Error(`Discord: ${answer.status} ${await answer.text()}`);
@@ -118,7 +130,7 @@ if (!webhooks.length && !process.env.DRY_RUN)
     throw new Error("Add DISCORD_WEBHOOK_URL or DISCORD_CHANGELOG_WEBHOOK_URL as a repository secret.");
 const r = await release();
 if (process.env.DRY_RUN)
-    console.log(JSON.stringify(messages(embedsFor(r)), null, 1));
+    console.log(JSON.stringify(bodies(embedsFor(r), true), null, 1));
 else if (r.draft || r.prerelease)
     console.log(`${r.tag_name} is a draft or pre-release: not announced`);
 else
