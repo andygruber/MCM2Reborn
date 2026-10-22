@@ -158,6 +158,83 @@ static __declspec(naked) void tags_next(void)
 }
 
 /*
+    The radar (0x00521540) puts each rider's name tag over the bike, the tag at the rider's place
+    in its list. The overlay has tags for the first 11, then two of its own (one drawn at a fixed
+    place, the screen's top left), so the riders after 11 moved those two and read past them as
+    tags. As with the game's 11, a rider past 11 has no tag: the radar leaves the tags alone for
+    them, and finds a tag by its bike among the first 11 only. ebx the rider.
+*/
+#define TAG_UNSEEN      0x0052191E  /* mov eax, [edx + 19Ch]: the overlay, a tag hidden */
+#define TAG_SEEN        0x005217BE  /* mov eax, [ecx + 19Ch]: the overlay, a tag placed */
+#define TAG_FIND        0x0052172F  /* mov eax, [ebp + 160h]: the riders, a tag found by its bike */
+#define TAG_FIND_NEXT   0x00521794  /* the same, the loop's test */
+#define TAGS_MOST       11
+
+static const BYTE tag_unseen_was[] = { 0x8B, 0x82, 0x9C, 0x01, 0x00, 0x00 };
+static const BYTE tag_seen_was[] = { 0x8B, 0x81, 0x9C, 0x01, 0x00, 0x00 };
+static const BYTE tag_find_was[] = { 0x8B, 0x85, 0x60, 0x01, 0x00, 0x00 };
+
+static __declspec(naked) void tag_unseen(void)
+{
+    __asm {
+        mov eax, dword ptr [edx + 19Ch]
+        cmp ebx, TAGS_MOST
+        jl back
+        xor eax, eax
+    back:
+        push TAG_UNSEEN + 6
+        ret
+    }
+}
+
+static __declspec(naked) void tag_seen(void)
+{
+    __asm {
+        mov eax, dword ptr [ecx + 19Ch]
+        cmp ebx, TAGS_MOST
+        jl back
+        xor eax, eax
+    back:
+        push TAG_SEEN + 6
+        ret
+    }
+}
+
+static __declspec(naked) void tag_find(void)
+{
+    __asm {
+        mov eax, dword ptr [ebp + 160h]
+        cmp eax, TAGS_MOST
+        jle back
+        mov eax, TAGS_MOST
+    back:
+        push TAG_FIND + 6
+        ret
+    }
+}
+
+static __declspec(naked) void tag_find_next(void)
+{
+    __asm {
+        mov eax, dword ptr [ebp + 160h]
+        cmp eax, TAGS_MOST
+        jle back
+        mov eax, TAGS_MOST
+    back:
+        push TAG_FIND_NEXT + 6
+        ret
+    }
+}
+
+static BOOL radar_tags_install(void)
+{
+    return jump_over(TAG_UNSEEN, tag_unseen_was, sizeof tag_unseen_was, tag_unseen)
+        && jump_over(TAG_SEEN, tag_seen_was, sizeof tag_seen_was, tag_seen)
+        && jump_over(TAG_FIND, tag_find_was, sizeof tag_find_was, tag_find)
+        && jump_over(TAG_FIND_NEXT, tag_find_was, sizeof tag_find_was, tag_find_next);
+}
+
+/*
     The native code's uses of the entrants, each with the 32-bit offset from game_main in it at
     `at` (scratchpad riders/gen_entrants.py makes these from the game): each offset moves by as
     much as the table does.
@@ -360,6 +437,8 @@ void riders_install(void)
     enlarge("a hosted session's players", SITES(session_sites));
     log_line("dev build: the riders' name tags %s", jump_over(TAGS_NEXT, tags_next_was,
              sizeof tags_next_was, tags_next) ? "for the first 11" : "left as they are (not the game's as known)");
+    log_line("dev build: the radar's name tags %s", radar_tags_install() ? "for the first 11"
+             : "left as they are (not the game's as known)");
 }
 
 /* The most riders a single race may have: the player and the computers. */
