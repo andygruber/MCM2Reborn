@@ -34,6 +34,7 @@
 #define race_route      FIELD(game_main, 0x2DA4, BYTE)              /* race settings 0x34 */
 #define race_track      ((const char*) game_main + 0x2DA6)
 #define bike_cc         FIELD(game_main, 0x1550, int)
+#define engine_sizes    ((const int*) 0x00572BEC)   /* 125, 250, 400, 500, 600 */
 #define playing_back    FIELD(game_main, 0x3428, int)
 #define profile_name    ((const char*) game_main + 0x578)
 
@@ -346,6 +347,67 @@ static void lock_ready(void)
         InitializeCriticalSection(&g_lock);
 }
 
+/* The HUD's word on the last lap (leaders_notice), and the lap last sent from this race. */
+static struct {
+    char  words[64];
+    int   tone;
+    DWORD at;
+} g_notice;
+static char  g_lap_sent[160];
+static DWORD g_lap_sent_at;
+
+#define NOTICE_MS       4500    /* shown, the last 500 fading */
+#define FRESH_LAP_MS    30000   /* the server's place told for a lap sent this long ago */
+
+static void notice(int tone, const char* words)
+{
+    lock_ready();
+    EnterCriticalSection(&g_lock);
+    lstrcpynA(g_notice.words, words, sizeof g_notice.words);
+    g_notice.tone = tone;
+    g_notice.at = timeGetTime();
+    LeaveCriticalSection(&g_lock);
+}
+
+int leaders_notice(char* words, int size, DWORD* age)
+{
+    int tone = NOTICE_NONE;
+
+    if (!g_notice.tone)
+        return NOTICE_NONE;
+    EnterCriticalSection(&g_lock);
+    *age = timeGetTime() - g_notice.at;
+    if (*age < NOTICE_MS) {
+        lstrcpynA(words, g_notice.words, size);
+        tone = g_notice.tone;
+    }
+    LeaveCriticalSection(&g_lock);
+    return tone;
+}
+
+/* The server's "ok best rank riders" for the lap just ridden, as the HUD says it. */
+static void notice_place(const char* line, char* answer)
+{
+    char* fields[4];
+    char words[64];
+    BOOL fresh;
+    int ms, rank;
+
+    EnterCriticalSection(&g_lock);
+    fresh = !lstrcmpA(line, g_lap_sent) && timeGetTime() - g_lap_sent_at < FRESH_LAP_MS;
+    LeaveCriticalSection(&g_lock);
+    if (!fresh || split(answer, fields, 4) != 4 || lstrcmpA(fields[0], "ok"))
+        return;
+    ms = number(fields[1]);
+    rank = number(fields[2]);
+    if (rank == 1)
+        wsprintfA(words, "TRACK RECORD\t%d:%02d.%03d", ms / 60000, ms / 1000 % 60, ms % 1000);
+    else
+        wsprintfA(words, "NEW BEST, P%d OF %d ONLINE\t%d:%02d.%03d", rank, number(fields[3]),
+                  ms / 60000, ms / 1000 % 60, ms % 1000);
+    notice(rank == 1 ? NOTICE_BEST : NOTICE_GOOD, words);
+}
+
 /* Under g_lock. */
 static void pending_read(void)
 {
@@ -413,6 +475,8 @@ static DWORD WINAPI pending_send(void* unused)
             break;
         if (status != 200)
             log_line("leaderboard: the server turned a lap away (%lu %s): %s", status, answer, line);
+        else
+            notice_place(line, answer);
 
         EnterCriticalSection(&g_lock);
         if (g_pending_count > 0 && !lstrcmpA(g_pending[0], line)) {
@@ -488,7 +552,9 @@ static void pending_add(int kind, int cc, const char* track, int ms, const char*
         __movsb((unsigned char*) g_pending[0], (const unsigned char*) g_pending[1], (PENDING_MOST - 1) * sizeof g_pending[0]);
         g_pending_count--;
     }
-    wsprintfA(g_pending[g_pending_count++], "%d\t%d\t%s\t%d\t%s", kind, cc, track, ms, name);
+    wsprintfA(g_pending[g_pending_count], "%d\t%d\t%s\t%d\t%s", kind, cc, track, ms, name);
+    lstrcpynA(g_lap_sent, g_pending[g_pending_count++], sizeof g_lap_sent);
+    g_lap_sent_at = timeGetTime();
     pending_write();
     LeaveCriticalSection(&g_lock);
     pending_kick();
@@ -507,14 +573,32 @@ static void today(char* date)
     wsprintfA(date, "%04d-%02d-%02d", now.wYear, now.wMonth, now.wDay);
 }
 
-/* The race's board: its track, and for a Baja or enduro route that route. */
+/* The class the game puts the race's bike in (krustyui.c, engine_class), by its engine size. */
+static int bike_class(void)
+{
+    int cc = bike_cc, k;
+
+    if (cc <= engine_sizes[0])
+        return engine_sizes[0];
+    if (cc >= engine_sizes[4])
+        return engine_sizes[4];
+    for (k = 1; k < 4; k++)
+        if (cc > engine_sizes[k - 1] && cc < engine_sizes[k + 1])
+            return engine_sizes[k];
+    return engine_sizes[1];
+}
+
+/* The race's board: its track as the game shows it, and for a Baja or enduro route that route. */
 static void race_board(char* track)
 {
+    int route = race_kind == 1 || race_kind == 5 ? race_route : 0;
     char name[48];
 
+    if (track_board_name(race_kind, race_track, route, track))
+        return;
     lstrcpynA(name, race_track, sizeof name);
-    if ((race_kind == 1 || race_kind == 5) && race_route)
-        wsprintfA(track, "%s ROUTE %d", name, race_route);
+    if (route)
+        wsprintfA(track, "%s ROUTE %d", name, route);
     else
         lstrcpynA(track, name, 64);
 }
@@ -556,6 +640,7 @@ void leaders_watch(void)
     static BYTE* watched;
     static unsigned laps;
     static DWORD off_since;         /* when the rider left the course, 0 on it */
+    static char track[64];          /* the race's board */
     static BOOL void_lap;           /* this lap does not count */
     BYTE* race = game_main ? game_FUN_0045e300(FIELD(game_main, 0x570, BYTE*)) : NULL;
     BYTE* me = race ? FIELD(race, 0x38, BYTE*) : NULL;
@@ -571,6 +656,7 @@ void leaders_watch(void)
         laps = now;
         off_since = 0;
         void_lap = FALSE;
+        race_board(track);
         pending_kick();             /* laps left from before go now, off the game's thread */
         return;
     }
@@ -580,6 +666,8 @@ void leaders_watch(void)
         else if (!void_lap && timeGetTime() - off_since > OFF_COURSE_MS) {
             void_lap = TRUE;
             log_line("leaderboard: off the course, lap %u not counted", now + 1);
+            if (now >= 1)           /* the first lap is never counted: nothing to tell */
+                notice(NOTICE_BAD, "LAP NOT COUNTED\tOFF THE COURSE");
         }
     } else {
         off_since = 0;
@@ -589,11 +677,15 @@ void leaders_watch(void)
     laps = now;
     if (now >= 2 && !void_lap && rider_last(me) > 1.0f && profile_name[0]) {
         int ms = (int) (rider_last(me) * 1000 + 0.5f);
-        char track[64];
 
-        race_board(track);
-        if (lap_keep(race_kind, bike_cc, track, profile_name, ms))
-            log_line("leaderboard: %s's best lap of %s, %d.%03d s", profile_name, track, ms / 1000, ms % 1000);
+        if (lap_keep(race_kind, bike_class(), track, profile_name, ms)) {
+            char words[64];
+
+            log_line("leaderboard: %s's best lap of %s, %d.%03d s, a %dcc bike in the %d class", profile_name, track,
+                     ms / 1000, ms % 1000, bike_cc, bike_class());
+            wsprintfA(words, "NEW BEST LAP\t%d:%02d.%03d", ms / 60000, ms / 1000 % 60, ms % 1000);
+            notice(NOTICE_BEST, words);
+        }
     }
     void_lap = FALSE;
     off_since = rider_on_course(me) || (race_kind != 2 && race_kind != 3) ? 0 : timeGetTime() | 1;
@@ -742,6 +834,22 @@ int leaders_board(int kind, int cc, const char* track, leader* board, int most, 
     }
     game_FUN_00539a96(board, n, sizeof *board, by_time);
     return n;
+}
+
+int leaders_race(char* track)
+{
+    race_board(track);
+    return bike_class();
+}
+
+int leaders_mine(const leader* board, int n)
+{
+    int i;
+
+    for (i = 0; profile_name[0] && i < n; i++)
+        if (!lstrcmpiA(board[i].name, profile_name))
+            return i;
+    return -1;
 }
 
 /* Into `tracks` (n of them already, at most `most`) a track not yet among them; the count. */

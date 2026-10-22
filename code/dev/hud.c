@@ -489,6 +489,37 @@ static void laps_box(const hud_view* v)
     }
 }
 
+/* The leaderboard's word on the last lap, a small chip under the lap times that fades in and out. */
+static void lap_notice(const hud_view* v)
+{
+    char words[64], *detail;
+    DWORD age;
+    int tone = leaders_notice(words, sizeof words, &age);
+    float x = MARGIN, y = MARGIN + (v->last_ms > 0 || v->best_ms > 0 ? 264 : 172), fade, w;
+    colour glass = GLASS, edge = EDGE, paper = PAPER, mark;
+
+    if (tone == NOTICE_NONE)
+        return;
+    detail = words;
+    while (*detail && *detail != '\t')
+        detail++;
+    if (*detail)
+        *detail++ = 0;
+    mark = tone == NOTICE_BEST ? ORANGE : tone == NOTICE_GOOD ? GREEN : RED;
+    fade = age < 150 ? age / 150.f : age > 4000 ? (4500 - age) / 500.f : 1;
+    glass.a *= fade;
+    edge.a *= fade;
+    paper.a *= fade;
+    mark.a *= fade;
+    w = 24 + words_width(TEXT, 18, words) + (*detail ? 14 + words_width(TEXT, 18, detail) : 0) + 22;
+    rounded(x, y, x + w, y + 44, 10, glass);
+    rounded_edge(x, y, x + w, y + 44, 10, 1.5f, edge);
+    rounded(x, y + 10, x + 6, y + 34, 3, mark);
+    say(TEXT, 18, x + 24, y + 29, LEFT, paper, words);
+    if (*detail)
+        say(TEXT, 18, x + 24 + words_width(TEXT, 18, words) + 14, y + 29, LEFT, mark, detail);
+}
+
 /* The track fitted into the map's room, north up, its aspect kept. */
 static void map_fit(const hud_view* v, const float room[4], float* scale, float* ox, float* oy)
 {
@@ -709,6 +740,7 @@ void hud_draw(int w, int h)
         race_strip(&v);
         gaps_bar(&v);
         laps_box(&v);
+        lap_notice(&v);
     }
     if (v.show_map)
         track_map(&v);

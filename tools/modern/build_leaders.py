@@ -56,7 +56,8 @@ def build(data):
     screen.add("LstTracks", **keys)
 
     kit.panel(board, BOARD, 230)
-    text(screen, "TxtBoard", (BOARD[0] + 36, BOARD[1] + 22, BOARD[2] - 36, BOARD[1] + 68), 34, PAPER)
+    text(screen, "TxtBoard", (BOARD[0] + 36, BOARD[1] + 22, BOARD[2] - 500, BOARD[1] + 68), 34, PAPER)
+    text(screen, "TxtMine", (BOARD[2] - 480, BOARD[1] + 30, BOARD[2] - 36, BOARD[1] + 68), 24, ORANGE, "RIGHT")
     text(screen, "TxtBoardInfo", (BOARD[0] + 36, BOARD[1] + 70, BOARD[2] - 36, BOARD[1] + 102), 22, GREY, bold=False)
     head_y = BOARD[1] + 132
     for words, x in (("#", 36), ("RIDER", 120), ("BEST LAP", 640), ("SET", 900)):

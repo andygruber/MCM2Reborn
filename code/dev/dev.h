@@ -338,12 +338,22 @@ void leaders_watch(void);
 /* A board, best first: the server's once it has answered (*state LEADERS_ONLINE; asked for by a
    thread, and again when its answer is old), else this computer's. */
 int  leaders_board(int kind, int cc, const char* track, leader* board, int most, int* state);
+/* The last race's board: its track into `track` (64), its bike class returned. */
+int  leaders_race(char* track);
+/* The row of the board that is the chosen profile's, or -1. */
+int  leaders_mine(const leader* board, int n);
 /* Into `tracks` after the `n` there, those with laps here or on the server; the count. */
 int  leaders_tracks(int kind, int cc, char (*tracks)[64], int n, int most);
 /* Changes when an answer from the server is in: the screen shows it again. */
 LONG leaders_version(void);
+/* The HUD's word on the last lap, if it is new enough to show: its tone (NOTICE_NONE when there
+   is none), its words ("LABEL<TAB>detail") and how long ago it was said, in ms. */
+enum { NOTICE_NONE, NOTICE_BEST, NOTICE_GOOD, NOTICE_BAD };
+int  leaders_notice(char* words, int size, DWORD* age);
 /* An event kind's tracks in the game (a Baja or enduro one a route each), as the boards name them. */
 int  track_names(int kind, char (*names)[64], int most);
+/* The board name of `file` (with `route` for a Baja or enduro one): FALSE when the game has no such track. */
+BOOL track_board_name(int kind, const char* file, int route, char* name);
 
 /*
     Files from the other players in a multiplayer lobby (code/mcm2/share.c): the race's track from

@@ -4488,16 +4488,18 @@ static void leaders_tracks_fill(void)
 static void leaders_last_race(void)
 {
     static char seen[64];
-    const char* track = (const char*) game_main + 0x2DA6;
-    int kind = FIELD(game_main, 0x2D74, int), cc = FIELD(game_main, 0x1550, int), i;
+    const char* file = (const char*) game_main + 0x2DA6;
+    int kind = FIELD(game_main, 0x2D74, int), cc, i;
+    char track[64];
 
-    if (!track[0] || !lstrcmpiA(track, seen))
+    if (!file[0] || !lstrcmpiA(file, seen))
         return;
-    lstrcpynA(seen, track, sizeof seen);
+    lstrcpynA(seen, file, sizeof seen);
     for (i = 0; i < KINDS_COUNT && leader_kinds[i].kind != kind; i++)
         ;
     if (i == KINDS_COUNT)
         return;
+    cc = leaders_race(track);
     g_leaders_kind = kind;
     for (i = 0; i < CLASSES_COUNT; i++)
         if (leader_classes[i].cc == cc)
@@ -4510,11 +4512,11 @@ static void leaders_refresh(BYTE* self, BOOL tracks_too)
 {
     BYTE* list = tracks_too ? dialog_find_control(self, NULL, "LstTracks", 3) : NULL;
     char name[32], words[160];
-    leader board[BOARD_ROWS];
+    leader board[BOARD_MOST];
     const char* kind_name = "";
     const char* class_name = "";
     int state = LEADERS_LOCAL;
-    int i, n, chosen = -1;
+    int i, n, mine, chosen = -1;
 
     for (i = 0; i < KINDS_COUNT; i++) {
         wsprintfA(name, "BtnKind%d", leader_kinds[i].kind);
@@ -4549,9 +4551,16 @@ static void leaders_refresh(BYTE* self, BOOL tracks_too)
     if (list && chosen >= 0)
         list_select_data(list, NULL, (DWORD) chosen);
 
-    n = chosen >= 0 ? leaders_board(g_leaders_kind, g_leaders_cc, g_leaders_track, board, BOARD_ROWS, &state) : 0;
+    n = chosen >= 0 ? leaders_board(g_leaders_kind, g_leaders_cc, g_leaders_track, board, BOARD_MOST, &state) : 0;
     capitals(words, chosen >= 0 ? g_leaders_track : "", sizeof words);
     leaders_write(self, "TxtBoard", words);
+    mine = leaders_mine(board, n);
+    words[0] = 0;
+    if (mine >= 0)
+        wsprintfA(words, "YOUR BEST  %d:%02d.%03d  \xB7  P%d OF %d%s", board[mine].ms / 60000,
+                  board[mine].ms / 1000 % 60, board[mine].ms % 1000, mine + 1, n, n == BOARD_MOST ? "+" : "");
+    leaders_write(self, "TxtMine", words);
+    n = n < BOARD_ROWS ? n : BOARD_ROWS;
     wsprintfA(words, "%s  \xB7  %s  \xB7  BEST LAPS FROM THE SECOND LAP ON", kind_name, class_name);
     leaders_write(self, "TxtBoardInfo", words);
     leaders_write(self, "TxtSource", state == LEADERS_ONLINE ? "ONLINE LEADERBOARD  \xB7  EVERY RIDER"
