@@ -179,6 +179,8 @@ void dev_install(void)
             g_pad.response = 20;
             g_pad.sensitivity = 90;
         }
+        if (g_pad.sensitivity < PAD_SENSITIVITY_LEAST || g_pad.sensitivity > PAD_SENSITIVITY_MOST)
+            g_pad.sensitivity = 90;
         for (a = 0; a < PAD_ACTIONS; a++)
             if (pad_keys[a]) {
                 int control = (int) read("gamepad", pad_keys[a], g_pad.bind[a], SETTINGS_FILE);

@@ -407,7 +407,6 @@ static const int lean_values[] = { 0, 100, 200, 300, 352, 400, 500, 600 };
 static const int ai_rate_values[] = { 0, 30 };
 static const int riders_values[] = { 11, 16, 20, 24, 30 };
 static const int response_values[] = { 10, 15, 20, 30 };
-static const int sensitivity_values[] = { 40, 50, 60, 70, 80, 90, 100 };
 static const int smoothing_values[] = { 0, 30, 60, 120 };
 static const int deadzone_values[] = { 5, 10, 15, 20, 25, 30 };
 static const int stick_values[] = { 0, 1 };
@@ -444,7 +443,6 @@ static const struct reborn_row {
     ROW("MultPadOn", on_off_values, &g_pad.on),
     ROW("MultPadResponse", response_values, &g_pad.response),
     ROW("MultPadDeadzone", deadzone_values, &g_pad.deadzone),
-    ROW("MultPadSensitivity", sensitivity_values, &g_pad.sensitivity),
     ROW("MultPadSmooth", smoothing_values, &g_pad.smoothing),
     ROW("MultPadLean", stick_values, &g_pad.lean_stick),
     ROW("MultPadDirect", on_off_values, &g_pad.analog_di),
@@ -495,7 +493,7 @@ static void row_words(const struct reborn_row* row, int value, char* words)
         lstrcpyA(words, value == 10 ? "STRAIGHT" : value == 15 ? "SMOOTH" : value == 20 ? "SOFT" : "THE GAME'S (CUBED)");
     else if (row->values == smoothing_values)
         lstrcpyA(words, value == 0 ? "OFF" : value == 30 ? "LIGHT" : value == 60 ? "MEDIUM" : "HEAVY");
-    else if (row->values == deadzone_values || row->values == sensitivity_values)
+    else if (row->values == deadzone_values)
         wsprintfA(words, "%d%%", value);
     else if (row->values == stick_values)
         lstrcpyA(words, value ? "RIGHT STICK" : "LEFT STICK");
@@ -589,6 +587,39 @@ static void pad_binds_show(BYTE* self)
     }
 }
 
+/* STEERING SENSITIVITY: a slider in steps of 1%, its value beside it. */
+#define SENSITIVITY_SLIDER  "SldPadSensitivity"
+#define SENSITIVITY_TEXT    "TxtPadSensitivity"
+
+static void sensitivity_show(BYTE* self, BOOL move_slider)
+{
+    BYTE* slider = find(self, SENSITIVITY_SLIDER, 8);
+    BYTE* text = find(self, SENSITIVITY_TEXT, 12);
+    char words[8];
+
+    if (slider && move_slider) {
+        slider_set_steps(slider, NULL, PAD_SENSITIVITY_MOST - PAD_SENSITIVITY_LEAST + 1);
+        slider_set_value(slider, NULL, g_pad.sensitivity - PAD_SENSITIVITY_LEAST,
+                         PAD_SENSITIVITY_MOST - PAD_SENSITIVITY_LEAST);
+    }
+    if (text) {
+        wsprintfA(words, "%d%%", g_pad.sensitivity);
+        control_set_text(text, NULL, words);
+    }
+}
+
+static BOOL sensitivity_slid(BYTE* self, const ui_event* event, BOOL let_go)
+{
+    if (!named(event, SENSITIVITY_SLIDER))
+        return FALSE;
+    g_pad.sensitivity = PAD_SENSITIVITY_LEAST
+                        + slider_value_at((BYTE*) event->c, NULL, PAD_SENSITIVITY_MOST - PAD_SENSITIVITY_LEAST);
+    sensitivity_show(self, FALSE);
+    if (let_go)
+        dev_pad_save();
+    return TRUE;
+}
+
 static void pad_bind_stop(BYTE* self)
 {
     g_binding = -1;
@@ -652,7 +683,13 @@ static void __fastcall reborn_page_handle(BYTE* self, void* edx_unused, ui_event
         g_binding = -1;
         reborn_rows_show(self);
         pad_binds_show(self);
+        sensitivity_show(self, TRUE);
         dialog_notify_controls(self, NULL, 0);
+    } else if (event->type == EVENT_SLIDE) {
+        if (sensitivity_slid(self, event, FALSE))
+            ratchet_play(self);
+    } else if (event->type == EVENT_SLIDE_END || event->type == EVENT_SLIDE_HOLD) {
+        sensitivity_slid(self, event, TRUE);
     } else if (event->type == EVENT_CLICK) {
         if (!pad_bind_click(self, event))
             reborn_rows_keep(self);

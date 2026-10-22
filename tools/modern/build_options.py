@@ -220,7 +220,7 @@ REBORN_COLUMNS = (
 # code/dev/pad.c). Actions 0 to 3, steering and lean, are the sticks.
 PAD_COLUMNS = (
     ("STICKS", (("MultPadOn", "CONTROLLER SUPPORT"), ("MultPadResponse", "STEERING RESPONSE"),
-                ("MultPadDeadzone", "STICK DEAD ZONE"), ("MultPadSensitivity", "STEERING SENSITIVITY"),
+                ("MultPadDeadzone", "STICK DEAD ZONE"), ("SldPadSensitivity", "STEERING SENSITIVITY"),
                 ("MultPadSmooth", "STEERING SMOOTHING"), ("MultPadLean", "LEAN WITH"))),
     ("RIDING", (("BtnPad4", "ACCELERATE"), ("BtnPad5", "BRAKE"), ("BtnPad12", "CLUTCH"),
                 ("BtnPad13", "BACK UP"), ("BtnPad6", "STUNTS 1-8"), ("BtnPad7", "STUNTS 9-16"))),
@@ -246,6 +246,18 @@ def rows_page(data, stem, columns_rows, note):
                 keys = {"TextColor": colorref(PAPER)}
                 keys.update(font(20, PAPER, "CENTER"))
                 screen.button(name, where, button_states(board, where, ""), keep_text=True, **keys)
+            elif name.startswith("Sld"):            # a slider, its value in words beside it
+                row = rows_area(area, top, k)
+                chip(board, row, label)
+                bar = (row[0] + (row[2] - row[0]) * 0.5, row[1] + 16, row[2] - 128, row[3] - 16)
+                screen.add(name, Type="HSCROLLBAR")
+                screen.set(name, Anchor="", **scroll_bar(screen, board, name, bar))
+                text = "Txt" + name[3:]
+                screen.add(text, Type="STATICTEXT")
+                keys = {"Xywh": xywh((row[2] - 112, row[1], row[2] - 22, row[3]), screen.origin),
+                        "TextLMargin": "0", "TextTMargin": "0", "TextAlignV": "MIDDLE", "Anchor": ""}
+                keys.update(font(24, PAPER, "RIGHT"))
+                screen.set(text, **keys)
             else:                                   # clicked through
                 screen.add(name, Type="MULTISTATE", SoundPush='"Beep"')
                 words(screen, board, name, rows_area(area, top, k), label, size=24, split=0.5)

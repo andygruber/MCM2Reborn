@@ -252,6 +252,8 @@ enum pad_control {
     PAD_CONTROLS
 };
 
+#define PAD_SENSITIVITY_LEAST 20
+#define PAD_SENSITIVITY_MOST 100          /* pad.c's steering is not clamped after it */
 #define PAD_ACTIONS 14                  /* the game's: steer left, right, lean forward, back, ... */
 
 typedef struct pad_options {
@@ -261,7 +263,7 @@ typedef struct pad_options {
     int lean_stick;                     /* 0 the left stick leans, 1 the right */
     int analog_di;                      /* DirectInput game pads (a DualSense) steer by their axes */
     int bind[PAD_ACTIONS];              /* each action's control (pad_control); 0..3 are the sticks */
-    int sensitivity;                    /* percent of full lock at the stick's edge */
+    int sensitivity;                    /* percent of full lock at the stick's edge, 20 to 100 */
     int smoothing;                      /* ms the stick's steering is eased over, 0 none */
 } pad_options;
 
