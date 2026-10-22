@@ -4968,10 +4968,18 @@ BYTE* __fastcall slider_construct(BYTE* self, void* edx_unused, int type, DWORD 
 }
 
 /* Vtable slot 59: copy the value out to the bound int, or (`out` FALSE) take it from there. */
+#ifdef OPENMCM2_DEV
+static int slider_track(BYTE* self);
+#endif
+
 PORT(0x00475C50)
 void __fastcall slider_commit(BYTE* self, void* edx_unused, BOOL out)
 {
     (void) edx_unused;
+#ifdef OPENMCM2_DEV
+    if (out && slider_track(self) <= 0)     /* put out of sight (no track): its setting kept */
+        return;
+#endif
     if (out)
         *FIELD(self, EDIT_BOUND, int*) = slider_value(self);
     else
@@ -5229,6 +5237,10 @@ int __fastcall slider_get_value(BYTE* self)
     }
     if (!FIELD(self, SLIDER_RANGE, int) || !width)
         return (int) offset;
+#ifdef OPENMCM2_DEV
+    if (slider_track(self) <= 0)            /* the thumb fills it: the game's divided by 0 */
+        return 0;
+#endif
     if (slider_across(self))
         return (int) (FIELD(self, SLIDER_RANGE, unsigned) * offset
                       / (width - FIELD(self, SLIDER_THUMB, unsigned)));
