@@ -5,4 +5,4 @@ compatibility_date = "2026-10-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "mcm2reborn-leaderboards"
-database_id = "set by: npx wrangler d1 create mcm2reborn-leaderboards"
+database_id = "67958ed4-87a8-43e9-8571-096fc171a5de"

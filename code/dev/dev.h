@@ -325,6 +325,9 @@ typedef struct leader {
 
 extern char g_leaders_url[256];
 
+/* Everyone's boards (tools/leaderboard-worker); [leaderboard] url another, "none" no server. */
+#define LEADERS_URL "https://mcm2reborn-leaderboards.mcm2reborn.workers.dev"
+
 #define BOARD_MOST          100     /* riders a board shows */
 #define TRACKS_FROM_SERVER  256
 

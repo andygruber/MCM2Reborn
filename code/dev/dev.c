@@ -121,7 +121,9 @@ void dev_install(void)
             read_text_fn read_text = (read_text_fn) api("kernel32.dll", "GetPrivateProfileStringA");
 
             if (read_text)
-                read_text("leaderboard", "url", "", g_leaders_url, sizeof g_leaders_url, SETTINGS_FILE);
+                read_text("leaderboard", "url", LEADERS_URL, g_leaders_url, sizeof g_leaders_url, SETTINGS_FILE);
+            if (!lstrcmpiA(g_leaders_url, "none"))
+                g_leaders_url[0] = 0;
         }
         if (dev_settings.online_rate > 60)
             dev_settings.online_rate = 60;
