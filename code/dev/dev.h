@@ -310,6 +310,8 @@ const char* dev_first_rider(void);
 void  dev_first_rider_done(void);
 /* Whether the modern menus are on and UI\modern has `file` (a screen's own layout). */
 BOOL  dev_modern_has(const char* file);
+/* The settings file beside the game (OpenMCM2-Dev.ini, MCM2Reborn.ini for a release). */
+const char* dev_settings_file(void);
 
 /*
     The lap leaderboards (leaders.c): each rider's best lap from the second on, by track, event
@@ -323,12 +325,22 @@ typedef struct leader {
 
 extern char g_leaders_url[256];
 
+#define BOARD_MOST          100     /* riders a board shows */
+#define TRACKS_FROM_SERVER  256
+
+enum { LEADERS_LOCAL, LEADERS_LOADING, LEADERS_ONLINE, LEADERS_OFFLINE };   /* where a board is from */
+
 /* Each frame of a race: a lap finished from the second on kept when it is the rider's best. */
 void leaders_watch(void);
-/* A board, best first, from the server when it answers (*online), else this computer's. */
-int  leaders_board(int kind, int cc, const char* track, leader* board, int most, BOOL* online);
-/* The tracks this computer has laps of, for an event kind and class. */
-int  leaders_tracks(int kind, int cc, char (*tracks)[64], int most);
+/* A board, best first: the server's once it has answered (*state LEADERS_ONLINE; asked for by a
+   thread, and again when its answer is old), else this computer's. */
+int  leaders_board(int kind, int cc, const char* track, leader* board, int most, int* state);
+/* Into `tracks` after the `n` there, those with laps here or on the server; the count. */
+int  leaders_tracks(int kind, int cc, char (*tracks)[64], int n, int most);
+/* Changes when an answer from the server is in: the screen shows it again. */
+LONG leaders_version(void);
+/* An event kind's tracks in the game (a Baja or enduro one a route each), as the boards name them. */
+int  track_names(int kind, char (*names)[64], int most);
 
 /*
     Files from the other players in a multiplayer lobby (code/mcm2/share.c): the race's track from

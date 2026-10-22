@@ -4443,6 +4443,9 @@ static int   g_leaders_kind = 3, g_leaders_cc = 125;
 static char  g_leaders_track[64];
 static char  g_leaders_tracks[TRACKS_MOST][64];
 static int   g_leaders_track_count;
+static LONG  g_leaders_seen;               /* the server's answers shown (leaders_version) */
+
+#define LEADERS_TIMER   0x73A              /* looks for the server's answer */
 
 static BOOL leaders_layout(void)
 {
@@ -4472,26 +4475,13 @@ static void leaders_tab(BYTE* self, const char* name, BOOL chosen)
         control_show(on_button, NULL, chosen, TRUE);
 }
 
-/* The event's tracks, as the game lists them, then any this computer has laps of that it does not
-   (one since taken out of the game, say). */
+/* The event's tracks in the game, then any with laps here or on the server that it has not (a
+   custom track this computer has not got, or one since taken out). */
 static void leaders_tracks_fill(void)
 {
-    char laps[TRACKS_MOST][64];
-    int i, k, n = leaders_tracks(g_leaders_kind, g_leaders_cc, laps, TRACKS_MOST);
+    int n = track_names(g_leaders_kind, g_leaders_tracks, TRACKS_MOST);
 
-    g_leaders_track_count = 0;
-    for (i = 0; i < FIELD(game_session, 0x64, int) && g_leaders_track_count < TRACKS_MOST; i++) {
-        const BYTE* track = FIELD(game_session, 0x60, BYTE*) + i * 0x54;
-
-        if (FIELD(track, 0x4, int) == g_leaders_kind)
-            lstrcpynA(g_leaders_tracks[g_leaders_track_count++], (const char*) track + 0x14, 64);
-    }
-    for (i = 0; i < n && g_leaders_track_count < TRACKS_MOST; i++) {
-        for (k = 0; k < g_leaders_track_count && lstrcmpiA(g_leaders_tracks[k], laps[i]); k++)
-            ;
-        if (k == g_leaders_track_count)
-            lstrcpynA(g_leaders_tracks[g_leaders_track_count++], laps[i], 64);
-    }
+    g_leaders_track_count = leaders_tracks(g_leaders_kind, g_leaders_cc, g_leaders_tracks, n, TRACKS_MOST);
 }
 
 /* Opened after a race not yet seen here, the board is that race's: its event, class and track. */
@@ -4523,7 +4513,7 @@ static void leaders_refresh(BYTE* self, BOOL tracks_too)
     leader board[BOARD_ROWS];
     const char* kind_name = "";
     const char* class_name = "";
-    BOOL online = FALSE;
+    int state = LEADERS_LOCAL;
     int i, n, chosen = -1;
 
     for (i = 0; i < KINDS_COUNT; i++) {
@@ -4559,13 +4549,14 @@ static void leaders_refresh(BYTE* self, BOOL tracks_too)
     if (list && chosen >= 0)
         list_select_data(list, NULL, (DWORD) chosen);
 
-    n = chosen >= 0 ? leaders_board(g_leaders_kind, g_leaders_cc, g_leaders_track, board, BOARD_ROWS, &online) : 0;
+    n = chosen >= 0 ? leaders_board(g_leaders_kind, g_leaders_cc, g_leaders_track, board, BOARD_ROWS, &state) : 0;
     capitals(words, chosen >= 0 ? g_leaders_track : "", sizeof words);
     leaders_write(self, "TxtBoard", words);
     wsprintfA(words, "%s  \xB7  %s  \xB7  BEST LAPS FROM THE SECOND LAP ON", kind_name, class_name);
     leaders_write(self, "TxtBoardInfo", words);
-    leaders_write(self, "TxtSource", online ? "ONLINE LEADERBOARD"
-                                    : g_leaders_url[0] ? "SERVER NOT ANSWERING  \xB7  THIS PC" : "THIS PC'S LAPS");
+    leaders_write(self, "TxtSource", state == LEADERS_ONLINE ? "ONLINE LEADERBOARD  \xB7  EVERY RIDER"
+                                    : state == LEADERS_LOADING ? "ASKING THE SERVER...  \xB7  THIS PC"
+                                    : state == LEADERS_OFFLINE ? "SERVER NOT ANSWERING  \xB7  THIS PC" : "THIS PC'S LAPS");
     for (i = 0; i < BOARD_ROWS; i++) {
         char cell[24];
 
@@ -4583,7 +4574,8 @@ static void leaders_refresh(BYTE* self, BOOL tracks_too)
         leaders_write(self, name, i < n ? board[i].date : "");
     }
     leaders_write(self, "TxtEmpty", n ? "" : chosen < 0 ? "NO TRACKS FOR THIS EVENT"
-                                                        : "NO LAPS ON THIS BOARD YET");
+                                        : state == LEADERS_LOADING ? "" : "NO LAPS ON THIS BOARD YET");
+    g_leaders_seen = leaders_version();
 }
 
 static void __fastcall leaders_handle(BYTE* self, void* edx_unused, ui_event* event)
@@ -4595,6 +4587,13 @@ static void __fastcall leaders_handle(BYTE* self, void* edx_unused, ui_event* ev
     if (event->type == EVENT_OPEN) {
         leaders_last_race();
         leaders_refresh(self, TRUE);
+        if (g_leaders_url[0])
+            dialog_add_timer(self, NULL, LEADERS_TIMER, 250, NULL);
+        return;
+    }
+    if (event->type == EVENT_TIMER && event->a == LEADERS_TIMER) {
+        if (leaders_version() != g_leaders_seen)
+            leaders_refresh(self, TRUE);
         return;
     }
     if (event->type == EVENT_SELECT && clicked(event, "LstTracks")) {

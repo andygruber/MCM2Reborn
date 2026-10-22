@@ -35,10 +35,12 @@ what the game needs; stock Proton does not.
 - Each rider's ping and a ready count show in the lobby. If the host's game drops, the session ends cleanly.
 
 **Leaderboards**
-- A board for every track, event (Baja, Nationals, Supercross, Enduro) and bike class.
+- Live boards shared by every player, for every track, event (Baja and Enduro by route, Nationals,
+  Supercross) and bike class. Custom tracks show by name even if you do not have them.
 - Your best lap from the second lap on counts, with one entry per rider. It changes only when you beat it.
-- Open them from the main menu or the multiplayer panel. Laps are kept on your PC, and on a
-  leaderboard server when one is set (`tools/leaderboard_server.py`).
+  In Nationals and Supercross, more than two seconds off the course voids that lap.
+- Open them from the main menu or the multiplayer panel. Laps wait on your PC until the server has
+  them (`tools/leaderboard-worker`, a Cloudflare Worker).
 
 **Picture**
 - Modern menus and HUD, widescreen at your desktop's resolution.

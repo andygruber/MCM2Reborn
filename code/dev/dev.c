@@ -11,7 +11,7 @@
     The settings file is named after the game's exe, beside it: OpenMCM2-Dev.ini for the dev build,
     MCM2Reborn.ini for a release, so the two keep their own settings in one folder.
 */
-static const char* settings_file(void)
+const char* dev_settings_file(void)
 {
     typedef DWORD (WINAPI* module_name_fn)(HMODULE, LPSTR, DWORD);
     static char path[MAX_PATH];
@@ -34,7 +34,7 @@ static const char* settings_file(void)
         lstrcpyA(path + dot, ".ini");
     return path;
 }
-#define SETTINGS_FILE settings_file()
+#define SETTINGS_FILE dev_settings_file()
 
 dev_switches dev_settings = { 0 };     /* initialised, or it is a common symbol and lands in .data */
 camera_options g_camera_options = { 140, 0, 70, 0, 352 };

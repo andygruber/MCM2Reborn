@@ -1,0 +1,8 @@
+name = "mcm2reborn-leaderboards"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mcm2reborn-leaderboards"
+database_id = "set by: npx wrangler d1 create mcm2reborn-leaderboards"

@@ -7,6 +7,7 @@
     sit in a table of 7 slots at 0x0068FE48 that the screen's timer refills from the network.
 */
 
+#include <intrin.h>
 #include "menus.h"
 
 #ifdef OPENMCM2_DEV
@@ -568,6 +569,24 @@ BOOL __cdecl tracks_list_fill(merged_list* files, const char* folder, const char
 #ifdef OPENMCM2_DEV
 int g_track_counts[6][3] = {0};
 
+/* Each kind's tracks as the leaderboards name them (leaders.c, race_board): counted with them. */
+#define TRACK_NAMES_MOST 512
+static char g_track_names[6][TRACK_NAMES_MOST][64];
+static int  g_track_name_count[6];
+
+static void track_name_add(int slot, const char* name, int route)
+{
+    char cut[48];
+
+    if (slot >= 6 || g_track_name_count[slot] == TRACK_NAMES_MOST)
+        return;
+    lstrcpynA(cut, name, sizeof cut);
+    if (route)
+        wsprintfA(g_track_names[slot][g_track_name_count[slot]++], "%s ROUTE %d", cut, route);
+    else
+        lstrcpynA(g_track_names[slot][g_track_name_count[slot]++], cut, 64);
+}
+
 /* Independent directory lists and scene metadata keep counting out of the selected
    track, its session entries and the preview's resource state. */
 void __fastcall game_FUN_004ee5c0(void* resources, void* unused, void* archive);
@@ -597,6 +616,8 @@ static BOOL count_track_folder(int slot, int kind, const char* folder, BOOL vari
     changed = !valid[slot] || stamp != stamps[slot];
     if (changed) {
         ZeroMemory(cached[slot], sizeof cached[slot]);
+        if (slot < 6)
+            g_track_name_count[slot] = 0;
         found = dir_list_current_title(&files.base, NULL, name);
         for (; found; found = dir_list_next_title(&files.base, NULL, name)) {
             int amount = 1;
@@ -609,6 +630,13 @@ static BOOL count_track_folder(int slot, int kind, const char* folder, BOOL vari
                 game_FUN_004eeda0(scenes, NULL, title, name, 1, SCN, NULL, NULL);
                 amount = FIELD(scenes, 0x390, int);
                 if (amount < 0) amount = 0;
+            }
+            if (variants) {
+                int route;
+                for (route = 1; route <= amount; route++)
+                    track_name_add(slot, name, route);
+            } else {
+                track_name_add(slot, name, 0);
             }
             source = track_is_stock(kind, name) ? 1 : 2;
             cached[slot][0] += amount;
@@ -647,6 +675,18 @@ BOOL track_counts_refresh(void)
     for (source = 0; source < 3; source++) g_track_counts[0][source] += enduro[source];
     profile_set_event(game_profile, NULL, before);
     return changed;
+}
+
+int track_names(int kind, char (*names)[64], int most)
+{
+    int n;
+
+    if ((unsigned) kind >= 6)
+        return 0;
+    track_counts_refresh();
+    n = g_track_name_count[kind] < most ? g_track_name_count[kind] : most;
+    __movsb((unsigned char*) names, (const unsigned char*) g_track_names[kind], n * sizeof *names);
+    return n;
 }
 #endif
 
