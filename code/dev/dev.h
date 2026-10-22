@@ -77,7 +77,7 @@
 #define GAME_TITLE "MCM2:Reborn"
 
 /* Its version, as the menus (tools/modern/reborn_kit.py, VERSION) and the launcher show it. */
-#define GAME_VERSION "0.3.10.2"
+#define GAME_VERSION "0.4.0"
 
 typedef struct dev_switches {
     BOOL trace_screens;
