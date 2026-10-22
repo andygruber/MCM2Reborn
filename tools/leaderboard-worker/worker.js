@@ -10,6 +10,10 @@
 
     A rider is a random id the game makes once, and a key only it knows: the first lap from an id
     keeps a hash of its key, and laps with another key are turned away.
+
+    A lap that beats the rider's best is told to Discord when the DISCORD_WEBHOOK secret is set
+    (npx wrangler secret put DISCORD_WEBHOOK), unless its version is "old": a copy sending the laps
+    it kept before it had the server.
 */
 
 const KINDS = new Set([1, 2, 3, 5]);            // Baja, national, supercross, enduro
@@ -29,12 +33,38 @@ function clean(value, most) {
 
 const boardOf = (kind, cls, track) => `${kind}|${cls}|${track.toLowerCase()}`;
 
+const KIND_NAMES = { 1: "Baja", 2: "Nationals", 3: "Supercross", 5: "Enduro" };
+const CLASS_NAMES = { 125: "125 2-stroke", 250: "250 2-stroke", 400: "400 4-stroke", 500: "500 2-stroke", 600: "600 4-stroke" };
+
+const lapTime = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
+const plain = words => words.replace(/[\\*_~`|>#[\]()@<]/g, "\\$&");    // no markdown, links or mentions
+
+function tellDiscord(webhook, lap) {
+    const record = lap.rank === 1;
+    const embed = {
+        title: record ? "New track record" : "New personal best",
+        description: `**${plain(lap.name)}**  ${lapTime(lap.ms)}  on **${plain(lap.track)}**`,
+        color: record ? 0xFF8C1A : 0x4A90D9,
+        fields: [
+            { name: "Event", value: `${KIND_NAMES[lap.kind]} · ${CLASS_NAMES[lap.cls]}`, inline: true },
+            { name: "Place", value: `${lap.rank} of ${lap.riders}`, inline: true },
+        ],
+        footer: { text: lap.before ? `was ${lapTime(lap.before)}` : "first lap on this board" },
+    };
+    return fetch(webhook, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "MCM2:Reborn Leaderboards", embeds: [embed], allowed_mentions: { parse: [] } }),
+    }).catch(error => console.error("discord:", error));
+}
+
 async function sha256(value) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
     return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function postLap(request, db) {
+async function postLap(request, env, ctx) {
+    const db = env.DB;
     const fields = (await request.text()).split("\t");
     if (fields.length !== 8)
         return text("bad lap", 400);
@@ -50,6 +80,7 @@ async function postLap(request, db) {
     if (known && known.key_hash !== keyHash)
         return text("not your rider", 403);
     const now = Date.now(), board = boardOf(kind, cls, track);
+    const before = await db.prepare("SELECT ms FROM laps WHERE board = ? AND rider = ?").bind(board, rider).first();
     await db.batch([
         known ? db.prepare("UPDATE riders SET name = ?, seen_at = ? WHERE id = ?").bind(name, now, rider)
               : db.prepare("INSERT INTO riders (id, key_hash, name, seen_at) VALUES (?, ?, ?, ?)")
@@ -65,6 +96,9 @@ async function postLap(request, db) {
     const best = await db.prepare("SELECT ms FROM laps WHERE board = ? AND rider = ?").bind(board, rider).first();
     const place = await db.prepare(`SELECT COUNT(*) + 1 AS rank, (SELECT COUNT(*) FROM laps WHERE board = ?1) AS riders
                                     FROM laps WHERE board = ?1 AND ms < ?2`).bind(board, best.ms).first();
+    if (env.DISCORD_WEBHOOK && version !== "old" && (!before || ms < before.ms))
+        ctx.waitUntil(tellDiscord(env.DISCORD_WEBHOOK, { name, track, kind, cls, ms, before: before?.ms,
+                                                         rank: place.rank, riders: place.riders }));
     return text(`ok\t${best.ms}\t${place.rank}\t${place.riders}`);
 }
 
@@ -93,11 +127,11 @@ async function getTracks(url, db) {
 }
 
 export default {
-    async fetch(request, env) {
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
         try {
             if (request.method === "POST" && url.pathname === "/v1/lap")
-                return await postLap(request, env.DB);
+                return await postLap(request, env, ctx);
             if (request.method === "GET" && url.pathname === "/v1/board")
                 return await getBoard(url, env.DB);
             if (request.method === "GET" && url.pathname === "/v1/tracks")

@@ -385,9 +385,10 @@ static void pending_write(void)
    rest wait for the next lap or a look at the boards). One it turns away is dropped. */
 static DWORD WINAPI pending_send(void* unused)
 {
-    char line[160], body[256], answer[128];
-    char* fields[5];
+    char line[160], copy[160], body[256], answer[128];
+    char* fields[6];
     DWORD status;
+    int n;
 
     (void) unused;
     for (;;) {
@@ -399,17 +400,14 @@ static DWORD WINAPI pending_send(void* unused)
         lstrcpynA(line, g_pending[0], sizeof line);
         LeaveCriticalSection(&g_lock);
 
-        {
-            char copy[160];
-
-            lstrcpynA(copy, line, sizeof copy);
-            if (split(copy, fields, 5) == 5) {
-                wsprintfA(body, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", g_rider, g_key, fields[4], fields[0], fields[1],
-                          fields[2], fields[3], GAME_VERSION);
-                status = server_ask("POST", "/v1/lap", body, answer, sizeof answer);
-            } else {
-                status = 400;
-            }
+        lstrcpynA(copy, line, sizeof copy);
+        n = split(copy, fields, 6);
+        if (n >= 5) {               /* a sixth field, "old": kept before there was a server */
+            wsprintfA(body, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", g_rider, g_key, fields[4], fields[0], fields[1],
+                      fields[2], fields[3], n == 6 ? fields[5] : GAME_VERSION);
+            status = server_ask("POST", "/v1/lap", body, answer, sizeof answer);
+        } else {
+            status = 400;
         }
         if (!status || status == 429 || status >= 500)
             break;
@@ -450,7 +448,7 @@ static void pending_old_laps(void)
         const record* r = &g_records[i];
 
         if (r->kind == 2 || r->kind == 3)
-            wsprintfA(g_pending[g_pending_count++], "%d\t%d\t%s\t%d\t%s", r->kind, r->cc, r->track, r->ms, r->name);
+            wsprintfA(g_pending[g_pending_count++], "%d\t%d\t%s\t%d\t%s\told", r->kind, r->cc, r->track, r->ms, r->name);
     }
     pending_write();
     write_text("leaderboard", "sent_old", "1", SETTINGS_FILE);
