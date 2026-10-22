@@ -92,8 +92,11 @@ def track_panel(screen, board):
     area = (LEFT, 614, 900, PLACE[3])
     box(board, area, PANEL + (255,), 10)
     heading(board, "TRACKS", area[0] + 36, area[1] + 58, 30, ORANGE)
-    screen.add("TrackCounts", Type="STATICTEXT", Xywh=local((area[0] + 240, area[1] + 16, area[2] - 24, area[1] + 60)),
+    screen.add("TrackCounts", Type="STATICTEXT", Xywh=local((area[0] + 220, area[1] + 16, area[2] - 200, area[1] + 60)),
                Text="", **font(21, PAPER, "RIGHT"))
+    where = (area[2] - 184, area[1] + 16, area[2] - 24, area[1] + 62)   # any track (dlgprocs.c, track_random)
+    screen.add("TrackRandom", Type="BUTTON", SoundPush='"CLICK04"')
+    screen.button("TrackRandom", where, button_states(board, where, "RANDOM", size=22))
     bar_x0, bar_x1 = area[2] - 56, area[2] - 12
     for k, (name, label) in enumerate((("TrackAll", "ALL"), ("TrackBase", "BASE GAME"), ("TrackCustom", "CUSTOM"))):
         where = (area[0] + 20 + k * 244, area[1] + 76, area[0] + 252 + k * 244, area[1] + 128)

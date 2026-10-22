@@ -253,6 +253,10 @@ static __inline void combo_step(BYTE* self, const char* name, BOOL back)
     BYTE* list = combo_list(self, name);
     int count = FIELD(list, 0x1EC, int);
 
+#ifdef OPENMCM2_DEV
+    if (count <= 0)                 /* a filter can leave no tracks listed */
+        return;
+#endif
     if (back)
         list_select_all(list, NULL, (list_selected(list) + count - 1) % count);
     else

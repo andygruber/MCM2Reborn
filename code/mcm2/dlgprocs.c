@@ -2268,6 +2268,24 @@ static void track_list_follow(BYTE* self)
         list_select_all(mirror, NULL, list_selected(tracks));
 }
 
+/* TrackRandom: another of the tracks listed, chosen as the arrows choose one. */
+static void track_random(BYTE* self)
+{
+    BYTE* list = combo_list(self, LIST_TEXT_BOX);
+    int count = FIELD(list, 0x1EC, int);
+    int now = list_selected(list);
+    int pick;
+
+    if (count < 2)
+        return;
+    if (now < 0)
+        pick = game__rand() % count;
+    else if ((pick = game__rand() % (count - 1)) >= now)
+        pick++;
+    list_select_all(list, NULL, pick);
+    VIRTUAL(list, 0x108, method_1)(list, NULL, 0);
+}
+
 /* A card clicked: its event chosen, as EventTypeDropDown's would be. TRUE when it was one. */
 static BOOL event_card_clicked(BYTE* self, const ui_event* event)
 {
@@ -2612,6 +2630,11 @@ void __fastcall sp_event_handle(BYTE* self, void* edx_unused, ui_event* event)
 #ifdef OPENMCM2_DEV
         if (event_card_clicked(self, event))
             return;
+        if (clicked(event, "TrackRandom")) {
+            track_random(self);
+            track_list_follow(self);
+            return;
+        }
 #endif
         if (clicked(event, SP_RANDOM_GATES))
             sp_event_refresh(self);
