@@ -33,7 +33,8 @@ function clean(value, most) {
 
 const boardOf = (kind, cls, track) => `${kind}|${cls}|${track.toLowerCase()}`;
 
-const KIND_NAMES = { 1: "Baja", 2: "Nationals", 3: "Supercross", 5: "Enduro" };
+const LOGO = "https://raw.githubusercontent.com/xshxdex98/MCM2Reborn/main/assets/logo.png";
+const KIND_NAMES ={ 1: "Baja", 2: "Nationals", 3: "Supercross", 5: "Enduro" };
 const CLASS_NAMES = { 125: "125 2-stroke", 250: "250 2-stroke", 400: "400 4-stroke", 500: "500 2-stroke", 600: "600 4-stroke" };
 
 const lapTime = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
@@ -49,12 +50,15 @@ function tellDiscord(webhook, lap) {
             { name: "Event", value: `${KIND_NAMES[lap.kind]} · ${CLASS_NAMES[lap.cls]}`, inline: true },
             { name: "Place", value: `${lap.rank} of ${lap.riders}`, inline: true },
         ],
+        thumbnail: { url: LOGO },
         footer: { text: lap.before ? `was ${lapTime(lap.before)}` : "first lap on this board" },
+        timestamp: new Date().toISOString(),
     };
     return fetch(webhook, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: "MCM2:Reborn Leaderboards", embeds: [embed], allowed_mentions: { parse: [] } }),
+        body: JSON.stringify({ username: "MCM2:Reborn Leaderboards", avatar_url: LOGO, embeds: [embed],
+                               allowed_mentions: { parse: [] } }),
     }).catch(error => console.error("discord:", error));
 }
 

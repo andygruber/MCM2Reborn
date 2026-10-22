@@ -4,6 +4,10 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to announce (the latest when empty)"
+        required: false
 
 permissions:
   contents: read
@@ -12,68 +16,16 @@ jobs:
   announce:
     runs-on: ubuntu-latest
     steps:
-      - name: Post release updates
-        uses: actions/github-script@v7
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Post the release notes
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        with:
-          script: |
-            const webhook = process.env.DISCORD_WEBHOOK_URL;
-            if (!webhook) {
-              core.setFailed('Add the Discord channel webhook as the DISCORD_WEBHOOK_URL repository secret.');
-              return;
-            }
-
-            function splitMessage(text, limit = 1800) {
-              const messages = [];
-              let current = '';
-              for (const line of text.split('\n')) {
-                if (line.length > limit) {
-                  if (current) messages.push(current);
-                  current = '';
-                  for (let at = 0; at < line.length; at += limit)
-                    messages.push(line.slice(at, at + limit));
-                } else if (current && current.length + line.length + 1 > limit) {
-                  messages.push(current);
-                  current = line;
-                } else {
-                  current += `${current ? '\n' : ''}${line}`;
-                }
-              }
-              if (current) messages.push(current);
-              return messages;
-            }
-
-            async function postRelease(release) {
-              const title = release.name || release.tag_name;
-              const text = `**${title} (${release.tag_name})**\n\n${release.body || 'Release notes are available on GitHub.'}\n\n${release.html_url}`;
-              for (const content of splitMessage(text)) {
-                const response = await fetch(webhook, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
-                });
-                if (!response.ok)
-                  throw new Error(`Discord returned HTTP ${response.status}: ${await response.text()}`);
-                await new Promise(resolve => setTimeout(resolve, 500));
-              }
-            }
-
-            const { owner, repo } = context.repo;
-            if (context.eventName === 'release') {
-              const release = context.payload.release;
-              if (!release.draft && !release.prerelease && /^v/.test(release.tag_name))
-                await postRelease(release);
-              return;
-            }
-
-            const releases = await github.paginate(github.rest.repos.listReleases, {
-              owner,
-              repo,
-              per_page: 100,
-            });
-            const history = releases
-              .filter(release => !release.draft && !release.prerelease && /^v/.test(release.tag_name))
-              .sort((a, b) => new Date(a.published_at) - new Date(b.published_at));
-            for (const release of history)
-              await postRelease(release);
+          DISCORD_CHANGELOG_WEBHOOK_URL: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: node .github/scripts/announce-release.mjs
