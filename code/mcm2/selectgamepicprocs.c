@@ -569,22 +569,58 @@ BOOL __cdecl tracks_list_fill(merged_list* files, const char* folder, const char
 #ifdef OPENMCM2_DEV
 int g_track_counts[6][3] = {0};
 
-/* Each kind's tracks as the leaderboards name them (leaders.c, race_board): counted with them. */
+/* Each kind's tracks as the leaderboards name them, by their file and route: counted with them. */
 #define TRACK_NAMES_MOST 512
-static char g_track_names[6][TRACK_NAMES_MOST][64];
-static int  g_track_name_count[6];
+static struct {
+    char file[64];
+    int  route;
+    char name[64];
+} g_track_names[6][TRACK_NAMES_MOST];
+static int g_track_name_count[6];
 
-static void track_name_add(int slot, const char* name, int route)
+/* The scene's title, the file's name when it has none; `numbered` adds the route. */
+static void track_name_add(int slot, const char* file, int route, const char* title, BOOL numbered)
 {
     char cut[48];
 
     if (slot >= 6 || g_track_name_count[slot] == TRACK_NAMES_MOST)
         return;
-    lstrcpynA(cut, name, sizeof cut);
-    if (route)
-        wsprintfA(g_track_names[slot][g_track_name_count[slot]++], "%s ROUTE %d", cut, route);
+    lstrcpynA(cut, title[0] && game_FUN_0053b6e0(title, NO_NAME) ? title : file, sizeof cut);
+    lstrcpynA(g_track_names[slot][g_track_name_count[slot]].file, file, 64);
+    g_track_names[slot][g_track_name_count[slot]].route = route;
+    if (numbered)
+        wsprintfA(g_track_names[slot][g_track_name_count[slot]].name, "%s ROUTE %d", cut, route);
     else
-        lstrcpynA(g_track_names[slot][g_track_name_count[slot]++], cut, 64);
+        lstrcpynA(g_track_names[slot][g_track_name_count[slot]].name, cut, 64);
+    g_track_name_count[slot]++;
+}
+
+/* A track's names for the leaderboards, as the game shows them (`scenes` holding its env when
+   `titled`), routes named alike numbered. */
+static void track_names_add(int slot, BYTE* scenes, const char* file, int routes, BOOL titled)
+{
+    char title[128], first[128];
+    BOOL alike = !titled;
+    int route;
+
+    title[0] = 0;
+    if (!routes) {
+        if (titled)
+            game_FUN_004eeda0(scenes, NULL, title, file, 0, SCN, NULL, NULL);
+        track_name_add(slot, file, 0, title, FALSE);
+        return;
+    }
+    if (titled)
+        game_FUN_004eeda0(scenes, NULL, first, file, 1, SCN, NULL, NULL);
+    for (route = 2; !alike && route <= routes; route++) {
+        game_FUN_004eeda0(scenes, NULL, title, file, route, SCN, NULL, NULL);
+        alike = !game_FUN_0053b6e0(title, first);
+    }
+    for (route = 1; route <= routes; route++) {
+        if (titled)
+            game_FUN_004eeda0(scenes, NULL, title, file, route, SCN, NULL, NULL);
+        track_name_add(slot, file, route, title, alike || !title[0] || !game_FUN_0053b6e0(title, NO_NAME));
+    }
 }
 
 /* Independent directory lists and scene metadata keep counting out of the selected
@@ -621,26 +657,23 @@ static BOOL count_track_folder(int slot, int kind, const char* folder, BOOL vari
         found = dir_list_current_title(&files.base, NULL, name);
         for (; found; found = dir_list_next_title(&files.base, NULL, name)) {
             int amount = 1;
-            int source;
+            BOOL stock, env = FALSE;
             if (track_hidden(name)) continue;
+            stock = track_is_stock(kind, name);
+            if (variants || slot < 6) {
+                env = profile_find_named_file(game_profile, NULL, folder, name, ENV, path);
+                if (!env && variants) continue;
+                if (env) game_FUN_004ee910(scenes, NULL, path);
+            }
             if (variants) {
-                if (!profile_find_named_file(game_profile, NULL, folder, name, ENV, path)) continue;
-                game_FUN_004ee910(scenes, NULL, path);
                 FIELD(scenes, 0x390, int) = 0;
                 game_FUN_004eeda0(scenes, NULL, title, name, 1, SCN, NULL, NULL);
                 amount = FIELD(scenes, 0x390, int);
                 if (amount < 0) amount = 0;
             }
-            if (variants) {
-                int route;
-                for (route = 1; route <= amount; route++)
-                    track_name_add(slot, name, route);
-            } else {
-                track_name_add(slot, name, 0);
-            }
-            source = track_is_stock(kind, name) ? 1 : 2;
+            track_names_add(slot, scenes, name, variants ? amount : 0, env);
             cached[slot][0] += amount;
-            cached[slot][source] += amount;
+            cached[slot][stock ? 1 : 2] += amount;
         }
         stamps[slot] = stamp;
         valid[slot] = TRUE;
@@ -679,14 +712,30 @@ BOOL track_counts_refresh(void)
 
 int track_names(int kind, char (*names)[64], int most)
 {
-    int n;
+    int n, i;
 
     if ((unsigned) kind >= 6)
         return 0;
     track_counts_refresh();
     n = g_track_name_count[kind] < most ? g_track_name_count[kind] : most;
-    __movsb((unsigned char*) names, (const unsigned char*) g_track_names[kind], n * sizeof *names);
+    for (i = 0; i < n; i++)
+        lstrcpynA(names[i], g_track_names[kind][i].name, 64);
     return n;
+}
+
+BOOL track_board_name(int kind, const char* file, int route, char* name)
+{
+    int i;
+
+    if ((unsigned) kind >= 6)
+        return FALSE;
+    track_counts_refresh();
+    for (i = 0; i < g_track_name_count[kind]; i++)
+        if (g_track_names[kind][i].route == route && !game_FUN_0053b6e0(g_track_names[kind][i].file, file)) {
+            lstrcpynA(name, g_track_names[kind][i].name, 64);
+            return TRUE;
+        }
+    return FALSE;
 }
 #endif
 

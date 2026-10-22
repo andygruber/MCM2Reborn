@@ -15,6 +15,8 @@ static BYTE main_fixture[0x3400];
 #define ENV_FILES "*.env"
 #define ENV "env"
 #define SCN "scn"
+#define NO_NAME "no name"
+#define game_FUN_0053b6e0 _stricmp
 #define BAJA_FOLDER "Baja"
 #define NATIONAL_FOLDER "National"
 #define SX_FOLDER "SX"
@@ -53,6 +55,9 @@ static BOOL profile_find_named_file(char* p,void* unused,const char* folder,cons
 static void game_FUN_004ee910(BYTE* scene,void* unused,const char* path) {}
 static void game_FUN_004eeda0(BYTE* scene,void* unused,char* title,const char* name,int variant,const char* ext,void* a,void* b) {
     reads++;FIELD(scene,0x390,int)=track_is_stock(context_kind,name)?3:2;
+    if(!strcmp(name,"nat_custom")) strcpy(title,"no name");
+    else if(!strcmp(name,"airfield")) sprintf(title,"Airfield %d",variant);
+    else sprintf(title,"Title of %s",name);
 }
 void __fastcall game_FUN_004ee5c0(void* resources,void* unused,void* archive) {}
 static void game_FUN_00461cd0(void* archive) {}
@@ -71,6 +76,17 @@ int main(void) {
     hidden=0;CHECK(track_counts_refresh());CHECK(g_track_counts[2][0]==2);
     catalog[5][2]="new_enduro";CHECK(track_counts_refresh());CHECK(g_track_counts[5][0]==7);CHECK(g_track_counts[0][0]==5);
     CHECK(!track_counts_refresh());CHECK(g_track_counts[0][0]==5);CHECK(context_kind==3);
+    {
+        char name[64];
+        CHECK(track_board_name(2,"NAT01",0,name));CHECK(!strcmp(name,"Title of nat01"));
+        CHECK(track_board_name(2,"nat_custom",0,name));CHECK(!strcmp(name,"nat_custom"));
+        CHECK(track_board_name(1,"baja01",2,name));CHECK(!strcmp(name,"Title of baja01 ROUTE 2"));
+        CHECK(track_board_name(5,"airfield",3,name));CHECK(!strcmp(name,"Airfield 3"));
+        CHECK(track_board_name(1,"baja_custom",1,name));CHECK(!strcmp(name,"Title of baja_custom ROUTE 1"));
+        CHECK(track_board_name(3,"sx_custom",0,name));CHECK(!strcmp(name,"Title of sx_custom"));
+        CHECK(!track_board_name(1,"baja01",4,name));CHECK(!track_board_name(2,"gone",0,name));
+        CHECK(track_names(2,(char(*)[64])name,1)==1);
+    }
     printf("PASS %d catalog checks: all/base/custom counts, variants, add/remove, hidden tracks, cache and profile restoration\n",checks);
     return 0;
 }
