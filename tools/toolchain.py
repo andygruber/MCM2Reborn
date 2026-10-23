@@ -42,20 +42,29 @@ def run_exe(path):
 
 # ---- Windows: Visual Studio ----
 
+def _visual_studio():
+    """The newest Visual Studio with the C++ tools. -products * counts the Build Tools too, which
+    vswhere leaves out by default, and which install under Program Files (x86)."""
+    vswhere = os.path.join(os.environ["ProgramFiles(x86)"], "Microsoft Visual Studio", "Installer", "vswhere.exe")
+    vs = subprocess.run([vswhere, "-latest", "-products", "*",
+                         "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                         "-property", "installationPath"],
+                        capture_output=True, text=True, check=True).stdout.strip()
+    if not vs:
+        sys.exit("no Visual Studio with the C++ x86/x64 tools")
+    return vs
+
+
 def _vcvars(arch):
     """The environment vcvarsall sets up for `arch` builds."""
-    vswhere = os.path.join(os.environ["ProgramFiles(x86)"], "Microsoft Visual Studio", "Installer", "vswhere.exe")
-    vs = subprocess.run([vswhere, "-latest", "-property", "installationPath"],
-                        capture_output=True, text=True, check=True).stdout.strip()
-    vcvars = os.path.join(vs, "VC", "Auxiliary", "Build", "vcvarsall.bat")
+    vcvars = os.path.join(_visual_studio(), "VC", "Auxiliary", "Build", "vcvarsall.bat")
     out = subprocess.run('"%s" %s >nul && set' % (vcvars, arch), shell=True, capture_output=True, text=True,
                          check=True).stdout
     return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
 
 
 def _newest(name):
-    hits = sorted(glob.glob(r"C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC"
-                            r"\*\bin\Hostx64\x86\%s.exe" % name))
+    hits = sorted(glob.glob(os.path.join(_visual_studio(), r"VC\Tools\MSVC\*\bin\Hostx64\x86\%s.exe" % name)))
     if not hits:
         sys.exit("could not find %s.exe" % name)
     return hits[-1]
