@@ -34,7 +34,6 @@ static BOOL reborn_hud(void)
 #ifdef OPENMCM2_DEV
     if (!loading_shown())
         hud_overlays_drawn();
-    leaders_watch();
     return dev_settings.menus_modern && g_reborn.hud;
 #else
     return FALSE;

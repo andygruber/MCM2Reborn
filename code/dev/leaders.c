@@ -603,20 +603,25 @@ static void race_board(char* track)
         lstrcpynA(track, name, 64);
 }
 
-/* A lap kept if it is the rider's best for its track, event and class: TRUE when it was. */
-static BOOL lap_keep(int kind, int cc, const char* track, const char* name, int ms)
+/* The rider's record for a track, event and class, or NULL. */
+static record* record_find(int kind, int cc, const char* track, const char* name)
 {
-    record* r = NULL;
     int i;
 
     if (g_count < 0)
         records_read();
     for (i = 0; i < g_count; i++)
         if (g_records[i].kind == kind && g_records[i].cc == cc && same(g_records[i].track, track)
-            && same(g_records[i].name, name)) {
-            r = &g_records[i];
-            break;
-        }
+            && same(g_records[i].name, name))
+            return &g_records[i];
+    return NULL;
+}
+
+/* A lap kept if it is the rider's best for its track, event and class: TRUE when it was. */
+static BOOL lap_keep(int kind, int cc, const char* track, const char* name, int ms)
+{
+    record* r = record_find(kind, cc, track, name);
+
     if (r && r->ms <= ms)
         return FALSE;
     if (!r) {
@@ -635,28 +640,35 @@ static BOOL lap_keep(int kind, int cc, const char* track, const char* name, int 
     return TRUE;
 }
 
+/* The race leaders_watch is watching: its rider, board, and that rider's best there. */
+static BYTE* g_watched;
+static char  g_board[64];
+static int   g_best_ms;
+
 void leaders_watch(void)
 {
-    static BYTE* watched;
     static unsigned laps;
     static DWORD off_since;         /* when the rider left the course, 0 on it */
-    static char track[64];          /* the race's board */
     static BOOL void_lap;           /* this lap does not count */
     BYTE* race = game_main ? game_FUN_0045e300(FIELD(game_main, 0x570, BYTE*)) : NULL;
     BYTE* me = race ? FIELD(race, 0x38, BYTE*) : NULL;
     unsigned now;
 
     if (!me || playing_back || !lapped_kind(race_kind)) {
-        watched = NULL;
+        g_watched = NULL;
         return;
     }
     now = rider_laps(me);
-    if (me != watched || now < laps) {
-        watched = me;
+    if (me != g_watched || now < laps) {
+        record* best;
+
+        g_watched = me;
         laps = now;
         off_since = 0;
         void_lap = FALSE;
-        race_board(track);
+        race_board(g_board);
+        best = profile_name[0] ? record_find(race_kind, bike_class(), g_board, profile_name) : NULL;
+        g_best_ms = best ? best->ms : 0;
         pending_kick();             /* laps left from before go now, off the game's thread */
         return;
     }
@@ -678,10 +690,11 @@ void leaders_watch(void)
     if (now >= 2 && !void_lap && rider_last(me) > 1.0f && profile_name[0]) {
         int ms = (int) (rider_last(me) * 1000 + 0.5f);
 
-        if (lap_keep(race_kind, bike_class(), track, profile_name, ms)) {
+        if (lap_keep(race_kind, bike_class(), g_board, profile_name, ms)) {
             char words[64];
 
-            log_line("leaderboard: %s's best lap of %s, %d.%03d s, a %dcc bike in the %d class", profile_name, track,
+            g_best_ms = ms;
+            log_line("leaderboard: %s's best lap of %s, %d.%03d s, a %dcc bike in the %d class", profile_name, g_board,
                      ms / 1000, ms % 1000, bike_cc, bike_class());
             wsprintfA(words, "NEW BEST LAP\t%d:%02d.%03d", ms / 60000, ms / 1000 % 60, ms % 1000);
             notice(NOTICE_BEST, words);
@@ -689,6 +702,11 @@ void leaders_watch(void)
     }
     void_lap = FALSE;
     off_since = rider_on_course(me) || (race_kind != 2 && race_kind != 3) ? 0 : timeGetTime() | 1;
+}
+
+int leaders_best(void)
+{
+    return g_watched ? g_best_ms : -1;
 }
 
 /* ---- The boards ---- */

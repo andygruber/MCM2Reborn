@@ -333,8 +333,12 @@ extern char g_leaders_url[256];
 
 enum { LEADERS_LOCAL, LEADERS_LOADING, LEADERS_ONLINE, LEADERS_OFFLINE };   /* where a board is from */
 
-/* Each frame of a race: a lap finished from the second on kept when it is the rider's best. */
+/* Each frame of a race, the HUD on or not: a lap finished from the second on kept when it is
+   the rider's best. */
 void leaders_watch(void);
+/* The rider's best lap on the race's board in ms, kept up as it is beaten: 0 before there is
+   one, -1 for a race without a board (leaders_watch not on it). */
+int  leaders_best(void);
 /* A board, best first: the server's once it has answered (*state LEADERS_ONLINE; asked for by a
    thread, and again when its answer is old), else this computer's. */
 int  leaders_board(int kind, int cc, const char* track, leader* board, int most, int* state);

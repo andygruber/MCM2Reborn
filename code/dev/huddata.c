@@ -7,6 +7,7 @@
     track file's (SX and nationals) or the gates (Baja and enduro); quarry and tag have none.
 */
 
+#include "dev.h"
 #include "hud.h"
 #include "game.h"
 
@@ -287,7 +288,9 @@ BOOL hud_read(hud_view* v)
                                           - FIELD(clock, 0x74, float)) : 0;
     }
     v->last_ms = milliseconds(rider_last(me));
-    v->best_ms = milliseconds(rider_best(me));
+    v->best_ms = leaders_best();        /* the board's: the laps it counts, the best ever */
+    if (v->best_ms < 0)
+        v->best_ms = milliseconds(rider_best(me));
     v->score = (int) rider_score(me);
 
     v->speed_mph = rider_speed(me) * FT_PER_S_TO_MPH;

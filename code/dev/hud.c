@@ -719,6 +719,7 @@ void hud_draw(int w, int h)
     static float last_scale;
     BOOL smooth;
 
+    leaders_watch();                /* every frame shown, the HUD's overlays drawn or not */
     if (h <= 0)
         return;
     if (!hud_read(&v)) {
