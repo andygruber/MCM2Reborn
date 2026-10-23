@@ -288,7 +288,7 @@ namespace Mcm2Reborn.Launcher
             if (copies.Count == 0 || busy)
                 return;
             GameCopy copy = copies[chosen];
-            string to = intoGameFolder && !copy.Download ? copy.Folder : destination;
+            string to = intoGameFolder && !copy.Download && !copy.OnDisc ? copy.Folder : destination;
             string rider = riderName.Text.Trim();
             if (!copy.Download && copy.DataFolder == null && !Install.IsGame(copy.Folder))
                 return;
@@ -391,7 +391,19 @@ namespace Mcm2Reborn.Launcher
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
-                    destination = Path.Combine(dialog.SelectedPath, "MCM2 Reborn");
+                    // An empty folder is taken as it is; one with anything in it gets a folder of
+                    // MCM2:Reborn's own inside, so nothing already there is mixed in with it.
+                    string picked = dialog.SelectedPath;
+                    bool empty;
+                    try
+                    {
+                        empty = !Directory.EnumerateFileSystemEntries(picked).Any();
+                    }
+                    catch (Exception)
+                    {
+                        empty = false;
+                    }
+                    destination = empty ? picked : Path.Combine(picked, "MCM2 Reborn");
                     intoGameFolder = false;
                 }
             }
@@ -604,14 +616,15 @@ namespace Mcm2Reborn.Launcher
             }
 
             bool download = copies.Count > 0 && copies[chosen].Download;
+            bool ownFolder = copies.Count > 0 && !download && !copies[chosen].OnDisc;
             using (Font text = Theme.Text(14))
                 Theme.Words(g, "WHERE IT GOES:", text, Theme.Grey, R(36, y + 4, 640, 22));
             y += 28;
-            Choice(g, R(36, y, 640, 38), "A NEW FOLDER  ·  " + destination.ToUpperInvariant(), !intoGameFolder || download,
+            Choice(g, R(36, y, 640, 38), "A NEW FOLDER  ·  " + destination.ToUpperInvariant(), !intoGameFolder || !ownFolder,
                    () => intoGameFolder = false);
             SmallButton(g, R(560, y + 4, 110, 30), "CHANGE", ChooseDestination, !busy);
             y += 40;
-            if (!download)
+            if (ownFolder)
                 Choice(g, R(36, y, 640, 38), "INTO THE GAME'S OWN FOLDER (FOR A COPY YOU KEEP FOR IT)", intoGameFolder,
                        () => intoGameFolder = true);
             y += 48;
