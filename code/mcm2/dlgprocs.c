@@ -3827,10 +3827,12 @@ static void multi_open(BYTE* self)
     FIELD(game_main, 0x3170, DWORD) = 0;
 #ifdef OPENMCM2_DEV
     if (dev_settings.menus_modern) {
+        /* LAN is mcm2-lan.exe's, not one of DirectPlay's services: there whatever they are. */
+        control_enable(dialog_find_control(self, NULL, BUT_TCP, 1), TRUE);
         gui_manager_set_cursors(manager, NULL, manager->cursor_image, 0);
         return;                         /* create LAN's network only when LAN is chosen */
     }
-    eos_online(FALSE);                  /* the services listed are DirectPlay's own */
+    eos_online(NET_DIRECTPLAY);         /* the services listed are DirectPlay's own */
 #endif
     if (net_make()) {
         game_FUN_0053b88e(connections, CONNECTION_SIZE, CONNECTION_COUNT, CONNECTION_CONSTRUCT,
@@ -3864,7 +3866,7 @@ static void connect_by(GUID service, DWORD kind, int line)
     DWORD size;
 
 #ifdef OPENMCM2_DEV
-    if (!eos_online(FALSE))              /* switching from Internet may also create LAN's network */
+    if (!eos_online(NET_DIRECTPLAY))     /* switching from Internet may also create LAN's network */
         return;
 #endif
     if (!game_net && !net_make())
@@ -3981,8 +3983,8 @@ static void user_panel_after_profile(BYTE* self)
     MCM2:Reborn's multiplayer is LAN or Internet, each a screen of the look's own (Lan.dtm and
     Online.dtm, made by tools/modern/build_online.py) run by the game's own sessions screen,
     sessions_handle: the games hosted are listed, Host makes one and Join joins the one picked.
-    LAN is TCP/IP finding the games on the local network; Internet is Epic Online Services'
-    lobbies, through the DirectPlay of code/dev/eosplay.c.
+    Both run on the DirectPlay of code/dev/eosplay.c: Internet's games are Epic Online Services'
+    lobbies, LAN's the games hosted on the local network (mcm2-lan.exe), shown alike.
 */
 #define ONLINE_VTABLE_SLOTS 0x60
 #define CREDITS_VTABLE      ((void**) 0x005567B0)   /* a whole screen's, its handler replaced */
@@ -3998,14 +4000,15 @@ static BOOL online_screen;          /* the screen open is Online, not LAN */
 static BOOL online_internet;        /* its network is EOS's: Online's, but for its Local Network tab */
 static BOOL online_failed;          /* its network did not start: only Back works */
 
-/* The network made for the screen and connected through TCP/IP, as LAN's button always did. */
+/* The network made for the screen, EOS's or the LAN's, and connected as TCP/IP, as LAN's button
+   always did. */
 static BOOL online_connect(void)
 {
     void* address;
     DWORD size;
     BOOL connected;
 
-    if (!eos_online(online_internet)
+    if (!eos_online(online_internet ? NET_EOS : NET_LAN)
         || !game_FUN_004b0600(game_net, NULL, PROVIDER_TCPIP, NO_TEXT, NO_TEXT, NULL, &address, &size))
         return FALSE;
     connected = game_FUN_004b04e0(game_net, NULL, address, size, 4);
@@ -4086,12 +4089,12 @@ static void capitals(char* to, const char* from, int size)
     to[i] = 0;
 }
 
-/* A session's lobby; a LAN game, or a lobby not yet found, is known by its name alone. */
+/* A session's lobby, the Internet's or the LAN's; one not yet found is known by its name alone. */
 static void online_lobby_of(int session, online_lobby* lobby)
 {
     static const online_lobby unknown = { 0, 0, -1 };
 
-    if (online_internet && session_instance(session) && eos_lobby(session_instance(session), lobby))
+    if (session_instance(session) && eos_lobby(session_instance(session), lobby))
         return;
     *lobby = unknown;
     lstrcpynA(lobby->host, session_name(session), sizeof lobby->host);
@@ -4129,9 +4132,7 @@ static void online_fill_card(BYTE* self, int card, int session, BOOL chosen)
     capitals(host, lobby.host, sizeof host);
     online_title(&lobby, words, sizeof words);
     online_write(self, words, TEXT_PAPER, "Lobby%dName", card);
-    if (!online_internet)
-        lstrcpyA(words, "ON YOUR NETWORK");
-    else if (lobby.kind >= 0 && lobby.kind < ONLINE_EVENTS)
+    if (lobby.kind >= 0 && lobby.kind < ONLINE_EVENTS)
         wsprintfA(words, "%s  \xB7  HOSTED BY %s", event_names[lobby.kind], host);
     else
         wsprintfA(words, "HOSTED BY %s", host);
@@ -4184,7 +4185,7 @@ static void online_fill_detail(BYTE* self, int session)
     online_title(&lobby, words, sizeof words);
     online_write(self, words, TEXT_PAPER, "TxtDetailName", 0);
     wsprintfA(words, "HOSTED BY %s", host);
-    online_write(self, online_internet ? words : "ON YOUR NETWORK", TEXT_GREY, "TxtDetailInfo", 0);
+    online_write(self, words, TEXT_GREY, "TxtDetailInfo", 0);
     words[0] = 0;
     if (lobby.most)
         wsprintfA(words, "%d / %d", lobby.players, lobby.most);
@@ -4260,7 +4261,7 @@ static void online_fill_top(BYTE* self, int state)
     capitals(words, game_profile, sizeof words);
     online_write(self, words, TEXT_PAPER, "TxtPlayer", 0);
     words[0] = 0;
-    if (online_internet && eos_found_ago() >= 0)
+    if (eos_found_ago() >= 0)
         wsprintfA(words, "REFRESHED %d S AGO", eos_found_ago());
     online_write(self, words, TEXT_GREY, "TxtStatus", 0);
 }
@@ -4270,7 +4271,7 @@ static void online_fill(BYTE* self)
 {
     BYTE* list = dialog_find_control(self, NULL, "LstSessions", 0);
     int chosen = list ? list_selected(list) : -1;
-    int state = online_internet ? eos_state() : 1;
+    int state = eos_state();
     BOOL chosen_shown = FALSE;
     online_lobby lobby;
     char words[64];
@@ -4320,9 +4321,9 @@ static void online_fill(BYTE* self)
     if (online_failed)
         lstrcpyA(words, online_internet ? "ONLINE PLAY WOULD NOT START" : "THE NETWORK WOULD NOT START");
     else if (state < 0)
-        lstrcpyA(words, "EPIC ONLINE SERVICES COULD NOT BE REACHED");
+        lstrcpyA(words, online_internet ? "EPIC ONLINE SERVICES COULD NOT BE REACHED" : "THE NETWORK WOULD NOT START");
     else if (state == 0)
-        lstrcpyA(words, "SIGNING IN...");
+        lstrcpyA(words, online_internet ? "SIGNING IN..." : "STARTING...");
     else if (online_card_count)
         words[0] = 0;
     else

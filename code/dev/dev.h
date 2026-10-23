@@ -190,13 +190,16 @@ void live_menu_opening(BYTE* dialog);
 void live_menu_tick(void);
 
 /*
-    Online play through Epic Online Services (eosplay.c). eos_install takes over the game's
-    CoCreateInstance at start-up; eos_online makes the network again, its DirectPlay EOS's own
-    or the real one. FALSE when the network could not be made, or EOS's helper not started.
+    Online play through Epic Online Services, and LAN play the same way (eosplay.c). eos_install
+    takes over the game's CoCreateInstance at start-up; eos_online makes the network again, its
+    DirectPlay the real one or ours: over EOS (mcm2-eos.exe) or the local network (mcm2-lan.exe).
+    FALSE when the network could not be made, or its helper not started.
 */
+enum { NET_DIRECTPLAY, NET_EOS, NET_LAN };
+
 void eos_install(void);
-BOOL eos_online(BOOL on);
-/* 1 signed in to EOS, 0 signing in, -1 not (the helper did not start, or failed). */
+BOOL eos_online(int mode);
+/* 1 signed in to EOS (on the LAN, ready), 0 signing in, -1 not (the helper did not start, or failed). */
 int  eos_state(void);
 
 /* What a lobby found shows: its race is the host's settings, kind -1 until it has published them. */

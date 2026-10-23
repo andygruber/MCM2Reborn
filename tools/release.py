@@ -5,6 +5,7 @@ The package is MCM2:Reborn's own files, laid out as in the game's folder - never
   MCM2Reborn.exe            the dev build (build/OpenMCM2.exe), named for its settings file
   MCM2Reborn.ini            dist/MCM2Reborn.ini; the launcher keeps a player's own
   mcm2-eos.exe, EOSSDK-Win64-Shipping.dll, eos.ini   online play (eos.ini from the game folder)
+  mcm2-lan.exe              LAN play (tools/build_lan.py)
   UI/modern/...             the modern menus, their fonts and photos (from the game folder)
   RES/..., TERAFORM/...     the shipped content (dist/content, tools/content.py)
   MCM2Reborn Launcher.exe   the launcher (tools/build_launcher.py)
@@ -47,6 +48,7 @@ def main():
         (need(os.path.join(REPO, "build", "OpenMCM2.exe")), "MCM2Reborn.exe"),
         (need(os.path.join(REPO, "dist", "MCM2Reborn.ini")), "MCM2Reborn.ini"),
         (need(os.path.join(REPO, "build", "eos", "mcm2-eos.exe")), "mcm2-eos.exe"),
+        (need(os.path.join(REPO, "build", "eos", "mcm2-lan.exe")), "mcm2-lan.exe"),
         (need(os.path.join(REPO, "build", "eos", "EOSSDK-Win64-Shipping.dll")), "EOSSDK-Win64-Shipping.dll"),
         (need(find_folder(GAME, "eos.ini")), "eos.ini"),
         (need(os.path.join(REPO, "build", "launcher", LAUNCHER)), LAUNCHER),

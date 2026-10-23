@@ -8,6 +8,10 @@
     were. Epic's SDK is 64-bit only, so the EOS side is mcm2-eos.exe (code/eos/helper.c), started
     once and spoken to over a pipe (code/eos/protocol.h).
 
+    LAN play is this same DirectPlay, its helper mcm2-lan.exe (code/eos/lan.c) on the same pipe:
+    the sessions are the games hosted on the local network, and the messages go straight to the
+    other computers. Only one helper runs at a time; choosing the other network stops it.
+
     Player ids are the helper's peer numbers. The host's group, the one group a session has, is
     GROUP. Only the slots the game calls do anything; the rest answer that they are unsupported.
 */
@@ -21,6 +25,7 @@
 #include <string.h>
 
 #define HELPER          "mcm2-eos.exe"
+#define LAN_HELPER      "mcm2-lan.exe"
 #define GROUP           0x47525550u     /* the host's group: no peer is numbered this */
 #define WAIT_MS         20000           /* for signing in, hosting and joining */
 #define FIND_EVERY_MS   2000
@@ -96,6 +101,8 @@ typedef BOOL   (WINAPI* create_process_fn)(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES,
                                            LPSTARTUPINFOA, LPPROCESS_INFORMATION);
 typedef DWORD  (WINAPI* process_id_fn)(void);
 typedef BOOL   (WINAPI* duplicate_handle_fn)(HANDLE, HANDLE, HANDLE, LPHANDLE, DWORD, BOOL, DWORD);
+typedef BOOL   (WINAPI* disconnect_pipe_fn)(HANDLE);
+typedef BOOL   (WINAPI* cancel_io_fn)(HANDLE, LPOVERLAPPED);
 typedef HRESULT (WINAPI* co_create_fn)(const GUID* clsid, void* outer, DWORD context, const GUID* iid, void** out);
 
 extern co_create_fn _imp__CoCreateInstance;         /* the game's own import slot */
@@ -120,8 +127,10 @@ static struct {
     duplicate_handle_fn duplicate_handle;
     co_create_fn co_create;
     HANDLE pipe;                        /* NULL until the helper is started */
+    int    helper;                      /* the network the helper on it is: NET_EOS or NET_LAN */
+    DWORD  pipes_made;                  /* each helper's pipe a name of its own */
     HANDLE told;                        /* set on each answer the main thread may wait for */
-    BOOL   online;                      /* the next DirectPlay the game makes is ours */
+    int    mode;                        /* the network the next DirectPlay the game makes is */
     BOOL   ready, broken, signed_out;  /* signed out: signing in failed */
     DWORD  self;                        /* our peer number */
     DWORD  last_find;
@@ -157,16 +166,16 @@ static void copy(void* to, const void* from, size_t size)
 
 /* ---- The pipe ---- */
 
-static BOOL pipe_io(BOOL write, void* data, DWORD size)
+static BOOL pipe_io(HANDLE pipe, BOOL write, void* data, DWORD size)
 {
     OVERLAPPED io = { 0 };
     DWORD done = 0;
     BOOL ok;
 
     io.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
-    ok = write ? WriteFile(eos.pipe, data, size, NULL, &io) : ReadFile(eos.pipe, data, size, NULL, &io);
+    ok = write ? WriteFile(pipe, data, size, NULL, &io) : ReadFile(pipe, data, size, NULL, &io);
     if (ok || GetLastError() == ERROR_IO_PENDING)
-        ok = eos.overlapped_result(eos.pipe, &io, &done, TRUE) && done == size;
+        ok = eos.overlapped_result(pipe, &io, &done, TRUE) && done == size;
     CloseHandle(io.hEvent);
     return ok;
 }
@@ -183,7 +192,8 @@ static void ask(BYTE kind, const void* fields, DWORD size, const void* more, DWO
     copy(frame + 5, fields, size);
     copy(frame + 5 + size, more, more_size);
     EnterCriticalSection(&eos.writing);
-    pipe_io(TRUE, frame, 4 + length);
+    if (eos.pipe)
+        pipe_io(eos.pipe, TRUE, frame, 4 + length);
     LeaveCriticalSection(&eos.writing);
 }
 
@@ -268,21 +278,32 @@ static DWORD fields_size(BYTE kind)
     }
 }
 
-static void heard(BYTE kind, BYTE* fields, DWORD size)
+/* Which helper's news this is, for the log. */
+static const char* helper_tag(void)
+{
+    return eos.helper == NET_LAN ? "lan" : "eos";
+}
+
+/* News from the helper on `pipe`: none once another has taken its place. */
+static void heard(HANDLE pipe, BYTE kind, BYTE* fields, DWORD size)
 {
     int i;
 
     if (size < fields_size(kind))
         return;
     EnterCriticalSection(&eos.lock);
+    if (pipe != eos.pipe) {
+        LeaveCriticalSection(&eos.lock);
+        return;
+    }
     switch (kind) {
     case TELL_READY:
         eos.self = ((tell_ready*) fields)->self;
         eos.ready = TRUE;
-        log_line("eos: signed in as %08X", eos.self);
+        log_line("%s: %s as %08X", helper_tag(), eos.helper == NET_LAN ? "ready" : "signed in", eos.self);
         break;
     case TELL_FAILED:
-        log_line("eos: %s", ((tell_failed*) fields)->why);
+        log_line("%s: %s", helper_tag(), ((tell_failed*) fields)->why);
         eos.signed_out = !eos.ready;
         eos.answer = TELL_FAILED;
         break;
@@ -341,22 +362,33 @@ static void heard(BYTE kind, BYTE* fields, DWORD size)
     SetEvent(eos.told);
 }
 
-static DWORD WINAPI helper_reader(void* unused)
+/*
+    The news off one helper's pipe. When that helper stops on its own, the pipe is left broken for
+    helper_start to close; when helper_stop has let it go, the pipe is this thread's to close.
+*/
+static DWORD WINAPI helper_reader(void* pipe)
 {
-    static BYTE fields[sizeof(tell_data) + EOS_DATA_MOST];
+    BYTE* fields = mem_alloc(sizeof(tell_data) + EOS_DATA_MOST);   /* a reader each, while they overlap */
 
-    (void) unused;
     for (;;) {
         DWORD length;
         BYTE kind;
 
-        if (!pipe_io(FALSE, &length, 4) || !length || length - 1 > sizeof fields
-            || !pipe_io(FALSE, &kind, 1) || (length > 1 && !pipe_io(FALSE, fields, length - 1)))
+        if (!fields || !pipe_io(pipe, FALSE, &length, 4) || !length
+            || length - 1 > sizeof(tell_data) + EOS_DATA_MOST || !pipe_io(pipe, FALSE, &kind, 1)
+            || (length > 1 && !pipe_io(pipe, FALSE, fields, length - 1)))
             break;
-        heard(kind, fields, length - 1);
+        heard(pipe, kind, fields, length - 1);
     }
-    log_line("eos: the helper stopped");
+    if (fields)
+        mem_free(fields);
     EnterCriticalSection(&eos.lock);
+    if (pipe != eos.pipe) {
+        LeaveCriticalSection(&eos.lock);
+        CloseHandle(pipe);
+        return 0;
+    }
+    log_line("%s: the helper stopped", helper_tag());
     eos.broken = TRUE;
     eos.ready = FALSE;
     lobby_lost();
@@ -365,9 +397,46 @@ static DWORD WINAPI helper_reader(void* unused)
     return 0;
 }
 
-/* mcm2-eos.exe started and connected; it signs in on its own. */
-static BOOL helper_start(void)
+/* The helper running let go: told by its pipe's closing, it quits. Nothing it knew stays. */
+static void helper_stop(void)
 {
+    disconnect_pipe_fn disconnect_pipe = (disconnect_pipe_fn) api("kernel32.dll", "DisconnectNamedPipe");
+    cancel_io_fn cancel_io = (cancel_io_fn) api("kernel32.dll", "CancelIoEx");
+    HANDLE pipe;
+    BOOL broken;
+
+    EnterCriticalSection(&eos.lock);
+    EnterCriticalSection(&eos.writing);
+    pipe = eos.pipe;
+    broken = eos.broken;
+    eos.pipe = NULL;
+    LeaveCriticalSection(&eos.writing);
+    eos.ready = FALSE;
+    eos.broken = FALSE;
+    eos.signed_out = FALSE;
+    eos.self = 0;
+    eos.session_count = 0;
+    eos.found_at = 0;
+    eos.last_find = 0;
+    lobby_lost();
+    if (pipe && broken) {               /* its reader has gone: the pipe is ours to close */
+        CloseHandle(pipe);
+    } else if (pipe) {                  /* its reader closes it, once the lock is let go */
+        if (disconnect_pipe)
+            disconnect_pipe(pipe);
+        if (cancel_io)                  /* the reader's read ended, for it to see */
+            cancel_io(pipe, NULL);
+    }
+    if (pipe)
+        log_line("%s: %s stopped", helper_tag(), eos.helper == NET_LAN ? LAN_HELPER : HELPER);
+    LeaveCriticalSection(&eos.lock);
+}
+
+/* The helper for `mode` started and connected: mcm2-eos.exe signs in on its own, mcm2-lan.exe is
+   ready at once. One for the other network is stopped first. */
+static BOOL helper_start(int mode)
+{
+    const char* helper = mode == NET_LAN ? LAN_HELPER : HELPER;
     create_pipe_fn create_pipe = (create_pipe_fn) api("kernel32.dll", "CreateNamedPipeA");
     connect_pipe_fn connect_pipe = (connect_pipe_fn) api("kernel32.dll", "ConnectNamedPipe");
     create_process_fn create_process = (create_process_fn) api("kernel32.dll", "CreateProcessA");
@@ -380,27 +449,31 @@ static BOOL helper_start(void)
     DWORD done;
     BOOL connected;
 
-    if (eos.pipe && !eos.broken)
+    if (eos.pipe && !eos.broken && eos.helper == mode)
         return TRUE;
+    if (eos.pipe && eos.helper != mode)
+        helper_stop();
+    eos.helper = mode;
     if (!create_pipe || !connect_pipe || !create_process || !process_id || !eos.overlapped_result) {
-        log_line("eos: kernel32 is missing what starting " HELPER " needs");
+        log_line("%s: kernel32 is missing what starting %s needs", helper_tag(), helper);
         return FALSE;
     }
     if (eos.pipe) {                     /* a helper that stopped: start another */
         CloseHandle(eos.pipe);
         eos.pipe = NULL;
     }
-    wsprintfA(pipe_name, EOS_PIPE_FORMAT, process_id());
+    /* A name of its own: the last helper's pipe may not be closed yet. */
+    wsprintfA(pipe_name, EOS_PIPE_FORMAT, helper_tag(), process_id(), ++eos.pipes_made);
     pipe = create_pipe(pipe_name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED, PIPE_TYPE_BYTE | PIPE_WAIT,
                        1, 0x10000, 0x10000, 0, NULL);
     if (pipe == INVALID_HANDLE_VALUE) {
-        log_line("eos: the pipe would not open");
+        log_line("%s: the pipe would not open", helper_tag());
         return FALSE;
     }
-    wsprintfA(command, "%s %s \"%s\"", HELPER, pipe_name, player_name[0] ? player_name : "Rider");
+    wsprintfA(command, "%s %s \"%s\"", helper, pipe_name, player_name[0] ? player_name : "Rider");
     if (!create_process(NULL, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &startup,
                         &process)) {
-        log_line("eos: " HELPER " would not start (%lu)", GetLastError());
+        log_line("%s: %s would not start (%lu)", helper_tag(), helper, GetLastError());
         CloseHandle(pipe);
         return FALSE;
     }
@@ -414,15 +487,17 @@ static BOOL helper_start(void)
                     && eos.overlapped_result(pipe, &io, &done, FALSE);
     CloseHandle(io.hEvent);
     if (!connected) {
-        log_line("eos: " HELPER " did not connect; see mcm2-eos.log");
+        log_line("%s: %s did not connect; see mcm2-%s.log", helper_tag(), helper, helper_tag());
         CloseHandle(pipe);
         return FALSE;
     }
+    EnterCriticalSection(&eos.lock);
     eos.pipe = pipe;
     eos.broken = FALSE;
     eos.signed_out = FALSE;
-    CloseHandle(CreateThread(NULL, 0, helper_reader, NULL, 0, NULL));
-    log_line("eos: " HELPER " started");
+    LeaveCriticalSection(&eos.lock);
+    CloseHandle(CreateThread(NULL, 0, helper_reader, pipe, 0, NULL));
+    log_line("%s: %s started", helper_tag(), helper);
     return TRUE;
 }
 
@@ -973,7 +1048,7 @@ static HRESULT WINAPI co_create(const GUID* clsid, void* outer, DWORD context, c
 {
     dplay* made;
 
-    if (!eos.online || memcmp(clsid, CLSID_DIRECTPLAY, sizeof(GUID)))
+    if (eos.mode == NET_DIRECTPLAY || memcmp(clsid, CLSID_DIRECTPLAY, sizeof(GUID)))
         return eos.co_create(clsid, outer, context, iid, out);
     made = mem_alloc(sizeof *made);
     if (!made)
@@ -1074,7 +1149,7 @@ void eos_chat(const char* name, const char* text)
     chat_line* newest = &eos.chat.lines[EOS_CHAT_LINES - 1];
     int i;
 
-    if (!eos.online || !eos.hosting)
+    if (eos.mode == NET_DIRECTPLAY || !eos.hosting)
         return;
     for (i = 0; i < EOS_CHAT_LINES - 1; i++)
         eos.chat.lines[i] = eos.chat.lines[i + 1];
@@ -1095,14 +1170,17 @@ int eos_state(void)
     return eos.ready ? 1 : 0;
 }
 
-BOOL eos_online(BOOL on)
+BOOL eos_online(int mode)
 {
-    if (on == eos.online)
-        return TRUE;
-    log_line("eos: online play %s", on ? "on" : "off");
-    if (on && !helper_start())
+    static const char* names[] = { "DirectPlay's own", "Epic Online Services'", "the LAN helper's" };
+
+    /* Its helper running, whatever the mode was: one that stopped, or was stopped, starts again. */
+    if (mode != NET_DIRECTPLAY && !helper_start(mode))
         return FALSE;
-    eos.online = on;
+    if (mode == eos.mode)
+        return TRUE;
+    log_line("eos: the network is %s", names[mode]);
+    eos.mode = mode;
     net_leave();
     if (net_make())
         return TRUE;
