@@ -147,6 +147,19 @@ namespace Mcm2Reborn.Launcher
             foreach (string folder in Search(Path.Combine(Environment.GetFolderPath(
                          Environment.SpecialFolder.UserProfile), "Downloads"), 3))
                 Add(folder, "COPY");
+
+            // Under Wine or Proton: the Linux home's own folders (a Steam or Lutris prefix has
+            // Windows ones of its own), and a CD or disc image Linux has mounted (its GAME folder).
+            string home = Wine.Home;
+            if (home != null)
+                foreach (string place in new[] { "", "Games", "Downloads", "Desktop", "Documents" })
+                    foreach (string folder in Search(Path.Combine(home, place), place.Length == 0 ? 1 : 3))
+                        Add(folder, "COPY");
+            foreach (string mount in Wine.MountPoints())
+            {
+                Add(Path.Combine(mount, "GAME"), "CD");
+                Add(mount, "CD");
+            }
             return found;
         }
 
@@ -230,7 +243,7 @@ namespace Mcm2Reborn.Launcher
             return found;
         }
 
-        // The game's CD in a drive: a folder on it with the game's data.
+        // The game's CD in a drive, or mounted by Linux: a folder on it with the game's data.
         public static string FindDisc()
         {
             foreach (DriveInfo drive in DriveInfo.GetDrives())
@@ -242,6 +255,10 @@ namespace Mcm2Reborn.Launcher
                     if (DiscHasData(folder))
                         return folder;
             }
+            foreach (string mount in Wine.MountPoints())
+                foreach (string folder in new[] { mount, Path.Combine(mount, "GAME") })
+                    if (Directory.Exists(folder) && DiscHasData(folder))
+                        return folder;
             return null;
         }
 
@@ -331,6 +348,10 @@ namespace Mcm2Reborn.Launcher
             string placed = Path.Combine(folder, LauncherName);
             if (!string.Equals(Path.GetFullPath(self), Path.GetFullPath(placed), StringComparison.OrdinalIgnoreCase))
                 File.Copy(self, placed, true);
+            // Under Wine a shortcut becomes a Linux menu entry that runs the default prefix, not
+            // this one: Steam or Lutris starts the game there instead.
+            if (Wine.Under)
+                return placed;
             Shortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
                                   "MCM2 Reborn.lnk"), placed, folder);
             string menu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "MCM2 Reborn");

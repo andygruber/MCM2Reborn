@@ -50,13 +50,12 @@ import subprocess
 import sys
 
 import coff
-from paths import RETAIL
+import toolchain
+from paths import ASM, OBJ, RETAIL
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-OBJ = os.environ.get("MCM2_OBJ", r"C:\mcm2ghidra\out\game.obj")
-ASM = os.environ.get("MCM2_ASM", r"C:\mcm2ghidra\out\game.asm")
 OUT = os.path.join(ROOT, "build", "OpenMCM2.exe")
 
 IMAGE_BASE = "0x400000"
@@ -83,13 +82,6 @@ DIR_IMPORT, DIR_IAT = 1, 12
 # its settings, its EULA acceptance and its profiles under HKLM: declaring the linker's 6.0 makes
 # every one of those writes fail, so it asks again on every launch.
 VERSIONS = ((40, 4), (48, 4))
-
-
-def find(pattern, what):
-    hits = sorted(glob.glob(pattern))
-    if not hits:
-        sys.exit("could not find %s (looked for %s)" % (what, pattern))
-    return hits[-1]
 
 
 def cpp_objects():
@@ -264,21 +256,15 @@ def main():
     if not os.path.exists(RES):
         sys.exit("no resources at %s - run tools/resources.py first" % RES)
 
-    link = os.environ.get("LINK_EXE") or find(
-        r"C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC"
-        r"\*\bin\Hostx64\x86\link.exe", "link.exe")
-
-    # link.exe sits at <msvc>/bin/Hostx64/x86/link.exe, so the toolchain root is four levels up.
-    msvc_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(link))))
-    msvc_lib = os.path.join(msvc_root, "lib", "x86")
-    ucrt_lib = find(r"C:\Program Files (x86)\Windows Kits\10\Lib\*\ucrt\x86", "the UCRT x86 libraries")
+    link = toolchain.command("link")
+    libs = toolchain.lib_dirs()
 
     objects = cpp_objects()
     entry = "open_start" if defines(objects, "_open_start") else entry_point()
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
+    native = toolchain.native
     cmd = [
-        link,
         "-NOLOGO",
         "-MACHINE:X86",
         "-SUBSYSTEM:WINDOWS",
@@ -298,24 +284,24 @@ def main():
 
         # A map, so an address in appended C++ can be named. Without one a crash inside a
         # reimplementation is just a number.
-        "-MAP:" + os.path.join(ROOT, "build", "OpenMCM2.map"),
+        "-MAP:" + native(os.path.join(ROOT, "build", "OpenMCM2.map")),
 
-        "-OUT:" + OUT,
-        "-LIBPATH:" + msvc_lib,
-        "-LIBPATH:" + ucrt_lib,
-        OBJ,
-        RES,
-    ] + objects + bindings(objects)
+        "-OUT:" + native(OUT),
+    ] + ["-LIBPATH:" + lib for lib in libs] + [
+        native(OBJ),
+        native(RES),
+    ] + [native(o) for o in objects] + bindings(objects)
 
-    print("link.exe : %s" % link)
+    print("link.exe : %s" % link[-1])
     print("entry    : %s" % entry)
     print("object   : %s (%d bytes)" % (OBJ, os.path.getsize(OBJ)))
     # Every port adds a switch, and the lot outgrows the 32K a command line may be; link.exe
     # reads them from a response file instead, one to a line.
     rsp = os.path.join(ROOT, "build", "link.rsp")
     with open(rsp, "w", encoding="utf-8") as f:
-        f.write("\n".join('"%s"' % arg for arg in cmd[1:]) + "\n")
-    res = subprocess.run([link, "@" + rsp], capture_output=True, text=True)
+        f.write("\n".join('"%s"' % arg for arg in cmd) + "\n")
+    res = subprocess.run(link + ["@" + native(rsp)], env=toolchain.link_environment(), capture_output=True,
+                         text=True)
     out = (res.stdout or "") + (res.stderr or "")
     if res.returncode != 0:
         # Unresolved externals come in thousands when something structural is wrong and in ones
