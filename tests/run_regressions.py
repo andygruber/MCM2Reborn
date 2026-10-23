@@ -58,6 +58,15 @@ def main():
     counts_command[counts_command.index("/Fe" + native(out / "input.exe"))] = "/Fe" + native(out / "counts.exe")
     subprocess.run(counts_command, cwd=ROOT, env=env, check=True)
     subprocess.run(toolchain.run_exe(str(out / "counts.exe")), check=True)
+    # LAN play: the helper itself, built as it ships, driven over its pipes on this computer's network.
+    import build_lan
+    build_lan.main()
+    lan_env = toolchain.environment("x64")
+    subprocess.run(toolchain.command("cl", "x64", lan_env) + [
+                   "/nologo", "/std:c11", "/O2", "/W4", "/WX", "/D_CRT_SECURE_NO_WARNINGS",
+                   native(ROOT / "tests/lan_regressions.c"), "/Fe" + native(out / "lan.exe"),
+                   "/Fo" + native(out) + "\\"], cwd=ROOT, env=lan_env, check=True)
+    subprocess.run(toolchain.run_exe(str(out / "lan.exe")) + [native(ROOT / "build/eos")], check=True, timeout=120)
 
 
 if __name__ == "__main__":

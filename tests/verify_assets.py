@@ -50,10 +50,10 @@ def main():
     from run_regressions import function
     dialogs = (ROOT / "code/mcm2/dlgprocs.c").read_text(encoding="utf-8")
     opening = function(dialogs, "static void multi_open(")
-    modern = opening[opening.index("if (dev_settings.menus_modern)"):opening.index("eos_online(FALSE)")]
+    modern = opening[opening.index("if (dev_settings.menus_modern)"):opening.index("eos_online(NET_DIRECTPLAY)")]
     assert "return;" in modern and "net_make(" not in modern
     connecting = function(dialogs, "static void connect_by(")
-    assert connecting.index("eos_online(FALSE)") < connecting.index("net_make()")
+    assert connecting.index("eos_online(NET_DIRECTPLAY)") < connecting.index("net_make()")
     checks += 2
     image, sections = disasm.load_image()
     source = (ROOT / "code/dev/riders.c").read_text(encoding="utf-8")

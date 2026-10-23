@@ -61,6 +61,9 @@ Proton runs in Steam's container, which cannot see the system's ffmpeg. There, p
 
 **Online**
 - Lobbies through Epic Online Services, up to 30 riders each, found from the game's Internet screen.
+- LAN games on your local network, from the LAN screen or Internet's Local Network tab, with no account
+  and no DirectPlay. They show the same details as online lobbies. Windows may ask once to let
+  `mcm2-lan.exe` through its firewall; allow it on private networks.
 - If you're missing the host's track or another rider's skins, the lobby offers to download them.
 - Each rider's ping and a ready count show in the lobby. If the host's game drops, the session ends cleanly.
 
@@ -144,7 +147,7 @@ MCM2_GAME=~/Games/MCM2 sh tools/deploy_dev.sh           # on the host, into a ga
 `run.sh` runs whatever command it is given in the container, `cycle.sh` when there is none. The
 repository is mounted at `/src` and `~/mcm2ghidra` (`MCM2_WORK`) at `/work`. `MCM2_GAME` and
 `MCM2_EOS_SDK` are mounted too when set, for `tools/build_launcher.py`, `tools/build_eos.py` and
-`tools/release.py`. Files the build writes belong to you.
+`tools/release.py`. `tools/build_lan.py` builds the LAN helper, which needs no SDK. Files the build writes belong to you.
 
 The image is made once, in about 15 minutes, and takes about 9 GB. Making it downloads Visual
 Studio's build tools from Microsoft, which means accepting
@@ -167,7 +170,7 @@ DLLs; Linux has none.
 |---|---|
 | `code/mcm2/` | what is linked into the game: start-up, the renderer, the menus' code and the ported functions |
 | `code/dev/` | MCM2:Reborn's features: HUD, gamepads, leaderboards, cameras, online, settings |
-| `code/eos/` | the Epic Online Services helper (64-bit, beside the game) |
+| `code/eos/` | the Epic Online Services and LAN helpers (64-bit, beside the game) |
 | `launcher/` | the launcher (C#, .NET Framework 4.8) |
 | `tools/` | the build, the release packages, and the checks against retail |
 | `tools/modern/` | the modern menus' layouts and art |

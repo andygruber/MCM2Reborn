@@ -3,18 +3,21 @@
 
     The game is 32-bit and Epic's SDK is 64-bit only, so online play goes through a helper of
     its own: the game starts it, and the two talk over the named pipe \\.\pipe\mcm2-eos-<the
-    game's process id>. Each message is a 4-byte length (of what follows), a 1-byte kind and
-    its fields. Both sides are little-endian x86, so the fields are plain structs.
+    game's process id>-<a count>. Each message is a 4-byte length (of what follows), a 1-byte
+    kind and its fields. Both sides are little-endian x86, so the fields are plain structs.
 
-    Peers are numbered by the helper (a hash of their EOS product user id, never 0); a peer's
-    number is the DirectPlay player id the game sees for it.
+    The LAN helper (mcm2-lan.exe, lan.c) says the same over \\.\pipe\mcm2-lan-<id>-<count>: its
+    "lobbies" are the games hosted on the local network, and it is ready as soon as it starts.
+
+    Peers are numbered by the helper (a hash of their EOS product user id, never 0; on the LAN, a
+    number of its own); a peer's number is the DirectPlay player id the game sees for it.
 */
 
 #pragma once
 
 #include <stdint.h>
 
-#define EOS_PIPE_FORMAT     "\\\\.\\pipe\\mcm2-eos-%lu"
+#define EOS_PIPE_FORMAT     "\\\\.\\pipe\\mcm2-%s-%lu-%lu"  /* "eos" or "lan", the game's id, a count */
 #define EOS_NAME_SIZE       32          /* a rider's name, as the lobby shows it */
 #define EOS_LOBBY_ID_SIZE   64          /* an EOS lobby id, as text */
 #define EOS_SESSION_NAME_SIZE 64
