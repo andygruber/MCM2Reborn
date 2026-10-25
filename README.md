@@ -7,7 +7,7 @@ use the modern input system.
 
 ## Installing
 
-1. Download **MCM2Reborn-Launcher.exe** from the [latest release](https://github.com/xshxdex98/MCM2Reborn/releases/latest).
+1. Download **MCM2Reborn-Launcher.exe** from the [latest release](https://github.com/andygruber/MCM2Reborn/releases/latest).
 2. Run it. It looks for a copy of the game on your PC: a retail install, a portable copy, or the
    CD. If you don't have one, pick **DOWNLOAD MOTOCROSS MADNESS 2** and it fetches the game.
 3. Type your rider's name and press **INSTALL**. MCM2:Reborn goes in its own folder, with desktop
@@ -125,6 +125,28 @@ The Ghidra workspace lives at `C:\mcm2ghidra\`, outside OneDrive and with no spa
 OneDrive corrupts Ghidra's project files, and `analyzeHeadless.bat` splits its arguments on spaces.
 `MCM2_WORK` puts it elsewhere. `tools/paths.py` lists what else can be set, such as the game folder
 (`MCM2_GAME`).
+
+### Releases
+
+Publishing a GitHub release tagged `v<GAME_VERSION>` (`code/dev/dev.h`) is enough.
+`.github/workflows/release-packages.yml` builds it on GitHub's runners and adds
+`MCM2Reborn-<tag>.zip`, its `.sha256` and `MCM2Reborn-Launcher.exe` to the release. The launcher
+picks the release up once the zip is there.
+
+- **Where it gets the retail files:** `Mcm2.exe` and the game's UI come from the original project's
+  public base game (`MCM2-base.zip`), and the exe is checked against the sha256 in `docs/binary.md`.
+- **How it builds:** on a Windows runner, with its Visual Studio. It makes Ghidra's database, runs
+  the cycle, builds the LAN helper, the menus and the launcher, and runs the tests.
+- **What goes in the package:** it starts from the newest package of the original project
+  (xshxdex98/MCM2Reborn). This build's game, LAN helper, launcher, menus and `MCM2Reborn.ini` go
+  over it (`tools/release.py --over`). Everything else stays as upstream has it, such as `eos.ini`,
+  the EOS helper, the menus' photos and the shipped content.
+- **The EOS helper:** it is built only when the secret `EOS_SDK_URL` names a zip of Epic's SDK.
+  Without it, the workflow refuses to keep upstream's helper once `code/eos/helper.c` differs from
+  the one it was built from.
+
+*Run workflow* builds a release's packages again. With *upload* unticked it builds any ref and keeps
+the packages as the run's artifacts only.
 
 ### On Linux
 

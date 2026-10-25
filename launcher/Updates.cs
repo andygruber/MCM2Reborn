@@ -1,9 +1,11 @@
-// MCM2:Reborn's releases, from GitHub (xshxdex98/MCM2Reborn): the changelog the launcher shows, and
+// MCM2:Reborn's releases, from GitHub (andygruber/MCM2Reborn): the changelog the launcher shows, and
 // the newest's package, which it puts over the install when it is newer than the one there.
 //
 // A release's package is its asset MCM2Reborn-<version>.zip: MCM2:Reborn's own files laid out as
 // in the game's folder, and the launcher. Settings files already there are kept. The base game, for
-// a player without a copy of their own, is the asset MCM2-base.zip on whichever release has it.
+// a player without a copy of their own, is the asset MCM2-base.zip on whichever release has it:
+// one of this repository's, else one of the original project's (xshxdex98/MCM2Reborn), which
+// hosts it. Only the base game is taken from there, never a package.
 
 using System;
 using System.Collections.Generic;
@@ -25,7 +27,8 @@ namespace Mcm2Reborn.Launcher
 
     static class Updates
     {
-        const string Releases = "https://api.github.com/repos/xshxdex98/MCM2Reborn/releases?per_page=30";
+        const string Repository = "andygruber/MCM2Reborn";
+        const string BaseRepository = "xshxdex98/MCM2Reborn";
         public const string VersionFile = "reborn-version.txt";
         public const string BaseName = "MCM2-base.zip";
 
@@ -47,11 +50,33 @@ namespace Mcm2Reborn.Launcher
         // The releases, the newest first; drafts and pre-releases left out.
         public static List<Release> Fetch()
         {
+            List<Release> releases = Read(Repository, 30);
+            if (!releases.Any(r => r.BaseUrl != null))
+            {
+                try
+                {
+                    foreach (Release release in Read(BaseRepository, 100).Where(r => r.BaseUrl != null))
+                    {
+                        release.PackageUrl = null;
+                        releases.Add(release);
+                    }
+                }
+                catch (Exception)
+                {
+                    // Updates work without it; only the DOWNLOAD choice needs the base game.
+                }
+            }
+            return releases.OrderByDescending(r => r.Version).ThenByDescending(r => r.Published).ToList();
+        }
+
+        // `repo`'s newest `count` releases, as GitHub lists them.
+        static List<Release> Read(string repo, int count)
+        {
             string json;
             using (WebClient client = Client())
             {
                 client.Headers[HttpRequestHeader.Accept] = "application/vnd.github+json";
-                json = client.DownloadString(Releases);
+                json = client.DownloadString("https://api.github.com/repos/" + repo + "/releases?per_page=" + count);
             }
             var releases = new List<Release>();
             var list = new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.DeserializeObject(json) as object[];
@@ -81,7 +106,7 @@ namespace Mcm2Reborn.Launcher
                     }
                 releases.Add(release);
             }
-            return releases.OrderByDescending(r => r.Version).ThenByDescending(r => r.Published).ToList();
+            return releases;
         }
 
         static T Get<T>(this Dictionary<string, object> map, string key) =>

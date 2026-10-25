@@ -1,0 +1,207 @@
+# A release's packages, built and added to it when it is published: MCM2Reborn-<tag>.zip (what the
+# launcher installs and updates from), its .sha256, and MCM2Reborn-Launcher.exe.
+#
+# The game is built from the retail executable, as on a desk (README.md, Building it), on a Windows
+# runner: its Visual Studio, Ghidra's database made from Mcm2.exe, the cycle, the LAN helper, the
+# menus, the launcher and the tests. Mcm2.exe and the game's UI come from the base game the original
+# project hosts (.github/scripts/release_inputs.py).
+#
+# The package is the original project's newest one with this build's files over it (tools/release.py
+# --over): the game, the LAN helper, the launcher, the menus and MCM2Reborn.ini. Everything else -
+# eos.ini, the EOS helper and its DLL, the menus' photos and fonts, the shipped content - is as it
+# has it. The EOS helper is built instead when the secret EOS_SDK_URL names a zip of Epic's SDK.
+#
+# The release's tag has to be v<GAME_VERSION> (code/dev/dev.h): the package is named for that, and
+# the launcher compares it with the install's.
+
+name: Release packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag to build (any ref, without the upload)"
+        required: true
+      upload:
+        description: "Add the packages to that tag's release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-packages-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: true
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  UPLOAD: ${{ github.event_name == 'release' || inputs.upload }}
+  PYTHON: python
+  MCM2_WORK: C:/mcm2ghidra
+
+jobs:
+  package:
+    # A release that is not v<version> (the base game's, say) has no packages.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: windows-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: The tag is the game's version
+        run: |
+          version=$(sed -n 's/^#define GAME_VERSION "\(.*\)"/\1/p' code/dev/dev.h)
+          if [ "$TAG" != "v$version" ]; then
+              message="the tag $TAG is not v$version, code/dev/dev.h's GAME_VERSION"
+              [ "$UPLOAD" = true ] && { echo "::error::$message"; exit 1; }
+              echo "::warning::$message"
+          fi
+          launcher=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' launcher/MCM2RebornLauncher.csproj)
+          [ "$launcher" = "$version" ] || echo "::warning::the launcher says version $launcher, the game $version"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet capstone pillow numpy
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: The Windows fonts the menus' art is drawn with
+        run: |
+          for font in bahnschrift.ttf consola.ttf segoeui.ttf seguisb.ttf seguisym.ttf; do
+              [ -f "C:/Windows/Fonts/$font" ] || { echo "::error::no $font in C:/Windows/Fonts"; exit 1; }
+          done
+
+      # A game folder ($RUNNER_TEMP/game) as the tools take one (MCM2_GAME): the retail UI, with the
+      # original project's UI\modern over it, whose fonts and photos the menus and the launcher use.
+      - name: The retail executable, the game's UI and the original project's package
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/release_inputs.py retail "$RUNNER_TEMP/game"
+          python .github/scripts/release_inputs.py baseline "$RUNNER_TEMP/baseline"
+          mkdir -p "$MCM2_WORK/bin"
+          cp "$RUNNER_TEMP/game/Mcm2.exe" "$MCM2_WORK/bin/"
+          python - "$RUNNER_TEMP" <<'EOF'
+          import sys, zipfile
+          from pathlib import Path
+          temp = Path(sys.argv[1])
+          with zipfile.ZipFile(temp / "baseline" / "package.zip") as z:
+              for info in z.infolist():
+                  if not info.is_dir() and info.filename.lower().startswith("ui/modern/"):
+                      z.extract(info, temp / "game")
+          EOF
+          echo "MCM2_GAME=$(cygpath -m "$RUNNER_TEMP/game")" >> "$GITHUB_ENV"
+
+      # The package keeps the original project's EOS helper: built from the same helper.c as ours.
+      - name: The original project's EOS helper fits
+        env:
+          HAVE_EOS_SDK: ${{ secrets.EOS_SDK_URL != '' }}
+        run: |
+          tag=$(cat "$RUNNER_TEMP/baseline/tag.txt")
+          repo=$(cat "$RUNNER_TEMP/baseline/repo.txt")
+          git rev-parse -q --verify "refs/tags/$tag" >/dev/null \
+              || git fetch -q --no-tags "https://github.com/$repo" "refs/tags/$tag:refs/tags/$tag"
+          if ! git diff --quiet "$tag" HEAD -- code/eos/helper.c code/eos/helper.rc code/eos/helper.manifest; then
+              if [ "$HAVE_EOS_SDK" != true ]; then
+                  echo "::error::code/eos/helper.c differs from $tag's, whose EOS helper the package would keep: merge it, or give the EOS SDK (secret EOS_SDK_URL)"
+                  exit 1
+              fi
+          elif ! git diff --quiet "$tag" HEAD -- code/eos/protocol.h; then
+              echo "::warning::code/eos/protocol.h changed since $tag: the EOS helper from $tag must still speak it"
+          fi
+
+      # Ghidra as tools/docker/Dockerfile has it, with the names of the functions Mcm2.exe imports by
+      # ordinal alone (tools/ghidra/symbols), as the Linux build gives it: the runner's Windows need
+      # not have every one of those DLLs.
+      - name: Ghidra
+        run: |
+          url=$(sed -n 's/^ARG GHIDRA_URL=//p' tools/docker/Dockerfile)
+          curl -sSfL -o "$RUNNER_TEMP/ghidra.zip" "$url"
+          7z x -bd -o"C:/ghidra" "$RUNNER_TEMP/ghidra.zip" >/dev/null
+          ghidra=$(cygpath -m "$(ls -d /c/ghidra/ghidra_*)")
+          cp tools/ghidra/symbols/win32/*.exports "$ghidra/Ghidra/Features/Base/data/symbols/win32/"
+          echo "GHIDRA_INSTALL_DIR=$ghidra" >> "$GITHUB_ENV"
+
+      - name: Ghidra's database
+        run: sh tools/ghidra/reimport.sh
+      - name: The game (export, ports, assemble, compile, link, verify)
+        run: sh tools/ghidra/cycle.sh
+      - name: The LAN helper
+        run: python tools/build_lan.py
+      - name: The tests
+        run: python tests/run_regressions.py
+
+      - name: The EOS helper, when the EOS SDK is given
+        env:
+          EOS_SDK_URL: ${{ secrets.EOS_SDK_URL }}
+        run: |
+          [ -n "$EOS_SDK_URL" ] || { echo "no EOS_SDK_URL: the original project's mcm2-eos.exe stays in the package"; exit 0; }
+          curl -sSfL -o "$RUNNER_TEMP/eos-sdk.zip" "$EOS_SDK_URL"
+          7z x -bd -o"$RUNNER_TEMP/eos-sdk" "$RUNNER_TEMP/eos-sdk.zip" >/dev/null
+          header=$(find "$RUNNER_TEMP/eos-sdk" -path '*/Include/eos_sdk.h' | head -1)
+          [ -n "$header" ] || { echo "::error::no Include/eos_sdk.h in the EOS SDK's zip"; exit 1; }
+          MCM2_EOS_SDK=$(dirname "$(dirname "$header")") python tools/build_eos.py
+
+      # The builders look for a photo beside their preview folder.
+      - name: The menus
+        run: |
+          menus="$RUNNER_TEMP/menus"
+          mkdir -p "$menus"
+          python -c "import sys; from PIL import Image; Image.open(sys.argv[1]).convert('RGB').save(sys.argv[2])" \
+              "$MCM2_GAME/UI/modern/photo1.tga" "$menus/menu photo 1.jpg"
+          python tools/modern/build_all.py "$MCM2_GAME/UI" "$menus/modern" "$menus/previews"
+          python - "$RUNNER_TEMP" >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import sys
+          from pathlib import Path
+          temp = Path(sys.argv[1])
+          print("### Menus against %s\n" % (temp / "baseline" / "tag.txt").read_text())
+          for path in sorted((temp / "menus" / "modern").iterdir()):
+              old = temp / "game" / "UI" / "modern" / path.name
+              word = "new" if not old.exists() else "same" if old.read_bytes() == path.read_bytes() else "changed"
+              print("- %s: %s" % (path.name, word))
+          EOF
+          cp -r "$menus/modern/." "$MCM2_GAME/UI/modern/"
+
+      - name: The launcher
+        run: python tools/build_launcher.py
+
+      - name: The package
+        run: |
+          python tools/release.py --over "$RUNNER_TEMP/baseline/package.zip"
+          cd build/release
+          mv "MCM2Reborn Launcher.exe" MCM2Reborn-Launcher.exe
+          for zip in MCM2Reborn-*.zip; do sha256sum "$zip" > "$zip.sha256"; done
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: build/release
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: menu-previews
+          path: ${{ runner.temp }}/menus/previews
+
+      - name: Added to the release
+        if: env.UPLOAD == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd build/release
+          gh release upload "$TAG" MCM2Reborn-*.zip MCM2Reborn-*.zip.sha256 MCM2Reborn-Launcher.exe --clobber
