@@ -11,8 +11,13 @@ The package is MCM2:Reborn's own files, laid out as in the game's folder - never
   MCM2Reborn Launcher.exe   the launcher (tools/build_launcher.py)
   reborn-version.txt        the version, as dev.h's GAME_VERSION
 
-Publishing it is a GitHub release of xshxdex98/MCM2Reborn tagged v<version> with the zip as its asset;
-this only builds it.
+With --over <package.zip> the package is that one (an earlier release's) with this build's files
+over it: what this build has not got - eos.ini, the EOS helper, the menus' photos, the content -
+stays as that package has it, and so does any file of it this list does not name.
+
+Publishing it is a GitHub release of andygruber/MCM2Reborn tagged v<version> with the zip as its asset;
+this only builds it. Publishing the release is enough: .github/workflows/release-packages.yml builds
+the package and adds it, with the launcher.
 """
 import os
 import re
@@ -43,19 +48,29 @@ def need(path):
 
 
 def main():
+    over = None
+    if sys.argv[1:2] == ["--over"] and len(sys.argv) == 3:
+        over = sys.argv[2]
+    elif len(sys.argv) > 1:
+        sys.exit(__doc__)
+    # What an earlier package can stand in for: needed only without one.
+    maybe = (lambda path: path if os.path.exists(path) else None) if over else need
     tag = "v" + version()
     files = [
         (need(os.path.join(REPO, "build", "OpenMCM2.exe")), "MCM2Reborn.exe"),
         (need(os.path.join(REPO, "dist", "MCM2Reborn.ini")), "MCM2Reborn.ini"),
-        (need(os.path.join(REPO, "build", "eos", "mcm2-eos.exe")), "mcm2-eos.exe"),
+        (maybe(os.path.join(REPO, "build", "eos", "mcm2-eos.exe")), "mcm2-eos.exe"),
         (need(os.path.join(REPO, "build", "eos", "mcm2-lan.exe")), "mcm2-lan.exe"),
-        (need(os.path.join(REPO, "build", "eos", "EOSSDK-Win64-Shipping.dll")), "EOSSDK-Win64-Shipping.dll"),
-        (need(find_folder(GAME, "eos.ini")), "eos.ini"),
+        (maybe(os.path.join(REPO, "build", "eos", "EOSSDK-Win64-Shipping.dll")), "EOSSDK-Win64-Shipping.dll"),
+        (maybe(find_folder(GAME, "eos.ini")), "eos.ini"),
         (need(os.path.join(REPO, "build", "launcher", LAUNCHER)), LAUNCHER),
     ]
-    for root, under in ((find_folder(GAME, "UI", "modern"), "UI/modern"),
-                        (need(os.path.join(REPO, "dist", "content")), "")):
-        for folder, _, names in os.walk(need(root)):
+    files = [(path, name) for path, name in files if path]
+    for root, under in ((maybe(find_folder(GAME, "UI", "modern")), "UI/modern"),
+                        (maybe(os.path.join(REPO, "dist", "content")), "")):
+        if not root:
+            continue
+        for folder, _, names in os.walk(root):
             for name in names:
                 path = os.path.join(folder, name)
                 files.append((path, "/".join(p for p in (under, os.path.relpath(path, root).replace(os.sep, "/")) if p)))
@@ -66,6 +81,13 @@ def main():
         for path, name in files:
             z.write(path, name)
         z.writestr("reborn-version.txt", tag)
+        if over:
+            ours = {name.lower() for _, name in files} | {"reborn-version.txt"}
+            with zipfile.ZipFile(over) as earlier:
+                kept = [i for i in earlier.infolist() if not i.is_dir() and i.filename.lower() not in ours]
+                for info in kept:
+                    z.writestr(info, earlier.read(info))
+            files += [(None, info.filename) for info in kept]
     shutil.copy2(os.path.join(REPO, "build", "launcher", LAUNCHER), os.path.join(OUT, LAUNCHER))
     print("%s: %d files, %.1f MB" % (package, len(files) + 1, os.path.getsize(package) / 1e6))
 

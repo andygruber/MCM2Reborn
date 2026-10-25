@@ -6,8 +6,9 @@ given, whole, without what is a player's own: the profiles in UI\\PROFILE (its E
 settings the game keeps in mcm2_profile.json, and its error log. The player names a first rider
 in the launcher instead.
 
-Publishing it is an asset of the same name on a GitHub release of xshxdex98/MCM2Reborn; this only
-builds it.
+Publishing it is an asset of the same name on a GitHub release; this only builds it. The launcher
+looks on andygruber/MCM2Reborn's releases, then on the original project's (xshxdex98/MCM2Reborn),
+which has it on its release mcm2-base.
 """
 import os
 import sys
