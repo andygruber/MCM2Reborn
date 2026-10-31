@@ -58,6 +58,7 @@ def main():
     counts_command[counts_command.index("/Fe" + str(out / "input.exe"))] = "/Fe" + str(out / "counts.exe")
     subprocess.run(counts_command, cwd=ROOT, env=env, check=True)
     subprocess.run([str(out / "counts.exe")], check=True)
+    subprocess.run([sys.executable, str(ROOT / "tests/directory_regressions.py")], check=True)
 
 
 if __name__ == "__main__":
