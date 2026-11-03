@@ -1,0 +1,37 @@
+name: Discord release announcements
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to announce (the latest when empty)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Post the release notes
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_CHANGELOG_WEBHOOK_URL: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        # A fork without the webhooks (a copy of the repository) has nowhere to post: skipped.
+        run: |
+            if [ -z "$DISCORD_WEBHOOK_URL$DISCORD_CHANGELOG_WEBHOOK_URL" ]; then
+                echo "::notice::no Discord webhook set, so the release is not announced"
+                exit 0
+            fi
+            node .github/scripts/announce-release.mjs
