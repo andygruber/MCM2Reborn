@@ -443,6 +443,10 @@ namespace Mcm2Reborn.Launcher
                 shortcut.TargetPath = target;
                 shortcut.WorkingDirectory = folder;
                 shortcut.Description = "MCM2:Reborn";
+                // The launcher has no icon of its own: the game's.
+                string game = GameExe(folder);
+                if (game != null)
+                    shortcut.IconLocation = game + ",0";
                 shortcut.Save();
             }
             catch (Exception)
