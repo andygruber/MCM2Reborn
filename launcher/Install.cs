@@ -60,6 +60,24 @@ namespace Mcm2Reborn.Launcher
             }
         }
 
+        // The launcher's own folder when it is an install: one copied whole to this computer, which
+        // has no InstallPath of its own yet. Null when the launcher was run from anywhere else.
+        public static string Here
+        {
+            get
+            {
+                try
+                {
+                    string here = Path.GetDirectoryName(Path.GetFullPath(typeof(Install).Assembly.Location));
+                    return GameExe(here) != null && IsGame(here) ? here : null;
+                }
+                catch (Exception)
+                {
+                    return null;
+                }
+            }
+        }
+
         public static string DefaultFolder =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs",
                          "MCM2 Reborn");

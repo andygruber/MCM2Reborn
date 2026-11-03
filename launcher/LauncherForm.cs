@@ -99,6 +99,26 @@ namespace Mcm2Reborn.Launcher
             folder = Install.Installed;
             if (folder != null && Install.GameExe(folder) == null)
                 folder = null;
+            // Run from an install that is not the one registered (copied here from another computer, or
+            // beside another): it is the install, not offered again, and the shortcuts go to it.
+            string here = Install.Here;
+            if (here != null && !string.Equals(here.TrimEnd('\\'), folder == null ? null : Path.GetFullPath(folder).TrimEnd('\\'),
+                                               StringComparison.OrdinalIgnoreCase))
+            {
+                folder = here;
+                Install.Installed = folder;
+                string at = folder;
+                Background(() => {
+                    try
+                    {
+                        Install.PlaceLauncher(at);
+                    }
+                    catch (Exception)
+                    {
+                        // no shortcuts: the launcher still runs from its folder
+                    }
+                });
+            }
             if (folder == null)
                 FindCopies();
             else
