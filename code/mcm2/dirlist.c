@@ -311,59 +311,82 @@ BOOL __fastcall dir_list_wanted(dir_list* self, void* edx_unused, const char* na
     return (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
-/*
-    Vtable slot 1: lists the names the pattern finds in the folder, counting them first and
-    copying them in a second search. FALSE when the pattern finds nothing at all. The copy is
-    not bounded by the count, so a file made between the searches overruns the entries, and a
-    failed allocation is written through (both kept).
-*/
+/* One enumeration with a growable buffer: files added while a scan is running
+   must never exceed a count taken by an earlier enumeration. Publish only a
+   complete successful scan; missing folders and no matches are empty lists. */
 PORT(0x0044B610)
 BOOL __fastcall dir_list_scan(dir_list* self)
 {
     char path[MAX_PATH];
     WIN32_FIND_DATAA found;
     HANDLE search;
-    dir_entry* entry;
-    int count = 0;
+    int capacity = 0;
+    size_t folder = text_length(self->folder);
+    size_t pattern = text_length(self->pattern);
+    BOOL separator = folder && self->folder[folder - 1] != '\\' && self->folder[folder - 1] != '/';
+    DWORD error;
 
-    self->count = 0;
-    self->cursor = 0;
-    if (self->entries) {
+    if (self->entries)
         game_delete(self->entries);
-        self->entries = NULL;
-    }
-    /* An empty folder reads the byte before it, the pattern's last (kept). */
-    game_FUN_0053a11f(path,
-                      self->folder[(int) text_length(self->folder) - 1] == '\\' ? JOINED : IN_FOLDER,
-                      self->folder, self->pattern);
-
-    search = FindFirstFileA(path, &found);
-    if (search == INVALID_HANDLE_VALUE)
-        return FALSE;
-    do {
-        if (dir_list_wanted(self, NULL, found.cFileName, found.dwFileAttributes))
-            count++;
-    } while (FindNextFileA(search, &found));
-    FindClose(search);
-
-    self->count = count;
-    if (self->count <= 0)
+    self->entries = NULL;
+    self->count = self->cursor = 0;
+    if (!pattern)
         return TRUE;
-    self->entries = entries_new(self->count, 0x148);
-
-    search = FindFirstFileA(path, &found);
-    if (search == INVALID_HANDLE_VALUE)
+    if (folder + pattern + separator >= MAX_PATH) {
         return FALSE;
-    entry = self->entries;
+    }
+    text_copy(path, self->folder);
+    if (separator)
+        path[folder++] = '\\';
+    text_copy(path + folder, self->pattern);
+    search = FindFirstFileA(path, &found);
+    if (search == INVALID_HANDLE_VALUE) {
+        error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+    }
     do {
         if (dir_list_wanted(self, NULL, found.cFileName, found.dwFileAttributes)) {
+            dir_entry* entry;
+            if (self->count == capacity) {
+                int next;
+                dir_entry* grown;
+                if ((unsigned) capacity > 0x7FFFFFFFu / sizeof(dir_entry) / 2)
+                    goto failed;
+                next = capacity ? capacity * 2 : 32;
+                grown = entries_new(next, 0x148);
+                if (!grown)
+                    goto failed;
+                if (self->entries) {
+                    int i;
+                    for (i = 0; i < self->count; i++)
+                        grown[i] = self->entries[i];
+                    game_delete(self->entries);
+                }
+                self->entries = grown;
+                capacity = next;
+            }
+            entry = &self->entries[self->count++];
             text_copy_most(entry->name, found.cFileName, MAX_PATH - 1);
             entry->attributes = found.dwFileAttributes;
-            entry++;
         }
     } while (FindNextFileA(search, &found));
+    error = GetLastError();
     FindClose(search);
-    return TRUE;
+    if (error == ERROR_NO_MORE_FILES)
+        return TRUE;
+    if (self->entries)
+        game_delete(self->entries);
+    self->entries = NULL;
+    self->count = self->cursor = 0;
+    return FALSE;
+
+failed:
+    FindClose(search);
+    if (self->entries)
+        game_delete(self->entries);
+    self->entries = NULL;
+    self->count = self->cursor = 0;
+    return FALSE;
 }
 
 /* Whether the name is listed, in any case. */
@@ -478,84 +501,66 @@ void __fastcall merged_list_set_folders(merged_list* self, void* edx_unused,
     text_copy_most(self->cd, cd, MAX_PATH - 1);
 }
 
-/*
-    Vtable slot 1: the CD's names, then those of the hard disk's the CD lacks, each drive's
-    sorted by name. Kept as they are: a name on both lowers the count on every match, dropping
-    the last name gathered so far; the drives are marked in the attribute slot while the drive
-    slot is what is copied, so every name ends with DRIVE_FIXED in both; and when either list
-    cannot be made, the other is leaked.
-*/
+/* Merge sorted names once. Windows names are case insensitive; a local copy
+   wins a duplicate, without decrementing the number of unrelated entries.
+   Merged lists retain the original API's drive tags in attributes. */
 PORT(0x0044BBD0)
 BOOL __fastcall merged_list_scan(merged_list* self)
 {
+    dir_list hard_disk, cd;
     dir_list* base = &self->base;
-    dir_list* hard_disk;
-    dir_list* cd;
-    dir_entry* merged;
-    int count;
-    int i;
-    int j;
+    dir_entry* merged = NULL;
+    int local = 0, shared = 0, count = 0, capacity;
+    BOOL ok = FALSE;
 
-    base->count = 0;
-    base->cursor = 0;
-    if (base->entries) {
+    if (base->entries)
         game_delete(base->entries);
-        base->entries = NULL;
+    base->entries = NULL;
+    base->count = base->cursor = 0;
+    dir_list_construct(&hard_disk);
+    dir_list_construct(&cd);
+    dir_list_set_pattern(&hard_disk, NULL, base->pattern, TRUE);
+    dir_list_set_folder(&hard_disk, NULL, self->hard_disk);
+    dir_list_set_pattern(&cd, NULL, base->pattern, TRUE);
+    dir_list_set_folder(&cd, NULL, self->cd);
+    if ((self->hard_disk[0] && !dir_list_scan(&hard_disk))
+        || (self->cd[0] && !dir_list_scan(&cd)))
+        goto done;
+    dir_list_sort(&hard_disk);
+    dir_list_sort(&cd);
+    if ((unsigned)hard_disk.count + (unsigned)cd.count > 0x7FFFFFFFu / sizeof(dir_entry))
+        goto done;
+    capacity = hard_disk.count + cd.count;
+    if (capacity) {
+        merged = entries_new(capacity, 0x1E0);
+        if (!merged)
+            goto done;
     }
-    hard_disk = game_new(sizeof *hard_disk, DIRLIST_CPP, 0x1D0);
-    hard_disk = hard_disk ? dir_list_construct(hard_disk) : NULL;
-    cd = game_new(sizeof *cd, DIRLIST_CPP, 0x1D1);
-    cd = cd ? dir_list_construct(cd) : NULL;
-    if (!hard_disk || !cd)
-        return FALSE;
-
-    dir_list_set_pattern(hard_disk, NULL, base->pattern, TRUE);
-    dir_list_set_folder(hard_disk, NULL, self->hard_disk);
-    VIRTUAL(hard_disk, 4, method_0)(hard_disk);
-    dir_list_sort(hard_disk);
-    dir_list_set_pattern(cd, NULL, base->pattern, TRUE);
-    dir_list_set_folder(cd, NULL, self->cd);
-    VIRTUAL(cd, 4, method_0)(cd);
-    dir_list_sort(cd);
-
-    count = cd->count;
-    merged = entries_new(count + hard_disk->count, 0x1E0);     /* not checked (kept) */
-    for (i = 0; i < cd->count; i++) {
-        text_copy_most(merged[i].name, cd->entries[i].name, MAX_PATH - 1);
-        merged[i].attributes = DRIVE_CDROM;
-    }
-    for (i = 0; i < hard_disk->count; i++) {
-        const char* name = hard_disk->entries[i].name;
-        BOOL found = FALSE;
-
-        for (j = 0; j < count; j++) {
-            if (text_equal(name, merged[j].name)) {
-                merged[j].drive = DRIVE_FIXED;
-                found = TRUE;
-                count--;
-            }
+    while (local < hard_disk.count || shared < cd.count) {
+        BOOL take_local = shared == cd.count;
+        int order = -1;
+        if (local < hard_disk.count && shared < cd.count) {
+            order = game_FUN_0053b6e0(hard_disk.entries[local].name, cd.entries[shared].name);
+            take_local = order <= 0;
         }
-        if (!found) {
-            text_copy_most(merged[count].name, name, MAX_PATH - 1);
-            merged[count].attributes = DRIVE_FIXED;
-            count++;
+        if (local == hard_disk.count)
+            take_local = FALSE;
+        if (take_local) {
+            merged[count] = hard_disk.entries[local++];
+            merged[count].attributes = merged[count].drive = DRIVE_FIXED;
+            if (!order)
+                shared++;
+        } else {
+            merged[count] = cd.entries[shared++];
+            merged[count].attributes = merged[count].drive = DRIVE_CDROM;
         }
+        count++;
     }
-
+    base->entries = merged;
     base->count = count;
-    base->entries = entries_new(count, 0x200);
-    if (!base->entries) {
-        VIRTUAL(hard_disk, 0, method_1)(hard_disk, NULL, 1);
-        VIRTUAL(cd, 0, method_1)(cd, NULL, 1);
-        game_delete(merged);
-        return FALSE;
-    }
-    for (i = 0; i < base->count; i++) {
-        text_copy_most(base->entries[i].name, merged[i].name, MAX_PATH - 1);
-        base->entries[i].attributes = merged[i].drive;
-    }
-    VIRTUAL(hard_disk, 0, method_1)(hard_disk, NULL, 1);
-    VIRTUAL(cd, 0, method_1)(cd, NULL, 1);
-    game_delete(merged);
-    return TRUE;
+    ok = TRUE;
+done:
+    dir_list_destruct(&hard_disk);
+    dir_list_destruct(&cd);
+    return ok;
 }

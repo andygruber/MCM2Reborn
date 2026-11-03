@@ -58,6 +58,7 @@ def main():
     counts_command[counts_command.index("/Fe" + native(out / "input.exe"))] = "/Fe" + native(out / "counts.exe")
     subprocess.run(counts_command, cwd=ROOT, env=env, check=True)
     subprocess.run(toolchain.run_exe(str(out / "counts.exe")), check=True)
+    subprocess.run([sys.executable, str(ROOT / "tests/directory_regressions.py")], check=True)
     # LAN play: the helper itself, built as it ships, driven over its pipes on this computer's network.
     import build_lan
     build_lan.main()
